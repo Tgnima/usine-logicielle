@@ -101,4 +101,5 @@ volumes:
   # Le compte Codex (ChatGPT) du vérificateur. CODEX_VOLUME permet de réutiliser
   # un volume déjà connecté (celui de l'usine à contenu, par exemple).
   codex:
+    external: true
     name: ${CODEX_VOLUME:-usine-logicielle-codex}

@@ -59,6 +59,7 @@ if [ ${#manque[@]} -gt 0 ]; then
 fi
 [ -n "$(valeur SLACK_BOT_TOKEN)" ] || echo "• Pas de jetons Slack : l'usine se pilotera par la CLI (voir README)."
 
+docker volume create "$(valeur CODEX_VOLUME)" >/dev/null  # existe déjà s'il est réutilisé
 echo "• Construction des images (Claude Code, Codex et Playwright en dernière version)…"
 docker compose build --pull
 docker compose up -d --remove-orphans
