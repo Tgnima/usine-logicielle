@@ -42,7 +42,10 @@ export async function demarrerSlack(ctx) {
     const canal = projet.canal || config.slack.canal
     if (!canal) return console.log(`[sans canal] ${contenu.text}`)
     const r = await app.client.chat.postMessage({ channel: canal, ...(projet.fil ? { thread_ts: projet.fil } : {}), unfurl_links: false, ...contenu })
-    if (!projet.fil) db.prepare("UPDATE projets SET fil = ?, canal = ? WHERE id = ?").run(r.ts, canal, projet.id)
+    if (!projet.fil) {
+      db.prepare("UPDATE projets SET fil = ?, canal = ? WHERE id = ?").run(r.ts, r.channel, projet.id)
+      Object.assign(projet, { fil: r.ts, canal: r.channel })
+    }
     return r.ts
   }
 

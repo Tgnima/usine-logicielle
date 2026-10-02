@@ -40,9 +40,10 @@ test/                  les tests
 3. **Migrations additives seulement** : ajoute une entrée à `MIGRATIONS` dans `server/db.js` (`CREATE TABLE`, `ALTER TABLE … ADD COLUMN`). Ne modifie ni ne supprime une migration existante.
 4. **Erreurs explicites** : une action lève une erreur avec un `status` ; jamais de valeur par défaut qui masquerait une panne.
 5. **Aucun secret dans le code.** Les clés arrivent par variables d'environnement.
-6. **Les tests ne touchent jamais le réseau** : sous `node --test`, `generer()` renvoie le texte de secours et `envoyer()` n'envoie rien.
+6. **Les tests ne touchent jamais le réseau** : sous `node --test`, `generer()` renvoie le texte de secours et `envoyer()` n'envoie rien. **Ils ne dépendent pas non plus de l'environnement** (`DEMO`, `DATA_DIR`, `PORT`…) : ils utilisent `dbDeTest()` et doivent passer à l'identique avec ou sans `DEMO=1`.
 7. **Interface soignée** : Tailwind, mise en page claire et aérée, responsive, textes en français. C'est une démo : elle doit être belle.
 8. **Mode démo** (`DEMO=1`) : si la base est vide au démarrage, remplis-la avec des données fictives mais réalistes (aucune vraie personne). Utilise `maintenant()` pour tout ce qui dépend du temps.
+9. **Le démarrage se branche dans `server/demarrage.js`** (`auDemarrage()`) : le remplissage démo et les tâches de fond (minuteurs) y sont appelés. Jamais dans `server/index.js`, qui est protégé.
 
 ## Variables d'environnement
 

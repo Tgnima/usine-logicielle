@@ -26,6 +26,7 @@ ${criteres.map((c, i) => `${i + 1}. ${c}`).join("\n")}
 
 Méthode :
 - Teste toi-même : appels HTTP avec curl, et pour l'interface un script Node avec Playwright (\`const { chromium } = require('playwright')\`, Chromium est installé). Ne te fie pas aux tests existants.
+- Les tests automatisés (npm test) ont déjà été lancés par l'usine, dans un environnement propre : ne les relance pas, juge l'application en marche.
 - Tu peux lire le code pour trouver les routes, mais ne le modifie pas.
 - Un critère est validé seulement si tu l'as observé. Dans le doute, il est refusé.
 - Note aussi un défaut grave hors critères (page blanche, erreur 500, donnée incohérente).

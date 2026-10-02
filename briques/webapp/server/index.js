@@ -40,5 +40,8 @@ export function creerApp() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT ?? 3000)
+  // Données de démo et tâches de fond : dans server/demarrage.js (modifiable).
+  const { auDemarrage } = await import("./demarrage.js")
+  await auDemarrage()
   creerApp().listen(port, () => console.log(`Serveur prêt sur le port ${port}`))
 }
