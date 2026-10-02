@@ -1,0 +1,104 @@
+# L'usine logicielle. Tous les conteneurs sont sur le réseau « usine », avec les
+# produits déployés. Seul Caddy ouvre des ports (80, 443).
+#
+#   orchestrateur  l'état, le contrat, GitHub, Slack          (pas de Docker)
+#   atelier-1      les agents codent (Claude Code)             (jeton GitHub : jamais)
+#   verificateur   reconstruit, démarre et teste (Codex)       (jeton GitHub : clone seul)
+#   deployeur      tire l'état souhaité, construit, déploie   (seul accès à Docker)
+#   caddy          HTTPS automatique devant les produits
+#   mailpit        capture les emails des produits en démo
+
+name: usine-logicielle
+
+services:
+  orchestrateur:
+    build: { context: ., dockerfile: orchestrateur/Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      USINE_CONFIG: /app/usine.config.yml
+    volumes:
+      - ./usine.config.yml:/app/usine.config.yml:ro
+      - orchestrateur-data:/app/data
+      - etat:/app/etat:ro
+    depends_on: [atelier-1, verificateur]
+    mem_limit: 256m
+    networks: [usine]
+
+  atelier-1:
+    build: { context: ., dockerfile: atelier/Dockerfile }
+    restart: unless-stopped
+    environment:
+      WORKER_TOKEN: ${WORKER_TOKEN}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    mem_limit: 1600m
+    networks: [usine]
+
+  verificateur:
+    build: { context: ., dockerfile: verificateur/Dockerfile }
+    restart: unless-stopped
+    environment:
+      WORKER_TOKEN: ${WORKER_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - codex:/home/node/.codex
+    shm_size: 256m
+    mem_limit: 1400m
+    networks: [usine]
+
+  deployeur:
+    build: { context: ., dockerfile: deployeur/Dockerfile }
+    restart: unless-stopped
+    environment:
+      GITHUB_TOKEN: ${DEPLOY_TOKEN:-${GITHUB_TOKEN}}
+      DEPOT_ETAT: ${DEPOT_ETAT}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      HTTPS: ${HTTPS:-1}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+      MEMOIRE_PRODUIT: ${MEMOIRE_PRODUIT:-384m}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./caddy:/caddy
+      - etat:/etat
+      - deployeur-srv:/srv
+    mem_limit: 512m
+    networks: [usine]
+
+  caddy:
+    image: caddy:latest
+    container_name: usine-caddy
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./caddy:/etc/caddy
+      - caddy-data:/data
+      - caddy-config:/config
+    mem_limit: 128m
+    networks: [usine]
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "3000"
+      MP_UI_AUTH: ${MAILPIT_UI_AUTH:-}
+    mem_limit: 128m
+    networks: [usine]
+
+networks:
+  usine:
+    name: usine
+
+volumes:
+  orchestrateur-data:
+  etat:
+  deployeur-srv:
+  caddy-data:
+  caddy-config:
+  # Le compte Codex (ChatGPT) du vérificateur. CODEX_VOLUME permet de réutiliser
+  # un volume déjà connecté (celui de l'usine à contenu, par exemple).
+  codex:
+    name: ${CODEX_VOLUME:-usine-logicielle-codex}

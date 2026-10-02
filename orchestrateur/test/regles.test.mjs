@@ -1,0 +1,98 @@
+// Les règles codées de l'usine : ce sont elles, pas les modèles, qui décident.
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import { porte, pathspec } from "../src/verification.mjs"
+import { verifierPlan, extraireJson } from "../src/analyste.mjs"
+import { lireReponse, options } from "../src/escalade.mjs"
+import { liberer } from "../src/fabrique.mjs"
+import { ouvrirDb, taches } from "../src/db.mjs"
+
+const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "12", TESTS_ECHECS: "0", APP_STARTED: "" }
+const approuve = { decision: "approuve", criteres: [{ critere: "la page liste 50 contacts", ok: true, preuve: "50 lignes" }], problemes: [], resume: "ok" }
+
+test("porte : tout est vert, la tâche passe", () => {
+  assert.deepEqual(porte({ marqueurs: tout, verdict: approuve, plancher: 10 }), [])
+})
+
+test("porte : zéro test n'est jamais un succès", () => {
+  assert.match(porte({ marqueurs: { ...tout, TESTS_PASSES: "0" }, verdict: approuve }).join(), /zéro test/)
+})
+
+test("porte : le cliquet refuse une baisse du nombre de tests", () => {
+  assert.match(porte({ marqueurs: tout, verdict: approuve, plancher: 15 }).join(), /a baissé/)
+})
+
+test("porte : un test qui échoue, un build cassé, une app qui ne démarre pas", () => {
+  assert.match(porte({ marqueurs: { ...tout, TESTS_ECHECS: "1" }, verdict: approuve }).join(), /échouent/)
+  const { BUILD_OK, ...sansBuild } = tout
+  assert.match(porte({ marqueurs: sansBuild, verdict: approuve }).join(), /build/)
+  const { APP_STARTED, ...sansApp } = tout
+  assert.match(porte({ marqueurs: sansApp, verdict: approuve }).join(), /ne démarre pas/)
+})
+
+test("porte : un critère non observé suffit à refuser, même si le modèle « approuve »", () => {
+  const v = { ...approuve, criteres: [...approuve.criteres, { critere: "export CSV", ok: false, preuve: "404" }] }
+  assert.match(porte({ marqueurs: tout, verdict: v }).join(), /export CSV/)
+})
+
+test("porte : pas de verdict, verdict sans critère, refus sans motif", () => {
+  assert.match(porte({ marqueurs: tout, verdict: null }).join(), /verdict lisible/)
+  assert.match(porte({ marqueurs: tout, verdict: { ...approuve, criteres: [] } }).join(), /aucun critère/)
+  assert.match(porte({ marqueurs: tout, verdict: { ...approuve, decision: "refuse" } }).join(), /refuse/)
+})
+
+test("pathspec : motifs glob et chemins simples", () => {
+  assert.equal(pathspec(["Dockerfile", ".usine/**"]), "'Dockerfile' ':(glob).usine/**'")
+})
+
+const planValide = {
+  nom: "Prospect", slug: "prospect", resume: "…",
+  lots: [{ nom: "Socle", objectif: "…", taches: [
+    { cle: "T1", titre: "a", description: "b", criteres: ["c"], depend_de: [] },
+    { cle: "T2", titre: "a", description: "b", criteres: ["c"], depend_de: ["T1"] },
+  ] }],
+}
+
+test("verifierPlan : un plan valide, et ses défauts", () => {
+  assert.deepEqual(verifierPlan(planValide), [])
+  assert.match(verifierPlan({ ...planValide, slug: "Pas Bon" }).join(), /slug/)
+  const avant = structuredClone(planValide)
+  avant.lots[0].taches[0].depend_de = ["T2"]
+  assert.match(verifierPlan(avant).join(), /T1 dépend de T2/)
+  const sansCritere = structuredClone(planValide)
+  sansCritere.lots[0].taches[1].criteres = []
+  assert.match(verifierPlan(sansCritere).join(), /aucun critère/)
+  assert.deepEqual(verifierPlan({ questions: ["Pour qui ?"], lots: [] }), [])
+})
+
+test("extraireJson : JSON entouré de texte ou de ```", () => {
+  assert.deepEqual(extraireJson('Voici :\n```json\n{"a": {"b": 1}}\n```'), { a: { b: 1 } })
+})
+
+test("lireReponse : lettre, lettre + consigne, texte libre", () => {
+  assert.deepEqual(lireReponse("A", ["A", "B", "C"]), { choix: "A", texte: "" })
+  assert.deepEqual(lireReponse("**b**", ["A", "B", "C"]), { choix: "B", texte: "" })
+  assert.deepEqual(lireReponse("c - trop long", ["A", "C"]), { choix: "C", texte: "trop long" })
+  assert.deepEqual(lireReponse("Utilise une table séparée", ["A", "C"]), { choix: "A", texte: "Utilise une table séparée" })
+  assert.equal(lireReponse("B", ["A", "C"])?.choix, "A") // B indisponible : lu comme consigne libre
+})
+
+test("options : « accepter en l'état » seulement s'il y a une PR à fusionner", () => {
+  assert.deepEqual(options("criteres", true).map((o) => o.cle), ["A", "B", "C"])
+  assert.deepEqual(options("criteres", false).map((o) => o.cle), ["A", "C"])
+  assert.deepEqual(options("budget").map((o) => o.cle), ["A", "C"])
+})
+
+test("liberer : une tâche part quand ses dépendances sont fusionnées ou abandonnées", () => {
+  const db = ouvrirDb(":memory:")
+  db.prepare("INSERT INTO projets (prompt) VALUES ('x')").run()
+  const ins = db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, statut) VALUES (1, ?, 1, 't', 'd', '[]', ?, ?)")
+  ins.run("T1", "[]", "fusionnee")
+  ins.run("T2", '["T1"]', "attente")
+  ins.run("T3", '["T2"]', "attente")
+  ins.run("T4", '["T1"]', "attente")
+  db.prepare("UPDATE taches SET statut = 'abandonnee' WHERE cle = 'T4'").run()
+  liberer(db, 1)
+  const s = Object.fromEntries(taches(db, 1).map((t) => [t.cle, t.statut]))
+  assert.deepEqual(s, { T1: "fusionnee", T2: "prete", T3: "attente", T4: "abandonnee" })
+})

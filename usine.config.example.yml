@@ -1,0 +1,52 @@
+# Le contrat de l'usine logicielle. Copié une fois en usine.config.yml (non suivi
+# par Git) : chaque installation fixe ses propres règles. Ces limites sont
+# appliquées par le CODE de l'orchestrateur, pas laissées au bon vouloir des agents.
+
+github:
+  proprietaire: Tgnima          # compte ou organisation qui reçoit les dépôts des produits
+  visibilite: private           # private | public
+  depot_etat: usine-etat        # le dépôt de l'état souhaité, que le déployeur tire
+
+domaine:
+  # Aperçus : <produit>.apercu.<base>  ·  production : <produit>.<base>
+  # sslip.io résout tout seul vers l'IP du serveur : aucun DNS à configurer pour la démo.
+  base: 45-93-21-17.sslip.io
+  https: true
+
+modeles:
+  analyste:      { moteur: claude-code, modele: claude-opus-5-5 }
+  atelier:       { moteur: claude-code, modele: claude-sonnet-5-5 }
+  verificateur:  { moteur: codex }
+  petites_taches: { moteur: claude-code, modele: claude-haiku-4-5 }
+  # Le produit lui-même, quand il appelle un modèle (via Vercel AI Gateway).
+  produit:       { modele: anthropic/claude-sonnet-5.5 }
+
+autonomie:
+  tentatives_par_tache: 2          # corrections après un refus du vérificateur
+  changements_d_approche: 1        # puis on repart de zéro avec une autre approche ; puis escalade
+  lignes_max_par_pr: 800           # au-delà : signalé dans la PR (non bloquant en démo)
+  minutes_max_par_agent: 30
+  budget_par_projet:
+    duree_max_heures: 8
+  arret: dependances               # dependances : seules les tâches liées s'arrêtent | projet
+  relance_apres_heures: 24
+
+politiques:                        # jamais | manuel | sur-criteres
+  implementer: sur-criteres
+  merger: sur-criteres
+  deployer_apercu: sur-criteres
+  mettre_en_production: manuel     # toujours un humain
+  supprimer_des_donnees: jamais
+
+# L'usine ne peut pas modifier ce qui la juge : une tâche qui y touche est refusée.
+perimetre_protege:
+  - Dockerfile
+  - test/sante.test.js
+  - server/index.js
+  - docs/PLAN.md
+  - .usine/**
+
+demo:
+  actif: true
+  vitesse_horloge: 1440            # un jour passe en une minute dans les produits
+  services: [mailpit]              # Mailpit capture tous les emails des produits

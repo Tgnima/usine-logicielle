@@ -1,0 +1,6 @@
+.env
+usine.config.yml
+data/
+node_modules/
+caddy/Caddyfile
+!caddy/.gitkeep
