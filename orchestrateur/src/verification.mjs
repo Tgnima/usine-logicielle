@@ -5,7 +5,7 @@
 // puis Codex (une autre famille de modèles) le teste comme un visiteur.
 //
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
-import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
+import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS } from "./creation.mjs"
 import { extraireJson } from "./analyste.mjs"
 
@@ -43,8 +43,9 @@ export async function verifier(ctx, projet, tache, sha) {
   // 1. Clone neuf de la PR (seule étape qui voit le jeton GitHub).
   const clone = await executer(serveur, jeton, [
     "set -eo pipefail",
+    RESEAU,
     "rm -rf /travail/verif /tmp/sorties/verif && mkdir -p /travail/verif /tmp/sorties/verif && cd /travail/verif",
-    `git clone -q "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
+    `cloner "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
     "cd depot && git remote set-url origin https://github.com/" + projet.depot + ".git",
     `git checkout -q ${q(sha)}`,
     // Les règles qui jugent la PR sont lues sur main : tout fichier protégé

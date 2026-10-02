@@ -53,3 +53,10 @@ export const q = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
 
 // Un texte écrit dans un fichier par un script, sans risque d'interprétation.
 export const ecrireFichier = (chemin, contenu) => `printf '%s' ${q(Buffer.from(contenu).toString("base64"))} | base64 -d > ${q(chemin)}`
+
+// Aides bash contre les coupures réseau brèves, à placer en tête des scripts
+// qui clonent ou poussent : cloner <url> <dossier>, reessayer <commande…>.
+export const RESEAU = [
+  'reessayer() { local i; for i in 1 2 3 4 5; do "$@" && return 0; echo "(coupure réseau ? nouvel essai $i)"; sleep $((i * 10)); done; return 1; }',
+  'cloner() { local i; for i in 1 2 3 4 5; do rm -rf "$2"; git clone -q "$1" "$2" && return 0; echo "(coupure réseau ? nouvel essai $i)"; sleep $((i * 10)); done; return 1; }',
+].join("\n")

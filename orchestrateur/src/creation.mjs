@@ -1,7 +1,7 @@
 // Après la validation du plan : créer le dépôt du produit à partir de la brique,
 // vérifier que le socle passe, puis ouvrir une issue par tâche.
 import { creerDepot, creerEtiquettes, creerIssue, ecrireFichierDepot } from "./github.mjs"
-import { executer, ecrireFichier, q } from "./travaux.mjs"
+import { RESEAU, executer, ecrireFichier, q } from "./travaux.mjs"
 import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 
@@ -30,6 +30,7 @@ export async function creerProduit(ctx, projetId) {
 
   const script = [
     "set -eo pipefail",
+    RESEAU,
     `rm -rf /travail/${nomDepot} && mkdir -p /travail/${nomDepot} && cd /travail/${nomDepot}`,
     "cp -r /opt/usine/briques/webapp depot && cd depot",
     // Le nom et le résumé remplacent les jalons de la brique (sans passer par sed).
@@ -41,7 +42,7 @@ export async function creerProduit(ctx, projetId) {
     "npm install -D --no-audit --no-fund vite @vitejs/plugin-react tailwindcss @tailwindcss/vite 2>&1 | tail -2",
     `npm run verify 2>&1 | tee /tmp/sorties/socle.log | tail -15; ${COMPTER_TESTS} /tmp/sorties/socle.log`,
     "git init -q -b main && git add -A && git commit -q -m 'Socle : brique webapp et plan de fabrication'",
-    `git push -q "https://x-access-token:$JETON@github.com/${o}/${nomDepot}.git" main 2>&1 | sed "s/$JETON/***/g"`,
+    `reessayer git push -q "https://x-access-token:$JETON@github.com/${o}/${nomDepot}.git" main 2>&1 | sed "s/$JETON/***/g"`,
     `git remote add origin https://github.com/${o}/${nomDepot}.git`,
     "echo '@@ CREATION_OK'",
   ].join("\n")

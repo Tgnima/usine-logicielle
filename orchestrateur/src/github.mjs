@@ -4,13 +4,24 @@
 const API = "https://api.github.com"
 export const MARQUE = "<!-- usine-logicielle -->" // signe les commentaires de l'usine
 
+// Les coupures réseau brèves (DNS, 5xx) sont réessayées : elles ne doivent pas
+// faire escalader une tâche.
 async function gh(config, chemin, { method = "GET", corps, accepter = [] } = {}) {
-  const res = await fetch(`${API}${chemin}`, {
-    method,
-    headers: { authorization: `Bearer ${config.secrets.github}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
-    body: corps ? JSON.stringify(corps) : undefined,
-    signal: AbortSignal.timeout(30_000),
-  })
+  let res
+  for (let essai = 1; ; essai++) {
+    try {
+      res = await fetch(`${API}${chemin}`, {
+        method,
+        headers: { authorization: `Bearer ${config.secrets.github}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+        body: corps ? JSON.stringify(corps) : undefined,
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (res.status < 500 || essai >= 5) break
+    } catch (error) {
+      if (essai >= 5) throw new Error(`GitHub injoignable (${method} ${chemin}) : ${error.cause?.code ?? error.message}`)
+    }
+    await new Promise((r) => setTimeout(r, 5_000 * essai))
+  }
   const json = res.status === 204 ? {} : await res.json().catch(() => ({}))
   if (!res.ok && !accepter.includes(res.status)) throw Object.assign(new Error(`GitHub ${res.status} ${method} ${chemin} : ${json.message ?? ""}`), { statut: res.status })
   return { statut: res.status, json }

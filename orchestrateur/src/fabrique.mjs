@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { decisions, maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
-import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
+import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { ajouterEtiquettes, commentairePR, fusionnerPR, ouvrirPR, retirerEtiquette } from "./github.mjs"
 import { COMPTER_TESTS } from "./creation.mjs"
 import { pathspec, verifier } from "./verification.mjs"
@@ -112,8 +112,9 @@ async function fabriquer(ctx, projet, tache) {
   // 1. Préparer l'espace de travail (seule étape, avec le push, qui voit le jeton).
   const prep = await executer(atelier, jeton, [
     "set -eo pipefail",
+    RESEAU,
     `D=/travail/${nomDepot}; rm -rf "$D" && mkdir -p "$D" /tmp/sorties/tache && cd "$D"`,
-    `git clone -q "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
+    `cloner "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
     `cd depot && git remote set-url origin https://github.com/${projet.depot}.git`,
     reprendre ? `git checkout -q -B ${q(branche)} origin/${q(branche)} 2>/dev/null || git checkout -q -B ${q(branche)} main` : `git checkout -q -B ${q(branche)} main`,
     "npm ci --no-audit --no-fund > /tmp/sorties/tache/npm.log 2>&1 || npm install --no-audit --no-fund >> /tmp/sorties/tache/npm.log 2>&1",
@@ -162,9 +163,10 @@ async function fabriquer(ctx, projet, tache) {
   // 4. Commit et push de la branche, puis la pull request.
   const push = await executer(atelier, jeton, [
     "set -eo pipefail",
+    RESEAU,
     `cd /travail/${nomDepot}/depot`,
     `git commit -q -m ${q(`${tache.cle} · ${tache.titre}`)} || true`,
-    `git push -q --force "https://x-access-token:$JETON@github.com/${projet.depot}.git" HEAD:refs/heads/${branche} 2>&1 | sed "s/$JETON/***/g"`,
+    `reessayer git push -q --force "https://x-access-token:$JETON@github.com/${projet.depot}.git" HEAD:refs/heads/${branche} 2>&1 | sed "s/$JETON/***/g"`,
     "echo \"@@ SHA $(git rev-parse HEAD)\"",
   ].join("\n"), { env: { JETON: config.secrets.github }, minutes: 5 })
   const sha = push.marqueurs.SHA
