@@ -10,8 +10,13 @@
 
 name: usine-logicielle
 
+# Plusieurs résolveurs DNS : le réseau de l'hébergeur perd parfois la résolution
+# quelques instants (Slack, GitHub injoignables).
+x-dns: &dns [1.1.1.1, 8.8.8.8, 9.9.9.9]
+
 services:
   orchestrateur:
+    dns: *dns
     build: { context: ., dockerfile: orchestrateur/Dockerfile }
     restart: unless-stopped
     env_file: .env
@@ -26,6 +31,7 @@ services:
     networks: [usine]
 
   atelier-1:
+    dns: *dns
     build: { context: ., dockerfile: atelier/Dockerfile }
     restart: unless-stopped
     environment:
@@ -36,6 +42,7 @@ services:
     networks: [usine]
 
   verificateur:
+    dns: *dns
     build: { context: ., dockerfile: verificateur/Dockerfile }
     restart: unless-stopped
     environment:
@@ -48,6 +55,7 @@ services:
     networks: [usine]
 
   deployeur:
+    dns: *dns
     build: { context: ., dockerfile: deployeur/Dockerfile }
     restart: unless-stopped
     environment:
