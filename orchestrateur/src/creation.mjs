@@ -87,7 +87,8 @@ export async function ajouterLot(ctx, projetId, lot) {
   await creerEtiquettes(config, nomDepot, [[`lot:${numero}`, "ededed", lot.nom.slice(0, 90)]])
   await ecrireFichierDepot(config, nomDepot, "docs/PLAN.md", planEnMarkdown(plan), `Plan : lot ${numero}, ${lot.nom}`)
   await ecrireFichierDepot(config, nomDepot, ".usine/plan.json", `${JSON.stringify(plan, null, 2)}\n`, `Plan : lot ${numero}`)
-  maj(db, "projets", projetId, { plan: JSON.stringify(plan), statut: "fabrication" })
+  // Un lot de corrections a son propre budget de durée : le compteur repart.
+  maj(db, "projets", projetId, { plan: JSON.stringify(plan), statut: "fabrication", debut_fabrication: new Date().toISOString() })
   await ouvrirTaches(ctx, projetId, nomDepot, lot, numero)
   noter(db, { projet: projetId, type: "corrections", message: `Lot ${numero} ajouté : ${lot.nom} (${lot.taches.length} tâches)` })
   return numero
