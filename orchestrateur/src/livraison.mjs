@@ -9,8 +9,9 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { adresses } from "./config.mjs"
 import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
-import { ecrireEtat, shaPrincipal } from "./github.mjs"
-import { analyserCorrections } from "./analyste.mjs"
+import { ecrireEtat, ecrireFichierDepot, shaPrincipal } from "./github.mjs"
+import { analyserBrief, analyserCorrections } from "./analyste.mjs"
+import { designEnMarkdown } from "./design.mjs"
 import { ajouterLot } from "./creation.mjs"
 import { escalader } from "./escalade.mjs"
 import { ecrireReglage, enregistrer, lireReglage } from "./couts.mjs"
@@ -150,6 +151,27 @@ export async function finaliserSiFini(ctx, projetId) {
     await demanderCorrections(ctx, projetId, enFile.map((d) => d.texte).join("\n\n"), [...new Set(enFile.map((d) => d.par))].join(", "))
     return true
   }
+  // Le lot de finition (une fois par projet) : les remarques du relecteur design deviennent
+  // un dernier lot de polissage, avant que l'humain ne voie le produit.
+  if (config.finition !== false && !projet.finition_faite) {
+    const remarques = db.prepare("SELECT cle, titre, design FROM taches WHERE projet_id = ? AND statut = 'fusionnee' AND design IS NOT NULL").all(projetId).flatMap((t) => {
+      try {
+        return (JSON.parse(t.design).mineurs ?? []).map((d) => `- ${t.cle} · ${d.ecran ?? ""} : ${d.defaut}${d.correction ? ` → ${d.correction}` : ""}`)
+      } catch {
+        return []
+      }
+    })
+    maj(db, "projets", projetId, { finition_faite: 1 })
+    const texte = [
+      "Lot de FINITION, demandé par l'usine avant de présenter le produit : rends-le irréprochable, sans ajouter de fonctionnalité.",
+      "Objectifs : cohérence avec docs/DESIGN.md et sa grille sur tous les écrans, états vides, de chargement et d'erreur partout, textes précis et homogènes, responsive à 390 px, parcours clé fluides.",
+      remarques.length ? `Remarques du relecteur design pendant la fabrication (à traiter en priorité) :\n${remarques.slice(0, 40).join("\n")}` : "Le relecteur design n'a pas laissé de remarque : passe en revue chaque écran avec la grille.",
+      "Au plus 3 tâches. Chaque critère s'observe sur l'application en marche (capture ou navigateur).",
+    ].join("\n\n")
+    await ctx.notifier.etape(obtenir(db, "projets", projetId), `:sparkles: Tous les lots sont faits. Avant de te présenter le produit, l'usine fait un lot de *finition* (design, textes, états vides, mobile)${remarques.length ? ` à partir de ${remarques.length} remarque(s) du relecteur design` : ""}.`)
+    await demanderCorrections(ctx, projetId, texte, "l'usine (finition)")
+    return true
+  }
   const sha = await shaPrincipal(config, projet.depot.split("/")[1])
   await ctx.notifier.rapportFinal(obtenir(db, "projets", projetId), rapport(ctx, projetId, sha))
   return true
@@ -224,9 +246,22 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
       mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),
       echanges: echangesRecents(db, projetId),
     }
+    // Un produit fabriqué avant les briefs de design en reçoit un, d'abord (docs/DESIGN.md).
+    let plan = lirePlan(projet)
+    if (!plan.design) {
+      try {
+        plan.design = await analyserBrief(config, projet, plan, contexte.mesurer)
+        await ecrireFichierDepot(config, projet.depot.split("/")[1], "docs/DESIGN.md", designEnMarkdown(plan), "Brief de design (docs/DESIGN.md)")
+        maj(db, "projets", projetId, { plan: JSON.stringify(plan) })
+        noter(db, { projet: projetId, type: "design", message: `Brief de design rédigé : ${plan.design.intention}` })
+        await ctx.notifier.etape(projet, `:art: *${plan.nom}* n'avait pas de brief de design : l'analyste en a rédigé un (docs/DESIGN.md). ${plan.design.intention}`)
+      } catch (error) {
+        console.error("Brief de design :", error.message) // sans brief, la grille seule s'applique
+      }
+    }
     // La demande est gardée même si l'analyse échoue : une reformulation la retrouvera.
     db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Corrections après livraison", retours, par)
-    const r = await analyserCorrections(config, projet, lirePlan(projet), retours, contexte)
+    const r = await analyserCorrections(config, projet, plan, retours, contexte)
     noter(db, { projet: projetId, type: "diagnostic", message: `${r.diagnostic}${r.reglage ? `\nRéglage : ${r.reglage}` : ""}` })
     const boutonReglages = [{ texte: "Changer les réglages de production", action: "production_reglages", valeur: projetId }]
     const boutonRepondre = { texte: "Répondre à l'analyste", action: "livraison_corriger", valeur: projetId }

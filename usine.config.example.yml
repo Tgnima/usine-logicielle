@@ -20,6 +20,8 @@ modeles:
   petites_taches: { moteur: claude-code, modele: claude-haiku-4-5 }
   # Le produit lui-même, quand il appelle un modèle (via Vercel AI Gateway).
   produit:       { modele: anthropic/claude-sonnet-5.5 }
+  # Quand une tâche change d'approche (les corrections n'ont pas suffi), un modèle plus fort.
+  renfort:       { moteur: claude-code, modele: claude-opus-5-5 }
 
 autonomie:
   tentatives_par_tache: 2          # corrections après un refus du vérificateur
@@ -47,6 +49,7 @@ perimetre_protege:
   - server/securite.js              # en-têtes, limitation des requêtes, erreurs sans détail
   - test/securite.test.js
   - docs/PLAN.md
+  - docs/DESIGN.md
   - .usine/**
 
 demo:
@@ -92,3 +95,7 @@ budget:
 # Prolonger / Garder / Retirer). La production n'est jamais retirée automatiquement.
 apercus:
   duree_vie_jours: 7
+
+# Le lot de finition : avant le rapport final, un dernier lot de polissage (design, textes,
+# états vides, mobile) construit à partir des remarques du relecteur design. Une fois par projet.
+finition: true

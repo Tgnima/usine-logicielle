@@ -1,12 +1,15 @@
-// L'écran d'accueil de départ. Les tâches de l'usine le remplacent par le vrai produit.
+// L'écran de départ, construit avec les composants de client/src/ui.
+// Les tâches de l'usine le remplacent par le vrai produit.
+import { Carte, Coque, Page } from "./ui/index.jsx"
+
 export default function App() {
   return (
-    <main className="min-h-screen flex items-center justify-center p-8">
-      <div className="max-w-xl text-center space-y-4">
-        <h1 className="text-4xl font-semibold tracking-tight">{"{{NOM}}"}</h1>
-        <p className="text-slate-600">{"{{RESUME}}"}</p>
-        <p className="text-xs text-slate-400">Fabriqué par l'usine logicielle</p>
-      </div>
-    </main>
+    <Coque nom={"{{NOM}}"} liens={[{ href: "/", libelle: "Accueil" }]} actif="/">
+      <Page titre={"{{NOM}}"} description={"{{RESUME}}"}>
+        <Carte titre="Le produit se construit">
+          <p className="text-sm text-doux">Chaque lot livré ajoute ses écrans ici.</p>
+        </Carte>
+      </Page>
+    </Coque>
   )
 }

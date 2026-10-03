@@ -4,11 +4,16 @@
 // affaiblir les règles qui la jugent), reconstruit, teste, démarre le produit,
 // puis Codex (une autre famille de modèles) le teste comme un visiteur.
 //
+// Puis, si les critères sont tenus, un second passage juge le design sur captures
+// d'écran (brief + grille anti-IA-slop). Et un cliquet : chaque critère validé devient
+// un test de non-régression (.usine/e2e/), rejoué à chaque tâche suivante.
+//
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS } from "./creation.mjs"
 import { extraireJson } from "./analyste.mjs"
 import { ecrireReglage, enregistrer, usagesCodex } from "./couts.mjs"
+import { grilleEnTexte } from "./design.mjs"
 
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
@@ -33,8 +38,39 @@ Méthode :
 - Un critère est validé seulement si tu l'as observé. Dans le doute, il est refusé.
 - Note aussi un défaut grave hors critères (page blanche, erreur 500, donnée incohérente).
 
+Non-régression :
+- Lis /tmp/sorties/verif/e2e-echecs.txt : ce sont des tests de critères DÉJÀ validés par le passé (dossier .usine/e2e/) qui échouent maintenant. Pour chacun, décide : régression (ce qui marchait est cassé) → mets-le dans "regressions" ; changement voulu par CETTE tâche (l'écran ou la route a légitimement changé) → réécris ce test sous le même nom dans /tmp/sorties/verif/e2e/.
+- Pour chaque critère que tu valides et qui s'observe par HTTP ou dans le navigateur, écris un test autonome /tmp/sorties/verif/e2e/${tache.cle}-<n>.cjs : un script Node CommonJS qui lit process.env.BASE (ex. http://localhost:4100), utilise fetch ou require('playwright') (Chromium), vérifie le critère et termine par process.exit(1) s'il n'est plus tenu (process.exit(0) sinon). Il doit être robuste : données de démo seulement en lecture, ou ses propres données avec un nom unique ; pas de dépendance à l'heure exacte ; 60 secondes au plus.
+
+Captures d'écran (pour le relecteur design) :
+- Enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…).
+
 Réponds UNIQUEMENT par ce JSON, sans rien autour :
-{"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "problemes": ["…"], "resume": "une phrase"}`
+{"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "regressions": ["test : ce qui est cassé"], "problemes": ["…"], "resume": "une phrase"}`
+}
+
+function consigneDesign(projet, tache) {
+  return `Tu es directeur artistique et designer produit senior. Tu juges des captures d'écran d'une application, AVANT qu'elle soit livrée. Exigeant et concret, pas de compliments.
+
+Produit : « ${projet.nom} ». Tâche : ${tache.cle} · ${tache.titre}.
+Les images jointes sont des captures en largeur 1440 (ordinateur) et 390 (mobile).
+
+La grille de l'usine (un produit doit avoir l'air pensé par une équipe, pas généré) :
+${grilleEnTexte()}
+
+Le brief de design du produit (docs/DESIGN.md) suit en fin de consigne.
+
+Classe ce que tu VOIS sur les captures :
+- « grave » : nuit à la crédibilité ou à l'usage (débordement ou page cassée sur mobile, texte illisible ou tronqué, contraste insuffisant, lorem ipsum ou texte générique visible, emojis en guise d'icônes, dégradés ou effets criards, écran vide sans explication, incohérence flagrante avec le brief) ;
+- « mineur » : à polir (espacements, alignements, hiérarchie, libellés, états vides perfectibles).
+N'invente rien de ce que tu ne vois pas. Une remarque = un écran + le défaut + la correction précise.
+
+Réponds UNIQUEMENT par ce JSON :
+{"graves": [{"ecran": "…", "defaut": "…", "correction": "…"}], "mineurs": [{"ecran": "…", "defaut": "…", "correction": "…"}], "note": 0, "resume": "une phrase"}
+(note : de 0 à 10, la qualité perçue de ces écrans)
+
+Brief :
+`
 }
 
 export async function verifier(ctx, projet, tache, sha) {
@@ -83,13 +119,26 @@ export async function verifier(ctx, projet, tache, sha) {
     "rm -rf $DATA_DIR",
     "(npm start > /tmp/sorties/verif/app.log 2>&1 &)",
     "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
+    // Le cliquet : les tests des critères déjà validés (.usine/e2e, protégé) sont rejoués.
+    "mkdir -p /tmp/sorties/verif/e2e /tmp/sorties/verif/captures && : > /tmp/sorties/verif/e2e-echecs.txt",
+    "E2E_T=0; E2E_E=0; for f in .usine/e2e/*.cjs; do [ -f \"$f\" ] || continue; E2E_T=$((E2E_T+1)); if ! BASE=http://localhost:4100 timeout 90 node \"$f\" > /tmp/e2e.out 2>&1; then E2E_E=$((E2E_E+1)); echo \"== $(basename $f)\" >> /tmp/sorties/verif/e2e-echecs.txt; tail -5 /tmp/e2e.out >> /tmp/sorties/verif/e2e-echecs.txt; fi; done",
+    "echo \"@@ E2E_TOTAL $E2E_T\"; echo \"@@ E2E_ECHECS $E2E_E\"",
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
     "  codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt \"$(cat /tmp/sorties/verif/consigne.md)\" > /tmp/sorties/verif/codex.log 2>&1",
     "  echo \"@@ CODEX_CODE $?\"",
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     "else tail -30 /tmp/sorties/verif/app.log; fi",
-  ].join("\n"), { minutes: 30 })
+    "echo \"@@ CAPTURES $(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | wc -l)\"",
+    "echo \"@@ E2E_NOUVEAUX $(cd /tmp/sorties/verif/e2e && ls *.cjs 2>/dev/null | tr '\\n' ' ')\"",
+    ecrireFichier("/tmp/sorties/verif/consigne-design.md", consigneDesign(projet, tache)),
+    "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
+    "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
+    "if [ -n \"$IMAGES\" ] && grep -q '\"approuve\"' /tmp/sorties/verif/verdict.txt 2>/dev/null; then",
+    "  codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt \"$(cat /tmp/sorties/verif/consigne-design.md)\" > /tmp/sorties/verif/design.log 2>&1",
+    "  echo \"@@ DESIGN_CODE $?\"",
+    "fi",
+  ].join("\n"), { minutes: 40 })
 
   const m = r.marqueurs
   // La consommation de Codex, même quand il refuse ou échoue.
@@ -107,14 +156,25 @@ export async function verifier(ctx, projet, tache, sha) {
       verdict = null
     }
   }
-  const raisons = porte({ marqueurs: m, verdict, plancher: projet.plancher_tests, journal: r.journal })
+  let design = null
+  if ("DESIGN_CODE" in m) {
+    const journalDesign = await lireFichier(serveur, jeton, "/tmp/sorties/verif/design.log")
+    enregistrer(ctx.db, { projet: projet.id, tache: tache.id, role: "designer", moteur: "codex", usages: usagesCodex(journalDesign, m.CODEX_MODELE, config), duree_s: 0 })
+    try {
+      design = extraireJson(String((await lireFichier(serveur, jeton, "/tmp/sorties/verif/design.txt")) ?? ""))
+    } catch {
+      design = null // un relecteur design indisponible ne bloque pas la tâche
+    }
+  }
+  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal })
   const codexEnPanne = "APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0"
-  return { ok: raisons.length === 0, infra: codexEnPanne, raisons, verdict, tests: Number(m.TESTS_PASSES ?? 0) }
+  const nouveauxTests = String(m.E2E_NOUVEAUX ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.cjs$/.test(f))
+  return { ok: raisons.length === 0, infra: codexEnPanne, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, captures: Number(m.CAPTURES ?? 0) }
 }
 
 // La porte de fusion : des faits vérifiables, pas un avis. Chaque raison
 // renvoyée est un motif de refus. Aucune raison = la tâche peut être fusionnée.
-export function porte({ marqueurs: m, verdict, plancher = 0, journal = "" }) {
+export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "" }) {
   const raisons = []
   if (!("INSTALL_OK" in m)) return ["l'installation des dépendances (npm ci) échoue"]
   // La sécurité d'abord : un secret dans le code, ou une faille grave ajoutée.
@@ -138,6 +198,8 @@ export function porte({ marqueurs: m, verdict, plancher = 0, journal = "" }) {
   }
   for (const c of verdict.criteres ?? []) if (c.ok !== true) raisons.push(`critère non validé : ${c.critere}${c.preuve ? ` (observé : ${c.preuve})` : ""}`)
   for (const p of verdict.problemes ?? []) raisons.push(`problème : ${p}`)
+  for (const g of verdict.regressions ?? []) raisons.push(`régression (un critère déjà validé ne tient plus) : ${g}`)
+  for (const d of design?.graves ?? []) raisons.push(`design : ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}${d.correction ? ` → ${d.correction}` : ""}`)
   if (verdict.decision !== "approuve" && raisons.length === 0) raisons.push(`le vérificateur refuse : ${verdict.resume ?? "sans motif"}`)
   if (!(verdict.criteres ?? []).length) raisons.push("le vérificateur n'a jugé aucun critère")
   return raisons

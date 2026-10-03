@@ -21,6 +21,9 @@ export function ouvrirCycle(db) {
   for (const [nom, def] of [["apercu_expire_le", "TEXT"], ["apercu_garde", "INTEGER NOT NULL DEFAULT 0"], ["apercu_rappel", "INTEGER NOT NULL DEFAULT 0"], ["apercu_retire", "INTEGER NOT NULL DEFAULT 0"]]) {
     if (!colonnes.has(nom)) db.exec(`ALTER TABLE projets ADD COLUMN ${nom} ${def}`)
   }
+  if (!colonnes.has("finition_faite")) db.exec("ALTER TABLE projets ADD COLUMN finition_faite INTEGER NOT NULL DEFAULT 0")
+  const colonnesTaches = new Set(db.prepare("PRAGMA table_info(taches)").all().map((c) => c.name))
+  if (!colonnesTaches.has("design")) db.exec("ALTER TABLE taches ADD COLUMN design TEXT") // note et remarques du relecteur design
 }
 
 // Après chaque aperçu livré : le compte à rebours repart.

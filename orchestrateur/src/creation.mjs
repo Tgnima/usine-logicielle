@@ -4,6 +4,7 @@ import { creerDepot, creerEtiquettes, creerIssue, ecrireFichierDepot } from "./g
 import { RESEAU, executer, ecrireFichier, q } from "./travaux.mjs"
 import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
+import { designEnMarkdown, jetonsCss } from "./design.mjs"
 
 export const ETIQUETTES = [
   ["usine:attente", "c5def5", "Tâche planifiée, en attente de ses dépendances"],
@@ -37,6 +38,10 @@ export async function creerProduit(ctx, projetId) {
     `NOM=${q(plan.nom)} RESUME=${q(plan.resume)} node -e 'const fs=require("fs");for(const f of ["client/index.html","client/src/App.jsx","AGENTS.md"]){fs.writeFileSync(f,fs.readFileSync(f,"utf8").replaceAll("{{NOM}}",process.env.NOM).replaceAll("{{RESUME}}",process.env.RESUME))}'`,
     "mkdir -p docs .usine",
     ecrireFichier("docs/PLAN.md", planEnMarkdown(plan)),
+    ecrireFichier("docs/DESIGN.md", designEnMarkdown(plan)),
+    // Les couleurs et les polices du brief deviennent les jetons Tailwind de la brique.
+    ecrireFichier("/tmp/sorties/jetons.css", jetonsCss(plan.design)),
+    `node -e 'const fs=require("fs");const f="client/src/styles.css";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace("/* JETONS */",fs.readFileSync("/tmp/sorties/jetons.css","utf8")))'`,
     ecrireFichier(".usine/plan.json", `${JSON.stringify(plan, null, 2)}\n`),
     "npm install --no-audit --no-fund express nodemailer react react-dom 2>&1 | tail -2",
     "npm install -D --no-audit --no-fund vite @vitejs/plugin-react tailwindcss @tailwindcss/vite 2>&1 | tail -2",

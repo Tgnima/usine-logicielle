@@ -4,6 +4,7 @@
 // VÉRIFIÉ par le code avant d'être présenté à l'humain.
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { usagesClaude } from "./couts.mjs"
+import { SCHEMA_DESIGN, grilleEnTexte, verifierDesign } from "./design.mjs"
 
 const SYSTEME = "Tu es l'analyste d'une usine logicielle. Tu transformes une demande en plan de fabrication précis, réaliste et testable. Tu réponds uniquement par un objet JSON valide, sans texte autour."
 
@@ -46,7 +47,8 @@ Produis le plan de fabrication, en français, au format JSON exact :
   ],
   "criteres_globaux": ["…"],
   "hors_perimetre": ["…"],
-  "risques": ["…"]
+  "risques": ["…"],
+  ${SCHEMA_DESIGN}
 }
 
 Règles du plan :
@@ -57,7 +59,10 @@ Règles du plan :
 5. "depend_de" ne cite que des clés de tâches précédentes. Les clés sont T1, T2, … uniques et dans l'ordre.
 6. "slug" : 3 à 20 caractères, lettres minuscules, chiffres et tirets.
 7. Reste dans la brique : pas d'autre langage, pas de service externe hors Vercel AI Gateway et Mailpit.
-8. Une démo doit impressionner : prévois une interface soignée et un parcours qui raconte une histoire.`
+8. Une démo doit impressionner : prévois une interface soignée et un parcours qui raconte une histoire.
+9. Le "design" est un vrai brief, propre à CE produit et à son public (pas une palette passe-partout) : il sera écrit dans docs/DESIGN.md, suivi par les agents et vérifié sur captures d'écran avec cette grille :
+${grilleEnTexte()}
+10. Dans les tâches, décris les écrans comme un designer : ce qu'on voit d'abord, l'action principale, les états vides, de chargement et d'erreur.`
 }
 
 // Vérifie le plan. Renvoie la liste des problèmes (vide = plan acceptable).
@@ -81,6 +86,7 @@ export function verifierPlan(plan, { lotsMax = 6 } = {}) {
       cles.add(t.cle)
     }
   }
+  p.push(...verifierDesign(plan.design))
   return p
 }
 
@@ -180,6 +186,22 @@ ne casse rien de ce qui marche ; reste dans la brique ; ne refais pas un autre p
   }
   const { objet } = await interroger(config, texte, valider, contexte.mesurer)
   return { diagnostic: objet.diagnostic.trim(), reglage: String(objet.reglage ?? "").trim(), lot: objet.lot ?? null }
+}
+
+// Un brief de design pour un produit qui n'en a pas (fabriqué avant les briefs) :
+// l'analyste le rédige d'après le plan et la demande d'origine.
+export async function analyserBrief(config, projet, plan, mesurer) {
+  const texte = `Le produit « ${plan.nom} » existe déjà : ${plan.resume}
+Demande d'origine : ${projet.prompt}
+Ses lots : ${plan.lots.map((l) => l.nom).join(" · ")}
+
+Rédige son brief de design : une identité propre à CE produit et à son public, qui servira à le polir (pas à le refaire de zéro).
+Réponds UNIQUEMENT par ce JSON : { ${SCHEMA_DESIGN} }
+
+La grille qu'il devra respecter :
+${grilleEnTexte()}`
+  const { objet } = await interroger(config, texte, (r) => verifierDesign(r?.design ?? null).concat(r?.design ? [] : ["« design » manquant"]), mesurer)
+  return objet.design
 }
 
 // Le plan, lisible par un humain (Slack, docs/PLAN.md, issue).

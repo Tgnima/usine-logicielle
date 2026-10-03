@@ -11,7 +11,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { decisions, maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
-import { ajouterEtiquettes, commentairePR, fusionnerPR, ouvrirPR, retirerEtiquette } from "./github.mjs"
+import { ajouterEtiquettes, commentairePR, ecrireFichierDepot, fusionnerPR, ouvrirPR, retirerEtiquette } from "./github.mjs"
 import { COMPTER_TESTS } from "./creation.mjs"
 import { pathspec, verifier } from "./verification.mjs"
 import { escalader } from "./escalade.mjs"
@@ -90,6 +90,8 @@ function consigne(ctx, projet, tache) {
     "- Ne fais ni commit ni push : l'usine s'en charge.",
     "- Reste dans le périmètre de la tâche ; ne casse pas ce qui existe.",
     "- Avant de terminer, `npm run verify` doit passer. Lance-le et corrige jusqu'à ce qu'il passe.",
+    "- Puis autocontrôle, comme le fera le vérificateur : `npm run build`, lance l'application (`PORT=4300 DEMO=1 DATA_DIR=/tmp/autocontrole npm start &`), vérifie avec curl chaque critère observable par HTTP et que les pages demandées répondent, puis arrête-la. Corrige ce qui ne tient pas.",
+    "- Design : lis docs/DESIGN.md s'il existe, construis avec client/src/ui et les jetons de couleur ; tes écrans seront jugés sur captures (ordinateur et mobile) avec sa grille.",
     "- Si tu lances un serveur pour essayer, arrête-le avant de terminer.",
   ]
   if (decisionsPrises.length) parties.push("", "Décisions humaines déjà prises sur ce projet (à respecter) :", ...decisionsPrises.map((d) => `- ${d.question} → ${d.reponse}`))
@@ -132,7 +134,7 @@ async function fabriquer(ctx, projet, tache) {
   const agent = await executer(atelier, jeton, [
     `cd /travail/${nomDepot}/depot`,
     ecrireFichier("/tmp/sorties/tache/consigne.md", consigne(ctx, projet, tache)),
-    `claude -p "$(cat /tmp/sorties/tache/consigne.md)" --output-format json --model ${q(config.modeles.atelier.modele)} --dangerously-skip-permissions --max-turns 150 > /tmp/sorties/tache/agent.json 2> /tmp/sorties/tache/agent.err`,
+    `claude -p "$(cat /tmp/sorties/tache/consigne.md)" --output-format json --model ${q(tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele)} --dangerously-skip-permissions --max-turns 150 > /tmp/sorties/tache/agent.json 2> /tmp/sorties/tache/agent.err`,
     "echo \"@@ AGENT_CODE $?\"",
   ].join("\n"), { minutes, surAvancement: () => {} })
   let resume = ""
@@ -212,7 +214,7 @@ async function fabriquer(ctx, projet, tache) {
     maj(db, "taches", tache.id, { statut: "bloquee" })
     return escalader(ctx, { projetId: projet.id, tacheId: tache.id, raison: "verificateur", details: v.raisons.join("\n") })
   }
-  maj(db, "taches", tache.id, { verdict: JSON.stringify(v.verdict ?? null), tests: v.tests })
+  maj(db, "taches", tache.id, { verdict: JSON.stringify(v.verdict ?? null), tests: v.tests, design: v.design ? JSON.stringify({ note: v.design.note ?? null, mineurs: v.design.mineurs ?? [], resume: v.design.resume ?? "" }) : null })
   if (!v.ok) {
     await commentairePR(config, nomDepot, pr.number, `### :x: Refusée par le vérificateur\n\n${v.raisons.map((r) => `- ${r}`).join("\n")}`).catch(() => {})
     return refuser(ctx, projet, tache, v.raisons, { resume })
@@ -220,15 +222,24 @@ async function fabriquer(ctx, projet, tache) {
 
   // 7. La fusion : décidée ici, par le code. Le sha garantit qu'on fusionne ce qui a été vérifié.
   const bilan = (v.verdict.criteres ?? []).map((c) => `- :white_check_mark: ${c.critere}${c.preuve ? ` — ${c.preuve}` : ""}`).join("\n")
-  await commentairePR(config, nomDepot, pr.number, `### :white_check_mark: Validée par le vérificateur\n\n${v.verdict.resume ?? ""}\n\n${bilan}\n\n${v.tests} test(s) passé(s).`).catch(() => {})
+  const designPR = v.design ? `\n\n### :art: Design : ${v.design.note ?? "?"}/10\n${v.design.resume ?? ""}${(v.design.mineurs ?? []).length ? `\n\nÀ polir (lot de finition) :\n${v.design.mineurs.map((d) => `- ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}`).join("\n")}` : ""}` : ""
+  await commentairePR(config, nomDepot, pr.number, `### :white_check_mark: Validée par le vérificateur\n\n${v.verdict.resume ?? ""}\n\n${bilan}\n\n${v.tests} test(s) passé(s).${designPR}`).catch(() => {})
   await fusionnerPR(config, nomDepot, pr.number, { titre: `${tache.cle} · ${tache.titre} (#${pr.number})`, sha })
   const p = obtenir(db, "projets", projet.id)
   maj(db, "projets", projet.id, { plancher_tests: Math.max(p.plancher_tests, v.tests) })
   maj(db, "taches", tache.id, { statut: "fusionnee" })
+  // Le cliquet : les tests écrits par le vérificateur rejoignent .usine/e2e/ (protégé), rejoués à chaque tâche.
+  let versés = 0
+  for (const fichier of v.nouveauxTests ?? []) {
+    const contenu = await lireFichier(config.verificateur.url, config.secrets.worker, `/tmp/sorties/verif/e2e/${fichier}`).catch(() => null)
+    if (!contenu) continue
+    await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), `Non-régression : ${fichier} (${tache.cle})`).then(() => versés++).catch((e) => console.error("Test de non-régression :", e.message))
+  }
+  if (versés) noter(db, { projet: projet.id, tache: tache.id, type: "cliquet", message: `${versés} test(s) de non-régression ajouté(s) (${tache.cle})` })
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:verification").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:fusionnee"]).catch(() => {})
   noter(db, { projet: projet.id, tache: tache.id, type: "fusion", message: `${tache.cle} fusionnée (PR #${pr.number}, ${v.tests} tests)` })
-  await ctx.notifier.etape(projet, `:white_check_mark: *${tache.cle}* · ${tache.titre} : vérifiée et fusionnée (<https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}>, ${v.tests} tests). ${v.verdict.resume ?? ""}`)
+  await ctx.notifier.etape(projet, `:white_check_mark: *${tache.cle}* · ${tache.titre} : vérifiée et fusionnée (<https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}>, ${v.tests} tests${v.design?.note !== undefined && v.design?.note !== null ? `, design ${v.design.note}/10` : ""}). ${v.verdict.resume ?? ""}`)
   await apresFusion(ctx, projet.id, tache.lot)
 }
 

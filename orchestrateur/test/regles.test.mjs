@@ -141,3 +141,20 @@ test("santé : le pire état l'emporte ; durée de vie d'un aperçu lisible", as
   assert.equal(decrireApercu({ lot_livre: 1, apercu_expire_le: new Date(Date.now() + 3.2 * 86_400_000).toISOString() }), "expire dans 3 j")
   assert.equal(decrireApercu({ lot_livre: 1, apercu_expire_le: new Date(Date.now() + 5 * 3600_000).toISOString() }), "expire dans 5 h")
 })
+
+test("porte : une régression ou un défaut grave de design refuse la tâche", () => {
+  assert.match(porte({ marqueurs: tout, verdict: { ...approuve, regressions: ["contacts-1 : la liste est vide"] } }).join(), /régression.*contacts-1/)
+  assert.match(porte({ marqueurs: tout, verdict: approuve, design: { graves: [{ ecran: "contacts (mobile)", defaut: "le tableau déborde", correction: "liste empilée" }], mineurs: [] } }).join(), /design : contacts \(mobile\) : le tableau déborde → liste empilée/)
+  assert.deepEqual(porte({ marqueurs: tout, verdict: approuve, design: { graves: [], mineurs: [{ defaut: "espacement" }] } }), [])
+})
+
+test("design : brief vérifié, jetons et document produits", async () => {
+  const { verifierDesign, jetonsCss, designEnMarkdown } = await import("../src/design.mjs")
+  assert.deepEqual(verifierDesign(undefined), [])
+  assert.match(verifierDesign({ intention: "x", palette: { primaire: "rouge" } }).join(), /primaire/)
+  const design = { intention: "Sobre et précis", palette: { primaire: "#0f766e", accent: "#2563eb", fond: "#f8fafc", surface: "#ffffff", texte: "#0f172a", doux: "#64748b", succes: "#15803d", alerte: "#b45309", danger: "#b91c1c" }, typographie: { titres: "Inter" } }
+  assert.deepEqual(verifierDesign(design), [])
+  assert.match(jetonsCss(design), /--color-primaire: #0f766e;/)
+  assert.match(jetonsCss(design), /--font-titres: "Inter", system-ui/)
+  assert.match(designEnMarkdown({ nom: "Essai", design }), /## Grille/)
+})
