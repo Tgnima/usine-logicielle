@@ -69,7 +69,7 @@ export function blocsResume(ctx) {
   if (!(budget > 0)) conseils.push("fixe un budget mensuel pour recevoir des alertes")
   if (b.projets.some((p) => p.api_inconnu)) conseils.push("ajoute le prix de Codex pour inclure le vérificateur")
   if (conseils.length) blocs.push(contexte(`⚙️ Dans *Réglages* : ${conseils.join(" · ")}.`))
-  blocs.push({ type: "actions", elements: [lien("📈 Ouvrir le tableau de bord", adresseTableau(config), "lien_tableau", "primary"), bouton("⚙️ Réglages des coûts", "couts_reglages", "1")] })
+  blocs.push({ type: "actions", elements: [lien("📈 Ouvrir le tableau de bord", adresseTableau(config), "lien_tableau", "primary"), bouton("⚙️ Réglages des coûts", "couts_reglages", "1"), bouton("👥 Accès", "acces_ouvrir", "1")] })
   return blocs
 }
 
@@ -152,7 +152,7 @@ export function vueAccueil(ctx, { tableaux = true } = {}) {
     ...blocsModeles(config, b, tableaux),
     ...blocsHistorique(config, evolution(ctx.db, config, 12), tableaux),
     separateur,
-    contexte("Commandes : `/usine <demande>` · `/usine corriger <n°> …` · `/usine couts <n°>` · `/usine tableau` · `/usine statut`"),
+    contexte("Commandes : `/usine <demande>` · `/usine corriger <n°> …` · `/usine couts <n°>` · `/usine acces` · `/usine tableau` · `/usine statut`"),
   ]
   return { type: "home", blocks: blocs.slice(0, 100) }
 }

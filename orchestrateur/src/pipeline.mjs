@@ -32,7 +32,7 @@ export async function lancerAnalyse(ctx, projetId, options = {}) {
     }
     // Un slug déjà pris par un autre projet reçoit un suffixe.
     // (Certains noms sont réservés aux adresses de l'usine elle-même.)
-    const pris = ["mails", "usine-tableau"].includes(plan.slug) || db.prepare("SELECT 1 FROM projets WHERE slug = ? AND id != ?").get(plan.slug, projetId)
+    const pris = ["mails", "usine-tableau", "connexion", "apercu"].includes(plan.slug) || db.prepare("SELECT 1 FROM projets WHERE slug = ? AND id != ?").get(plan.slug, projetId)
     if (pris) plan.slug = `${plan.slug.slice(0, 17)}-${projetId}`
     maj(db, "projets", projetId, { statut: "plan_a_valider", plan: JSON.stringify(plan), nom: plan.nom, slug: plan.slug })
     return ctx.notifier.plan(obtenir(db, "projets", projetId), plan)

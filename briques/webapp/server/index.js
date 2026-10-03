@@ -5,9 +5,15 @@ import { existsSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { routes } from "./routes/index.js"
+import { entetes, gestionErreurs, limiter } from "./securite.js"
 
 export function creerApp() {
   const app = express()
+  // Derrière Caddy : la vraie adresse du visiteur sert à limiter les requêtes.
+  app.set("trust proxy", 1)
+  app.disable("x-powered-by")
+  app.use(entetes())
+  app.use("/api", limiter())
   app.use(express.json({ limit: "2mb" }))
 
   // Le contrôle de santé : l'usine, le vérificateur et le déployeur s'en servent.
@@ -18,7 +24,8 @@ export function creerApp() {
       db().prepare("SELECT 1").get()
       res.json({ ok: true })
     } catch (error) {
-      res.status(503).json({ ok: false, erreur: error.message })
+      console.error("Santé :", error)
+      res.status(503).json({ ok: false, erreur: "base de données indisponible" })
     }
   })
 
@@ -30,11 +37,9 @@ export function creerApp() {
     app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(join(dist, "index.html")))
   }
 
-  // Les erreurs restent explicites : jamais un état plausible qui cache une panne.
-  app.use((error, _req, res, _next) => {
-    console.error(error)
-    res.status(error.status ?? 500).json({ erreur: error.message })
-  })
+  // Les erreurs restent explicites pour qui exploite (journal), jamais un détail
+  // technique pour le visiteur ; une erreur métier garde son message (securite.js).
+  app.use(gestionErreurs())
   return app
 }
 

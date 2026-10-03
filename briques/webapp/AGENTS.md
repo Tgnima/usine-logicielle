@@ -58,4 +58,4 @@ test/                  les tests
 
 ## Fichiers protégés
 
-Ne les modifie pas : l'usine les restaure et refuse la tâche. `Dockerfile`, `test/sante.test.js`, `server/index.js` (seul l'ajout de routes passe par `server/routes/index.js`), `server/email.js` (tout email passe par `envoyer()`, jamais par un autre transport), `.usine/**`, `docs/PLAN.md`.
+Ne les modifie pas : l'usine les restaure et refuse la tâche. `Dockerfile`, `test/sante.test.js`, `test/securite.test.js`, `server/securite.js` (en-têtes, limitation, erreurs), `server/index.js` (seul l'ajout de routes passe par `server/routes/index.js`), `server/email.js` (tout email passe par `envoyer()`, jamais par un autre transport), `.usine/**`, `docs/PLAN.md`.

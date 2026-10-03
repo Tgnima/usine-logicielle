@@ -100,9 +100,10 @@ test("liberer : une tâche part quand ses dépendances sont fusionnées ou aband
 test("choixProduction : défauts du contrat, choix de la personne, valeurs inconnues ramenées au plus sûr", async () => {
   const { choixProduction } = await import("../src/livraison.mjs")
   const config = { production: { donnees: "demo", emails: "captures", horloge: "acceleree", destinataires_autorises: [] } }
-  assert.deepEqual(choixProduction(config), { donnees: "demo", emails: "captures", horloge: "acceleree", destinataires_autorises: [] })
+  assert.deepEqual(choixProduction(config), { donnees: "demo", emails: "captures", horloge: "acceleree", acces: "protege", destinataires_autorises: [] })
   const c = choixProduction(config, { emails: "reels" }, { donnees: "vide", destinataires_autorises: "moi@exemple.fr, @equipe.fr, pas-une-adresse" })
-  assert.deepEqual(c, { donnees: "vide", emails: "reels", horloge: "acceleree", destinataires_autorises: ["moi@exemple.fr", "@equipe.fr"] })
+  assert.deepEqual(c, { donnees: "vide", emails: "reels", horloge: "acceleree", acces: "protege", destinataires_autorises: ["moi@exemple.fr", "@equipe.fr"] })
+  assert.equal(choixProduction(config, { acces: "n'importe quoi" }).acces, "protege") // protégé sauf choix explicite
   assert.equal(choixProduction(config, { emails: "n'importe quoi", donnees: "?" }).emails, "captures")
 })
 
@@ -116,4 +117,14 @@ test("aiguiller : sans produit livré, nouveau ; un produit cité par son nom, c
   assert.deepEqual(await aiguiller(db, "Dans Prospecta les mails ne partent pas"), { type: "correction", projetId: 1 })
   assert.equal((await aiguiller(db, "l'ancienne production ne marche pas")).type, "incertain")
   if (cle) process.env.AI_GATEWAY_API_KEY = cle
+})
+
+test("porte sécurité : un secret dans le code est toujours refusé", () => {
+  assert.match(porte({ marqueurs: { ...tout, SECRETS_TROUVES: "1", SECRETS_FICHIERS: "server/llm.js " }, verdict: approuve }).join(), /secret.*server\/llm\.js/)
+})
+
+test("porte sécurité : refus seulement si la PR AJOUTE une faille grave de dépendance", () => {
+  assert.deepEqual(porte({ marqueurs: { ...tout, VULN_GRAVES: "2", VULN_GRAVES_MAIN: "2" }, verdict: approuve }), [])
+  assert.match(porte({ marqueurs: { ...tout, VULN_GRAVES: "3", VULN_GRAVES_MAIN: "2" }, verdict: approuve }).join(), /ajoute 1 faille/)
+  assert.deepEqual(porte({ marqueurs: { ...tout, VULN_GRAVES: "?" }, verdict: approuve }), []) // audit indisponible : pas bloquant
 })

@@ -3,6 +3,7 @@
 // sans clé ou en cas de doute, on demande à la personne. Jamais de décision
 // coûteuse (un nouveau projet) sur une supposition.
 import { enregistrer, prixApi } from "./couts.mjs"
+import { secret } from "./config.mjs"
 
 const PASSERELLE = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const MODELE = "anthropic/claude-haiku-4.5"
@@ -18,7 +19,7 @@ export async function aiguiller(db, texte, config = {}) {
   const t = texte.toLowerCase()
   const cite = produits.filter((p) => (p.nom && t.includes(p.nom.toLowerCase())) || (p.slug && t.includes(p.slug)))
   if (cite.length === 1) return { type: "correction", projetId: cite[0].id }
-  const cle = process.env.AI_GATEWAY_API_KEY
+  const cle = secret("ai_gateway_api_key")
   if (!cle) return { type: "incertain", candidats: produits }
   try {
     const liste = produits.map((p) => `${p.id}. ${p.nom} (${p.statut}) : ${p.prompt.slice(0, 200)}`).join("\n")

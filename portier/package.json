@@ -1,0 +1,7 @@
+{
+  "name": "usine-logicielle-portier",
+  "private": true,
+  "type": "module",
+  "description": "La page de connexion devant les applications de l usine",
+  "scripts": { "test": "node --test --test-reporter=spec test/*.test.mjs" }
+}

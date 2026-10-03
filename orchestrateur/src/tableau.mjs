@@ -1,26 +1,16 @@
 // Le tableau de bord web des coûts : une page, servie par l'orchestrateur sur
 // le réseau interne (port 8091), publiée par Caddy sur usine-tableau.<domaine>.
-// Accès protégé par un mot de passe (TABLEAU_MOT_DE_PASSE, dans le .env) ; sans
-// mot de passe configuré, la page refuse de s'afficher.
+// Caddy fait passer chaque visite par le portier (administrateurs seulement), et
+// la page revérifie la session auprès du portier : une requête qui contournerait
+// Caddy depuis le réseau interne n'est pas servie.
 import { createServer } from "node:http"
-import { timingSafeEqual } from "node:crypto"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, evolution, montant, reglagesCouts } from "./couts.mjs"
 import { duree, nomMois } from "./slack-couts.mjs"
+import { quiEstConnecte } from "./portier.mjs"
 
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
 const jetons = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(".", ",")} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n))
 const STATUTS = { analyse: "analyse", questions: "questions", plan_a_valider: "plan à valider", creation: "création", fabrication: "fabrication", bloque: "bloqué", livre: "livré", corrections: "corrections", mise_en_production: "mise en production", en_production: "en production", echec: "échec", arrete: "arrêté", abandonne: "abandonné" }
-
-function autorise(req) {
-  const attendu = process.env.TABLEAU_MOT_DE_PASSE
-  if (!attendu) return false
-  const [type, valeur] = String(req.headers.authorization ?? "").split(" ")
-  if (type !== "Basic" || !valeur) return false
-  const mdp = Buffer.from(valeur, "base64").toString().split(":").slice(1).join(":")
-  const a = Buffer.from(mdp)
-  const b = Buffer.from(attendu)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
 
 // Les barres mensuelles (équivalent API et coût réel), en SVG.
 function graphique(config, evo) {
@@ -108,14 +98,11 @@ code { font-size: 13px } .note { color: var(--doux); font-size: 13px; margin-top
 }
 
 export function demarrerTableau(ctx, port = 8091) {
-  createServer((req, res) => {
-    if (!process.env.TABLEAU_MOT_DE_PASSE) {
-      res.writeHead(503, { "content-type": "text/plain; charset=utf-8" })
-      return res.end("Tableau de bord non configuré : TABLEAU_MOT_DE_PASSE manque dans le .env de l'usine.")
-    }
-    if (!autorise(req)) {
-      res.writeHead(401, { "www-authenticate": 'Basic realm="Usine logicielle", charset="UTF-8"', "content-type": "text/plain; charset=utf-8" })
-      return res.end("Accès réservé.")
+  createServer(async (req, res) => {
+    const qui = await quiEstConnecte(req)
+    if (!qui?.autorise || qui.role !== "admin") {
+      res.writeHead(403, { "content-type": "text/plain; charset=utf-8" })
+      return res.end("Accès réservé aux administrateurs de l'usine.")
     }
     try {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY" })

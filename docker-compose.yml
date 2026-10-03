@@ -1,12 +1,19 @@
-# L'usine logicielle. Tous les conteneurs sont sur le réseau « usine », avec les
-# produits déployés. Seul Caddy ouvre des ports (80, 443).
+# L'usine logicielle. Seul Caddy ouvre des ports (80, 443).
 #
 #   orchestrateur  l'état, le contrat, GitHub, Slack          (pas de Docker)
 #   atelier-1      les agents codent (Claude Code)             (jeton GitHub : jamais)
 #   verificateur   reconstruit, démarre et teste (Codex)       (jeton GitHub : clone seul)
 #   deployeur      tire l'état souhaité, construit, déploie   (seul accès à Docker)
-#   caddy          HTTPS automatique devant les produits
+#   portier        la page de connexion devant chaque application
+#   caddy          HTTPS automatique, et le portier devant tout ce qui est publié
 #   mailpit        capture les emails des produits en démo
+#
+# Deux réseaux : « usine » (les rouages de l'usine) et « produits » (les applications
+# fabriquées). Une application ne peut pas joindre les rouages de l'usine.
+#
+# Les secrets ne sont pas dans .env : ils sont chiffrés (secrets.sops.env, SOPS + age),
+# déchiffrés en mémoire au démarrage (/run/usine-secrets) et chaque service ne reçoit
+# que les siens, en fichiers (/run/secrets/<nom>). Voir secrets.sh.
 
 name: usine-logicielle
 
@@ -22,11 +29,12 @@ services:
     env_file: .env
     environment:
       USINE_CONFIG: /app/usine.config.yml
+    secrets: [github_token, worker_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token]
     volumes:
       - ./usine.config.yml:/app/usine.config.yml:ro
       - orchestrateur-data:/app/data
       - etat:/app/etat:ro
-    depends_on: [atelier-1, verificateur]
+    depends_on: [atelier-1, verificateur, portier]
     mem_limit: 256m
     networks: [usine]
 
@@ -34,10 +42,7 @@ services:
     dns: *dns
     build: { context: ., dockerfile: atelier/Dockerfile }
     restart: unless-stopped
-    environment:
-      WORKER_TOKEN: ${WORKER_TOKEN}
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    secrets: [worker_token, claude_code_oauth_token, anthropic_api_key]
     mem_limit: 1600m
     networks: [usine]
 
@@ -45,9 +50,7 @@ services:
     dns: *dns
     build: { context: ., dockerfile: verificateur/Dockerfile }
     restart: unless-stopped
-    environment:
-      WORKER_TOKEN: ${WORKER_TOKEN}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    secrets: [worker_token, openai_api_key]
     volumes:
       - codex:/home/node/.codex
     shm_size: 256m
@@ -59,25 +62,36 @@ services:
     build: { context: ., dockerfile: deployeur/Dockerfile }
     restart: unless-stopped
     environment:
-      GITHUB_TOKEN: ${DEPLOY_TOKEN:-${GITHUB_TOKEN}}
       DEPOT_ETAT: ${DEPOT_ETAT}
-      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       HTTPS: ${HTTPS:-1}
       CADDY_EMAIL: ${CADDY_EMAIL:-}
       MEMOIRE_PRODUIT: ${MEMOIRE_PRODUIT:-384m}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
       SMTP_SECURE: ${SMTP_SECURE:-}
       EMAIL_EXPEDITEUR: ${EMAIL_EXPEDITEUR:-}
       TABLEAU_HOTE: ${TABLEAU_HOTE:-}
+      DOMAINE_BASE: ${DOMAINE_BASE:-45-93-21-17.sslip.io}
+      RESEAU: produits
+    secrets: [github_token, deploy_token, ai_gateway_api_key, smtp_user, smtp_pass]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./caddy:/caddy
       - etat:/etat
       - deployeur-srv:/srv
     mem_limit: 512m
+    networks: [usine, produits]
+
+  portier:
+    dns: *dns
+    build: { context: ., dockerfile: portier/Dockerfile }
+    restart: unless-stopped
+    environment:
+      DOMAINE_BASE: ${DOMAINE_BASE:-45-93-21-17.sslip.io}
+    secrets: [portier_secret, portier_api_token]
+    volumes:
+      - portier-data:/app/data
+    mem_limit: 96m
     networks: [usine]
 
   caddy:
@@ -90,7 +104,7 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     mem_limit: 128m
-    networks: [usine]
+    networks: [usine, produits]
 
   mailpit:
     image: axllent/mailpit:latest
@@ -99,18 +113,36 @@ services:
       MP_SMTP_AUTH_ACCEPT_ANY: "1"
       MP_SMTP_AUTH_ALLOW_INSECURE: "1"
       MP_MAX_MESSAGES: "3000"
-      MP_UI_AUTH: ${MAILPIT_UI_AUTH:-}
     mem_limit: 128m
-    networks: [usine]
+    networks: [usine, produits]
 
 networks:
   usine:
     name: usine
+  produits:
+    name: produits
+
+# Les secrets, déchiffrés en mémoire par secrets.sh (un fichier par secret).
+secrets:
+  github_token: { file: /run/usine-secrets/github_token }
+  deploy_token: { file: /run/usine-secrets/deploy_token }
+  worker_token: { file: /run/usine-secrets/worker_token }
+  claude_code_oauth_token: { file: /run/usine-secrets/claude_code_oauth_token }
+  anthropic_api_key: { file: /run/usine-secrets/anthropic_api_key }
+  openai_api_key: { file: /run/usine-secrets/openai_api_key }
+  ai_gateway_api_key: { file: /run/usine-secrets/ai_gateway_api_key }
+  slack_bot_token: { file: /run/usine-secrets/slack_bot_token }
+  slack_app_token: { file: /run/usine-secrets/slack_app_token }
+  smtp_user: { file: /run/usine-secrets/smtp_user }
+  smtp_pass: { file: /run/usine-secrets/smtp_pass }
+  portier_secret: { file: /run/usine-secrets/portier_secret }
+  portier_api_token: { file: /run/usine-secrets/portier_api_token }
 
 volumes:
   orchestrateur-data:
   etat:
   deployeur-srv:
+  portier-data:
   caddy-data:
   caddy-config:
   # Le compte Codex (ChatGPT) du vérificateur. CODEX_VOLUME permet de réutiliser

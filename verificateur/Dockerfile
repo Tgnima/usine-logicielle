@@ -12,10 +12,12 @@ RUN npx playwright install --with-deps chromium && chmod -R a+rx /ms-playwright
 
 ENV ROLE=verificateur
 COPY commun/serveur-travaux.mjs /opt/usine/serveur-travaux.mjs
+COPY --chmod=755 commun/entree.sh /opt/usine/entree.sh
 RUN mkdir -p /travail /tmp/sorties /home/node/.codex && chown -R node:node /travail /tmp/sorties /home/node/.codex
 USER node
 RUN git config --global user.name "Usine logicielle (vérificateur)" && git config --global user.email "usine@wayhost.local"
 WORKDIR /travail
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:8080/sante').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["/opt/usine/entree.sh"]
 CMD ["node", "/opt/usine/serveur-travaux.mjs"]

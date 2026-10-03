@@ -18,6 +18,7 @@ import { escalader } from "./escalade.mjs"
 import { apresFusion } from "./livraison.mjs"
 import { enregistrer, usagesClaude } from "./couts.mjs"
 import { verifierBudgets } from "./budgets.mjs"
+import { decrireDefaut, relireSecurite } from "./relectures.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -196,7 +197,15 @@ async function fabriquer(ctx, projet, tache) {
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:verification"]).catch(() => {})
   await ctx.notifier.etape(projet, `:mag: *${tache.cle}* : pull request <https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}> ouverte, le vérificateur la teste.`)
 
-  // 5. Le vérificateur indépendant, puis la porte.
+  // 5. La relecture sécurité (un autre agent, une grille) : un défaut grave renvoie la tâche.
+  const rs = await relireSecurite(ctx, projet, tache, nomDepot).catch((e) => ({ graves: [], mineurs: [], resume: e.message, indisponible: true }))
+  if (rs.graves.length) {
+    await commentairePR(config, nomDepot, pr.number, `### :lock: Refusée par la relecture sécurité\n\n${rs.graves.map((d) => `- ${decrireDefaut(d)}`).join("\n")}`).catch(() => {})
+    return refuser(ctx, projet, tache, rs.graves.map((d) => `sécurité : ${decrireDefaut(d)}`), { resume })
+  }
+  if (rs.mineurs.length) await commentairePR(config, nomDepot, pr.number, `### :lock: Relecture sécurité : remarques mineures\n\n${rs.mineurs.map((d) => `- ${decrireDefaut(d)}`).join("\n")}`).catch(() => {})
+
+  // 6. Le vérificateur indépendant, puis la porte.
   const v = await verifier(ctx, obtenir(db, "projets", projet.id), obtenir(db, "taches", tache.id), sha)
   if (v.infra) {
     // Une panne du vérificateur n'est pas une faute de l'agent : on escalade sans consommer de tentative.
@@ -209,7 +218,7 @@ async function fabriquer(ctx, projet, tache) {
     return refuser(ctx, projet, tache, v.raisons, { resume })
   }
 
-  // 6. La fusion : décidée ici, par le code. Le sha garantit qu'on fusionne ce qui a été vérifié.
+  // 7. La fusion : décidée ici, par le code. Le sha garantit qu'on fusionne ce qui a été vérifié.
   const bilan = (v.verdict.criteres ?? []).map((c) => `- :white_check_mark: ${c.critere}${c.preuve ? ` — ${c.preuve}` : ""}`).join("\n")
   await commentairePR(config, nomDepot, pr.number, `### :white_check_mark: Validée par le vérificateur\n\n${v.verdict.resume ?? ""}\n\n${bilan}\n\n${v.tests} test(s) passé(s).`).catch(() => {})
   await fusionnerPR(config, nomDepot, pr.number, { titre: `${tache.cle} · ${tache.titre} (#${pr.number})`, sha })

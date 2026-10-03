@@ -69,6 +69,14 @@ export async function verifier(ctx, projet, tache, sha) {
     "cd /travail/verif/depot",
     ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache)),
     "npm ci --no-audit --no-fund > /tmp/sorties/verif/npm.log 2>&1 && echo '@@ INSTALL_OK'",
+    // Failles graves (high, critical) des dépendances de production : la PR, puis main pour comparer.
+    `AUDIT='const j=JSON.parse(require("fs").readFileSync(0,"utf8")||"{}");const v=(j.metadata||{}).vulnerabilities;console.log(v?(v.high||0)+(v.critical||0):"?")'`,
+    "echo \"@@ VULN_GRAVES $(npm audit --omit=dev --json 2>/dev/null | node -e \"$AUDIT\")\"",
+    "mkdir -p /tmp/audit-main && git show origin/main:package.json > /tmp/audit-main/package.json 2>/dev/null && git show origin/main:package-lock.json > /tmp/audit-main/package-lock.json 2>/dev/null && echo \"@@ VULN_GRAVES_MAIN $(cd /tmp/audit-main && npm audit --package-lock-only --omit=dev --json 2>/dev/null | node -e \"$AUDIT\")\"",
+    // Des secrets dans les lignes ajoutées par la PR (jamais affichés : seulement les fichiers).
+    "SECRETS='(xox[abprs]-[0-9A-Za-z-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'",
+    "echo \"@@ SECRETS_TROUVES $(git diff origin/main...HEAD --unified=0 -- . ':(exclude)package-lock.json' | grep -E '^\\+' | grep -cE \"$SECRETS\")\"",
+    "echo \"@@ SECRETS_FICHIERS $(git diff origin/main...HEAD -G\"$SECRETS\" --name-only -- . ':(exclude)package-lock.json' | tr '\\n' ' ')\"",
     "npm run build > /tmp/sorties/verif/build.log 2>&1 && echo '@@ BUILD_OK' || tail -20 /tmp/sorties/verif/build.log",
     `npm test 2>&1 | tee /tmp/sorties/verif/tests.log | tail -8; ${COMPTER_TESTS} /tmp/sorties/verif/tests.log`,
     env,
@@ -109,6 +117,11 @@ export async function verifier(ctx, projet, tache, sha) {
 export function porte({ marqueurs: m, verdict, plancher = 0, journal = "" }) {
   const raisons = []
   if (!("INSTALL_OK" in m)) return ["l'installation des dépendances (npm ci) échoue"]
+  // La sécurité d'abord : un secret dans le code, ou une faille grave ajoutée.
+  if (Number(m.SECRETS_TROUVES ?? 0) > 0) raisons.push(`un secret (clé, jeton ou clé privée) est écrit dans le code : ${m.SECRETS_FICHIERS || "voir le diff"}. Retire-le et lis-le depuis une variable d'environnement.`)
+  const vuln = Number(m.VULN_GRAVES)
+  const vulnMain = Number(m.VULN_GRAVES_MAIN ?? 0)
+  if (Number.isFinite(vuln) && vuln > (Number.isFinite(vulnMain) ? vulnMain : 0)) raisons.push(`la PR ajoute ${vuln - (Number.isFinite(vulnMain) ? vulnMain : 0)} faille(s) grave(s) dans les dépendances de production (npm audit) : choisis une autre dépendance ou une version corrigée`)
   if (!("BUILD_OK" in m)) raisons.push(`le build échoue :\n${journal.split("\n").slice(-20).join("\n")}`)
   const passes = Number(m.TESTS_PASSES ?? 0)
   const echecs = Number(m.TESTS_ECHECS ?? 0)

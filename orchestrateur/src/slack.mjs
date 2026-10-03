@@ -10,6 +10,7 @@ import { aiguiller } from "./aiguillage.mjs"
 import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
 import { blocsResume, vueAccueil } from "./accueil.mjs"
 import { repondreDansLeFil } from "./conversation.mjs"
+import { brancherAcces } from "./slack-acces.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
@@ -127,7 +128,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
     }
     if (mot === "tableau" || mot === "dashboard") {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Tableau de bord de l'usine* : coûts, budgets et évolution mensuelle."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
@@ -140,6 +141,7 @@ export async function demarrerSlack(ctx) {
       return repondre(lignes.join("\n") || "Aucun projet pour l'instant.")
     }
     if (!estAdmin(command.user_id)) return repondre(refus)
+    if (mot === "acces" || mot === "accès") return ouvrirAcces(command.trigger_id, command.user_id)
     if (mot === "stop") return repondre(actions.arreter(ctx, command.user_name).message)
     if (mot === "reprendre") return repondre(actions.reprendre(ctx).message)
     if (mot === "relancer" && /^\d+$/.test(arg ?? "")) {
@@ -226,6 +228,7 @@ export async function demarrerSlack(ctx) {
     await respond({ response_type: "ephemeral", replace_original: false, text: refus })
     return false
   }
+  const ouvrirAcces = brancherAcces(app, ctx, { estAdmin, refus })
   const retirerBoutons = async (body, texte) => {
     const blocs = (body.message?.blocks ?? []).filter((b) => b.type !== "actions")
     await app.client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: texte, blocks: [...blocs, { type: "context", elements: [{ type: "mrkdwn", text: texte }] }] }).catch(() => {})
@@ -306,6 +309,7 @@ export async function demarrerSlack(ctx) {
             hint: { type: "plain_text", text: "Adresses ou domaines séparés par des virgules (ex. moi@exemple.fr, @mon-equipe.fr). Vide = tout le monde." },
             element: { type: "plain_text_input", action_id: "v", ...(c.destinataires_autorises.length ? { initial_value: c.destinataires_autorises.join(", ") } : {}) } },
           radio("horloge", "Horloge", [["acceleree", "Accélérée (un jour = une minute)"], ["reelle", "Réelle"]], c.horloge),
+          radio("acces", "Accès", [["protege", "Protégé : page de connexion de l'usine (recommandé)"], ["public", "Public : ouvert à tous, sans connexion"]], c.acces, "Les comptes se gèrent avec /usine acces. Les liens de suivi et de désinscription des emails restent toujours publics."),
         ],
       },
     })
@@ -323,6 +327,7 @@ export async function demarrerSlack(ctx) {
       donnees: v.donnees.v.selected_option.value,
       emails: v.emails.v.selected_option.value,
       horloge: v.horloge.v.selected_option.value,
+      acces: v.acces.v.selected_option.value,
       destinataires_autorises: v.autorises.v.value ?? "",
     }
     if (demande.emails === "reels" && !process.env.SMTP_HOST) {

@@ -51,24 +51,26 @@ async function santePublique(url) {
 // Les choix de production : le contrat donne les défauts, la personne qui valide
 // peut les changer, et ils restent ceux du produit jusqu'au prochain changement.
 export function choixProduction(config, ...sources) {
-  const c = Object.assign({ donnees: "demo", emails: "captures", horloge: "acceleree", destinataires_autorises: [] }, config.production ?? {}, ...sources.filter(Boolean))
+  const c = Object.assign({ donnees: "demo", emails: "captures", horloge: "acceleree", acces: "protege", destinataires_autorises: [] }, config.production ?? {}, ...sources.filter(Boolean))
   const liste = Array.isArray(c.destinataires_autorises) ? c.destinataires_autorises : String(c.destinataires_autorises ?? "").split(/[,;\s]+/)
   return {
     donnees: c.donnees === "vide" ? "vide" : "demo",
     emails: c.emails === "reels" ? "reels" : "captures",
     horloge: c.horloge === "reelle" ? "reelle" : "acceleree",
+    // Protégé sauf choix explicite : « toujours protéger les applications ».
+    acces: c.acces === "public" ? "public" : "protege",
     destinataires_autorises: liste.map((x) => String(x).trim()).filter((x) => /^[^\s@]*@[^\s@]+$/.test(x)),
   }
 }
 
 export const decrireChoix = (c) =>
-  `données ${c.donnees === "demo" ? "de démo" : "vides (vraie utilisation)"} · emails ${c.emails === "reels" ? `réels${c.destinataires_autorises.length ? ` vers ${c.destinataires_autorises.join(", ")} seulement` : " vers TOUS les destinataires"}` : "capturés par Mailpit"} · horloge ${c.horloge === "reelle" ? "réelle" : "accélérée"}`
+  `accès ${c.acces === "public" ? "PUBLIC" : "protégé"} · données ${c.donnees === "demo" ? "de démo" : "vides (vraie utilisation)"} · emails ${c.emails === "reels" ? `réels${c.destinataires_autorises.length ? ` vers ${c.destinataires_autorises.join(", ")} seulement` : " vers TOUS les destinataires"}` : "capturés par Mailpit"} · horloge ${c.horloge === "reelle" ? "réelle" : "accélérée"}`
 
 function etatSouhaite(config, projet, environnement, sha, lot, choix = null) {
   const a = adresses(config, projet.slug)
   const hote = (url) => new URL(url).host
   // Un aperçu est toujours une vitrine de démo ; la production suit les choix.
-  const c = environnement === "production" ? choix : { donnees: config.demo?.actif ? "demo" : "vide", emails: "captures", horloge: "acceleree", destinataires_autorises: [] }
+  const c = environnement === "production" ? choix : { donnees: config.demo?.actif ? "demo" : "vide", emails: "captures", horloge: "acceleree", acces: "protege", destinataires_autorises: [] }
   const mailpit = c.emails === "captures" && (config.demo?.services ?? []).includes("mailpit")
   return {
     produit: projet.slug,
@@ -81,6 +83,7 @@ function etatSouhaite(config, projet, environnement, sha, lot, choix = null) {
     lot,
     donnees: c.donnees,
     emails: c.emails,
+    acces: c.acces ?? "protege",
     env: {
       DEMO: c.donnees === "demo" ? "1" : "0",
       DEMO_VITESSE_HORLOGE: c.horloge === "reelle" ? "1" : String(config.demo?.vitesse_horloge ?? 1),

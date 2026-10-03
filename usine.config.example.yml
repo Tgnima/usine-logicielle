@@ -44,6 +44,8 @@ perimetre_protege:
   - test/sante.test.js
   - server/index.js
   - server/email.js                 # la barrière des destinataires
+  - server/securite.js              # en-têtes, limitation des requêtes, erreurs sans détail
+  - test/securite.test.js
   - docs/PLAN.md
   - .usine/**
 

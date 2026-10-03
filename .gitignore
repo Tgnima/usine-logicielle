@@ -4,3 +4,5 @@ data/
 node_modules/
 caddy/Caddyfile
 !caddy/.gitkeep
+secrets.sops.env
+.sops.yaml

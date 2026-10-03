@@ -16,6 +16,7 @@ import { demarrerSlack, notificateurConsole } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
 import { demarrerTableau } from "./tableau.mjs"
+import { demarrerSynchronisationPortier } from "./portier.mjs"
 
 const config = chargerConfig()
 mkdirSync(config.dataDir, { recursive: true })
@@ -39,6 +40,7 @@ actions.reprise(ctx)
 demarrerFabrique(ctx)
 surveillerEscalades(ctx)
 demarrerTableau(ctx)
+demarrerSynchronisationPortier(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).
 // Elle n'écoute que dans le conteneur.

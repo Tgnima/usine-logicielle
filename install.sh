@@ -4,7 +4,7 @@
 #   bash install.sh --reprendre-de ../usine-contenu
 #                                    réutilise la connexion Claude et le volume Codex
 #                                    d'une usine à contenu déjà installée
-# Aucun secret n'est jamais affiché.
+# Aucun secret n'est jamais affiché, ni gardé en clair : secrets.sh les chiffre.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -33,32 +33,40 @@ poser() {
 [ -f usine.config.yml ] || { cp usine.config.example.yml usine.config.yml; echo "• usine.config.yml créé (le contrat : à relire)"; }
 [ -f caddy/Caddyfile ] || printf ':80 {\n\trespond "Usine logicielle" 200\n}\n' > caddy/Caddyfile
 
-if [ -z "$(valeur WORKER_TOKEN)" ]; then poser WORKER_TOKEN "$(openssl rand -hex 32)"; echo "• WORKER_TOKEN généré"; fi
-if [ -z "$(valeur TABLEAU_MOT_DE_PASSE)" ]; then poser TABLEAU_MOT_DE_PASSE "$(openssl rand -base64 18 | tr -d '/+=')"; echo "• Mot de passe du tableau de bord généré (grep TABLEAU_MOT_DE_PASSE .env)"; fi
+# Le domaine des adresses (connexion, aperçus) : celui du contrat.
+if [ -z "$(valeur DOMAINE_BASE)" ]; then
+  base=$(grep -E '^\s*base:' usine.config.yml | head -1 | sed -E 's/^\s*base:\s*([^ #]+).*/\1/')
+  [ -n "$base" ] && poser DOMAINE_BASE "$base" && echo "• DOMAINE_BASE : $base"
+fi
 
-if [ -n "$SOURCE" ]; then
-  if [ -z "$(valeur CLAUDE_CODE_OAUTH_TOKEN)" ] && [ -f "$SOURCE/.env" ]; then
-    jeton=$(grep -E "^CLAUDE_CODE_OAUTH_TOKEN=" "$SOURCE/.env" | head -1 | cut -d= -f2- || true)
-    [ -n "$jeton" ] && poser CLAUDE_CODE_OAUTH_TOKEN "$jeton" && echo "• Connexion Claude reprise de $SOURCE"
-  fi
-  if [ -z "$(valeur AI_GATEWAY_API_KEY)" ] && [ -f "$SOURCE/.env" ]; then
-    cle=$(grep -E "^AI_GATEWAY_API_KEY=" "$SOURCE/.env" | head -1 | cut -d= -f2- || true)
-    [ -n "$cle" ] && poser AI_GATEWAY_API_KEY "$cle" && echo "• Clé Vercel AI Gateway reprise de $SOURCE"
-  fi
+if [ -n "$SOURCE" ] && [ -f "$SOURCE/.env" ]; then
+  for nom in CLAUDE_CODE_OAUTH_TOKEN AI_GATEWAY_API_KEY; do
+    if [ -z "$(valeur $nom)" ]; then
+      v=$(grep -E "^$nom=" "$SOURCE/.env" | head -1 | cut -d= -f2- || true)
+      [ -n "$v" ] && poser "$nom" "$v" && echo "• $nom repris de $SOURCE"
+    fi
+  done
   vol=$(docker volume ls --format '{{.Name}}' | grep -E 'codex$' | head -1 || true)
   if [ -n "$vol" ] && [ "$(valeur CODEX_VOLUME)" = "usine-logicielle-codex" ]; then poser CODEX_VOLUME "$vol"; echo "• Volume Codex réutilisé : $vol"; fi
 fi
 
+# Les secrets : chiffrés (SOPS + age), retirés de .env, déchiffrés en mémoire au démarrage.
+bash secrets.sh installer
+bash secrets.sh migrer
+
 manque=()
-for v in GITHUB_TOKEN WORKER_TOKEN DEPOT_ETAT; do [ -n "$(valeur $v)" ] || manque+=("$v"); done
-[ -n "$(valeur CLAUDE_CODE_OAUTH_TOKEN)$(valeur ANTHROPIC_API_KEY)" ] || manque+=("CLAUDE_CODE_OAUTH_TOKEN ou ANTHROPIC_API_KEY")
+etat=$(bash secrets.sh verifier)
+for v in GITHUB_TOKEN WORKER_TOKEN; do echo "$etat" | grep -qE "^$v +rempli" || manque+=("$v"); done
+echo "$etat" | grep -qE "^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY) +rempli" || manque+=("CLAUDE_CODE_OAUTH_TOKEN ou ANTHROPIC_API_KEY")
+[ -n "$(valeur DEPOT_ETAT)" ] || manque+=("DEPOT_ETAT")
 if [ ${#manque[@]} -gt 0 ]; then
   echo
-  echo "Il manque dans .env : ${manque[*]}"
-  echo "Ouvre .env (nano .env), colle les valeurs, puis relance : bash install.sh"
+  echo "Il manque : ${manque[*]}"
+  echo "Colle les valeurs dans .env (nano .env), puis relance : bash install.sh"
+  echo "(Elles y seront chiffrées puis effacées : .env ne garde jamais un secret.)"
   exit 1
 fi
-[ -n "$(valeur SLACK_BOT_TOKEN)" ] || echo "• Pas de jetons Slack : l'usine se pilotera par la CLI (voir README)."
+echo "$etat" | grep -qE "^SLACK_BOT_TOKEN +rempli" || echo "• Pas de jetons Slack : l'usine se pilotera par la CLI (voir README)."
 
 docker volume create "$(valeur CODEX_VOLUME)" >/dev/null  # existe déjà s'il est réutilisé
 echo "• Construction des images (Claude Code, Codex et Playwright en dernière version)…"

@@ -13,8 +13,21 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import { join } from "node:path"
 
 const env = process.env
+// Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
+const secret = (nom) => {
+  try {
+    return readFileSync(`/run/secrets/${nom}`, "utf8").trim()
+  } catch {
+    return env[nom.toUpperCase()] ?? ""
+  }
+}
 const DEPOT_ETAT = env.DEPOT_ETAT // proprietaire/usine-etat
-const JETON = env.GITHUB_TOKEN
+const JETON = secret("deploy_token") || secret("github_token")
+const BASE = env.DOMAINE_BASE ?? ""
+const PORTIER = "portier:8080"
+// Les chemins d'une application joignables sans connexion : santé, pages publiques,
+// suivi des emails et désinscription (un destinataire n'a pas de compte).
+const CHEMINS_PUBLICS = ["/api/health", "/public/*", "/t/*", "/desinscription/*"]
 const ETAT = env.ETAT_DIR ?? "/etat"
 const CADDY = env.CADDY_DIR ?? "/caddy"
 const SRV = env.SRV_DIR ?? "/srv"
@@ -100,7 +113,7 @@ async function synchroniserEtat() {
 // Ce qui vient du dépôt d'état est contrôlé avant d'atteindre Docker.
 function valide(s) {
   return /^[a-z0-9-]{3,24}$/.test(s.produit ?? "") && /^[0-9a-f]{40}$/.test(s.sha ?? "") && /^[\w.-]+\/[\w.-]+$/.test(s.depot ?? "")
-    && ["apercu", "production"].includes(s.environnement) && [undefined, "demo", "vide"].includes(s.donnees) && [undefined, "captures", "reels"].includes(s.emails) && /^[a-z0-9.-]+$/.test(s.hote ?? "") && (!s.hote_mails || /^[a-z0-9.-]+$/.test(s.hote_mails))
+    && ["apercu", "production"].includes(s.environnement) && [undefined, "protege", "public"].includes(s.acces) && [undefined, "demo", "vide"].includes(s.donnees) && [undefined, "captures", "reels"].includes(s.emails) && /^[a-z0-9.-]+$/.test(s.hote ?? "") && (!s.hote_mails || /^[a-z0-9.-]+$/.test(s.hote_mails))
 }
 
 const VARIABLES = ["DEMO", "DEMO_VITESSE_HORLOGE", "PUBLIC_URL", "LLM_MODELE", "EMAIL_DESTINATAIRES_AUTORISES"]
@@ -111,9 +124,11 @@ function variables(s) {
   // Emails réels : le service d'envoi vient du .env du serveur, jamais du dépôt d'état.
   if (s.emails === "reels") {
     if (!env.SMTP_HOST) throw new Error("emails réels demandés mais SMTP_HOST n'est pas configuré")
-    for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE", "EMAIL_EXPEDITEUR"]) if (env[k]) v[k] = env[k]
+    for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "EMAIL_EXPEDITEUR"]) if (env[k]) v[k] = env[k]
+    if (secret("smtp_user")) v.SMTP_USER = secret("smtp_user")
+    if (secret("smtp_pass")) v.SMTP_PASS = secret("smtp_pass")
   }
-  if (env.AI_GATEWAY_API_KEY) v.AI_GATEWAY_API_KEY = env.AI_GATEWAY_API_KEY
+  if (secret("ai_gateway_api_key")) v.AI_GATEWAY_API_KEY = secret("ai_gateway_api_key")
   return Object.entries(v).flatMap(([k, val]) => ["-e", `${k}=${val}`])
 }
 
@@ -182,18 +197,45 @@ async function deployerProduction(s, precedent) {
 }
 
 // --- Caddy ----------------------------------------------------------------------
+// Un site Caddy. Protégé (par défaut) : le portier vérifie chaque requête, sauf
+// les chemins publics ; l'en-tête d'identité ne peut pas venir du visiteur.
+function blocSite(hote, cible, { protege = true, publics = CHEMINS_PUBLICS } = {}) {
+  const site = HTTPS ? hote : `http://${hote}`
+  const entetes = `\theader {\n\t\tStrict-Transport-Security "max-age=31536000"\n\t\tX-Content-Type-Options "nosniff"\n\t\tReferrer-Policy "strict-origin-when-cross-origin"\n\t\tX-Frame-Options "SAMEORIGIN"\n\t\t-Server\n\t}\n`
+  if (!protege) return `${site} {\n\tencode zstd gzip\n${entetes}\treverse_proxy ${cible}\n}`
+  return `${site} {
+\tencode zstd gzip
+${entetes}\trequest_header -X-Usine-Utilisateur
+\thandle /_portier/api/* {
+\t\trespond 404
+\t}
+\thandle /_portier/* {
+\t\treverse_proxy ${PORTIER}
+\t}
+${publics.length ? `\t@public path ${publics.join(" ")}\n\thandle @public {\n\t\treverse_proxy ${cible}\n\t}\n` : ""}\thandle {
+\t\tforward_auth ${PORTIER} {
+\t\t\turi /_portier/verifier
+\t\t\tcopy_headers X-Usine-Utilisateur
+\t\t}
+\t\treverse_proxy ${cible}
+\t}
+}`
+}
+
 async function regenererCaddy(statut) {
-  const site = (hote) => (HTTPS ? hote : `http://${hote}`)
   const blocs = []
   const mails = new Set()
   for (const s of Object.values(statut)) {
     if (!s.conteneur || !s.hote) continue
-    blocs.push(`${site(s.hote)} {\n\tencode zstd gzip\n\treverse_proxy ${s.conteneur}:3000\n}`)
+    // Un aperçu est toujours protégé ; une production l'est sauf choix explicite « public ».
+    blocs.push(blocSite(s.hote, `${s.conteneur}:3000`, { protege: s.acces !== "public" || s.hote.includes(".apercu.") }))
     if (s.hote_mails) mails.add(s.hote_mails)
   }
-  for (const h of mails) blocs.push(`${site(h)} {\n\treverse_proxy mailpit:8025\n}`)
-  // Le tableau de bord des coûts de l'usine (protégé par mot de passe par l'orchestrateur).
-  if (env.TABLEAU_HOTE && /^[a-z0-9.-]+$/.test(env.TABLEAU_HOTE)) blocs.push(`${site(env.TABLEAU_HOTE)} {\n\treverse_proxy orchestrateur:8091\n}`)
+  // Les adresses de l'usine elle-même : réservées aux administrateurs (le portier le vérifie).
+  for (const h of mails) blocs.push(blocSite(h, "mailpit:8025", { publics: [] }))
+  if (env.TABLEAU_HOTE && /^[a-z0-9.-]+$/.test(env.TABLEAU_HOTE)) blocs.push(blocSite(env.TABLEAU_HOTE, "orchestrateur:8091", { publics: [] }))
+  // Le portail : connexion, invitations, et la liste « Mes applications ».
+  if (/^[a-z0-9.-]+$/.test(BASE)) blocs.push(`${HTTPS ? "" : "http://"}connexion.${BASE} {\n\theader -Server\n\thandle /_portier/api/* {\n\t\trespond 404\n\t}\n\treverse_proxy ${PORTIER}\n}`)
   const global = env.CADDY_EMAIL ? `{\n\temail ${env.CADDY_EMAIL}\n}\n\n` : ""
   const contenu = `# Généré par le déployeur de l'usine logicielle : ne pas modifier à la main.\n${global}${blocs.length ? blocs.join("\n\n") : ":80 {\n\trespond \"Usine logicielle : aucun produit déployé pour l'instant.\" 200\n}"}\n`
   const fichier = join(CADDY, "Caddyfile")
@@ -220,7 +262,7 @@ async function tour() {
     ecrireStatut(statut)
     try {
       const r = s.environnement === "apercu" ? await deployerApercu(s) : await deployerProduction(s, actuel?.conteneur ? actuel : null)
-      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, conteneur: r.conteneur, couleur: r.couleur ?? null, le: horodatage() }
+      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", conteneur: r.conteneur, couleur: r.couleur ?? null, le: horodatage() }
       ecrireStatut(statut)
       await regenererCaddy(statut)
       if (r.ancien) {
@@ -252,8 +294,22 @@ async function publierJournaux() {
   }
 }
 
+// Les produits déjà déployés quittent le réseau de l'usine pour celui des produits.
+async function isolerProduits() {
+  for (const s of Object.values(lireStatut())) {
+    if (!s.conteneur) continue
+    const reseaux = (await lancer("docker", ["inspect", "-f", "{{json .NetworkSettings.Networks}}", s.conteneur])).sortie
+    if (!reseaux.includes(`"${RESEAU}"`)) await lancer("docker", ["network", "connect", RESEAU, s.conteneur])
+    if (RESEAU !== "usine" && reseaux.includes('"usine"')) {
+      await lancer("docker", ["network", "disconnect", "usine", s.conteneur])
+      log(`${s.conteneur} isolé sur le réseau ${RESEAU}.`)
+    }
+  }
+}
+
 mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
+await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
 log(`Déployeur prêt : tire ${DEPOT_ETAT} toutes les 20 s.`)
 for (let n = 0; ; n++) {
   await tour().catch((e) => log(`Tour en échec : ${e.message.split("\n")[0]}`))

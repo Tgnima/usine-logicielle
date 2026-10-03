@@ -10,6 +10,7 @@ RUN npm install -g @anthropic-ai/claude-code@latest && npm cache clean --force
 ENV DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 ROLE=atelier
 
 COPY commun/serveur-travaux.mjs /opt/usine/serveur-travaux.mjs
+COPY --chmod=755 commun/entree.sh /opt/usine/entree.sh
 # Les briques de départ des produits, copiées à la création d'un dépôt.
 COPY briques /opt/usine/briques
 
@@ -19,4 +20,5 @@ RUN git config --global user.name "Usine logicielle" && git config --global user
 WORKDIR /travail
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:8080/sante').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["/opt/usine/entree.sh"]
 CMD ["node", "/opt/usine/serveur-travaux.mjs"]
