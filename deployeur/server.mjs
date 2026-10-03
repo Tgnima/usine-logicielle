@@ -21,6 +21,8 @@ const SRV = env.SRV_DIR ?? "/srv"
 const RESEAU = env.RESEAU ?? "usine"
 const MEMOIRE = env.MEMOIRE_PRODUIT ?? "384m"
 const HTTPS = env.HTTPS !== "0"
+// Des résolveurs de secours pour les produits aussi (coupures DNS de l'hébergeur).
+const DNS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"].flatMap((d) => ["--dns", d])
 if (!DEPOT_ETAT || !JETON) throw new Error("DEPOT_ETAT et GITHUB_TOKEN sont requis.")
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -144,7 +146,7 @@ async function construire(s) {
 
 async function demarrer(nom, image, volume, s) {
   await lancer("docker", ["rm", "-f", nom])
-  await ok("docker", ["run", "-d", "--name", nom, "--network", RESEAU, "--restart", "unless-stopped", "--memory", MEMOIRE, "--label", "usine.produit=" + s.produit, "-v", `${volume}:/app/data`, ...variables(s), image])
+  await ok("docker", ["run", "-d", "--name", nom, "--network", RESEAU, "--restart", "unless-stopped", ...DNS, "--memory", MEMOIRE, "--label", "usine.produit=" + s.produit, "-v", `${volume}:/app/data`, ...variables(s), image])
 }
 
 async function deployerApercu(s) {
