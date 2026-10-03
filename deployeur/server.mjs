@@ -486,6 +486,8 @@ async function suivreMiseAJour() {
   } catch {}
   miseAJour = { ...miseAJour, en_cours: null, derniere: { ...demande, terminee_le: horodatage(), code: Number(code), reussie: code === "0", journal: code === "0" ? "" : journal.slice(-1500), version: miseAJour.version } }
   log(code === "0" ? `Mise à jour terminée (version ${miseAJour.version}).` : `Mise à jour en échec (code ${code}).`)
+  // Le résultat est noté : le conteneur d'aide n'a plus de raison d'exister.
+  await lancer("docker", ["rm", "-f", "usine-mise-a-jour"])
 }
 
 // Les journaux récents de chaque produit en ligne, sur le volume partagé : quand
