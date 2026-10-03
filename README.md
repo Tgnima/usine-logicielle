@@ -36,9 +36,29 @@ est épuisé.
   d'un clone neuf, et c'est une autre famille de modèles (Codex) que celle qui a codé.
 - **Le contrat** : tentatives par tâche, changements d'approche, durée par agent et par
   projet, lignes par PR, arrêt des seules tâches dépendantes ou du projet entier.
-- **Les secrets** : les agents ne voient jamais le jeton GitHub (il ne sert qu'aux étapes
-  de clone et de push, hors de l'agent), ni Slack. Seul le déployeur a accès à Docker,
-  et il n'a aucun port ouvert.
+- **La sécurité avant la fusion** : un secret écrit dans le code, ou une faille grave
+  ajoutée dans les dépendances (`npm audit`, comparé à `main`), refuse la tâche ; un agent
+  relecteur sécurité lit chaque changement avant le vérificateur, avec une grille
+  (injections, XSS, redirections, données personnelles…).
+
+## La sécurité
+
+Règle de l'usine : **toujours protéger les applications.**
+
+- **Les secrets sont chiffrés** (SOPS + age, `secrets.sh`) : jamais en clair sur le disque,
+  déchiffrés en mémoire au démarrage du serveur, et chaque conteneur ne reçoit que les siens,
+  en fichiers (ils n'apparaissent pas dans `docker inspect`). `.env` ne contient que des
+  réglages. La clé de déchiffrement (`/etc/usine/age.key`) se sauvegarde hors du serveur.
+- **Chaque application est derrière une page de connexion** (le portier) : aperçus, production,
+  emails capturés, tableau de bord. Les comptes se donnent depuis Slack (`/usine acces`) par
+  un lien d'invitation ; personne ne transmet de mot de passe. Une production n'est publique
+  que sur choix explicite. Les liens des emails (suivi, désinscription) restent publics.
+- **Les produits sont isolés** sur leur propre réseau : une application ne peut pas joindre
+  les rouages de l'usine.
+- **Chaque produit embarque une sécurité de base** (fichier protégé `server/securite.js`) :
+  en-têtes (CSP…), limitation des requêtes, erreurs sans détail technique.
+- **Les agents ne voient jamais le jeton GitHub** (il ne sert qu'aux étapes de clone et de
+  push, hors de l'agent), ni Slack. Seul le déployeur a accès à Docker, sans port ouvert.
 
 ## L'escalade
 
@@ -60,7 +80,8 @@ sur l'issue, débloque. Fermer l'issue vaut « réessayer ». Rappel après 24 h
 | `atelier-1` | Les agents codent (Claude Code, dernière version) | abonnement Claude ; **pas** le jeton GitHub pendant l'agent |
 | `verificateur` | Reconstruit, démarre, teste (Codex, curl, Playwright + Chromium) | compte ChatGPT |
 | `deployeur` | Tire le dépôt d'état, construit, déploie, régénère Caddy | Docker, lecture GitHub ; aucun port |
-| `caddy` | HTTPS automatique devant les produits | ports 80, 443 |
+| `portier` | La page de connexion devant chaque application, les comptes | aucun port publié |
+| `caddy` | HTTPS automatique, le portier devant chaque site | ports 80, 443 |
 | `mailpit` | Capture les emails des produits (démo) | — |
 
 Les produits partent tous d'une **brique** (`briques/webapp` : Node 24, Express 5, SQLite,
@@ -70,7 +91,8 @@ sont capturés par Mailpit.
 
 Adresses (DNS joker via sslip.io, rien à configurer) :
 aperçu `https://<produit>.apercu.<base>`, production `https://<produit>.<base>`,
-emails capturés `https://mails.apercu.<base>`.
+emails capturés `https://mails.apercu.<base>`, tableau de bord `https://usine-tableau.<base>`,
+portail « Mes applications » `https://connexion.<base>`.
 
 ## Installer
 
@@ -88,16 +110,23 @@ les ports 80 et 443 libres.
    git clone https://github.com/<toi>/usine-logicielle.git && cd usine-logicielle
    bash install.sh            # crée .env et usine.config.yml, puis s'arrête s'il manque un secret
    nano .env                  # colle tes jetons (jamais dans une conversation)
-   bash install.sh            # construit et démarre
+   bash install.sh            # chiffre les secrets (et les retire de .env), construit, démarre
    ```
+
+   Sauvegarde ensuite la clé de déchiffrement hors du serveur (gestionnaire de mots de passe) :
+   `sudo cat /etc/usine/age.key`. Changer un secret : le recoller dans `.env` puis
+   `bash secrets.sh migrer`, ou `bash secrets.sh editer`.
 
    Sur un serveur où l'usine à contenu tourne déjà : `bash install.sh --reprendre-de ../usine-contenu`
    réutilise sa connexion Claude, sa clé Vercel AI Gateway et son volume Codex.
 4. Codex, si ce n'est pas déjà fait : `docker compose run --rm verificateur codex login --device-auth`.
+5. Dans Slack, `/usine acces` : crée ton compte (administrateur) et ouvre le lien d'invitation.
 
 ## Piloter
 
 Dans Slack : `/usine <ce que tu veux construire>`, puis les boutons du fil.
+Répondre dans le fil d'un projet vaut réponse à l'usine (correction, décision, remarque).
+`/usine acces` (comptes), `/usine couts [n°]`, `/usine tableau`, `/usine corriger <n°> …`,
 `/usine statut`, `/usine stop` (après la tâche en cours), `/usine reprendre`.
 
 Sans Slack, la CLI fait la même chose :

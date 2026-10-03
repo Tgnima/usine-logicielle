@@ -14,12 +14,19 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/livraison.mjs` | Étage 3 : aperçus, rapport final, production, corrections |
 | `orchestrateur/src/pipeline.mjs` | Les actions (Slack, CLI) |
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
-| `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy |
+| `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |
+| `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes |
+| `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |
+| `orchestrateur/src/relectures.mjs` | Les relectures entre agents (sécurité) avant le vérificateur |
 | `commun/serveur-travaux.mjs` | Le serveur de travaux de l'atelier et du vérificateur |
 | `briques/webapp/` | Le point de départ de chaque produit, et ses conventions (`AGENTS.md`) |
 | `usine.config.yml` | Le contrat (non suivi par Git, créé depuis l'exemple) |
 
 ## Règles pour modifier le code
+
+- **Toujours protéger les applications.** Toute nouvelle adresse publiée passe par le portier
+  (`blocSite()` dans le déployeur) ; tout nouveau secret va dans `SECRETS` (`secrets.sh`) et
+  dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans l'environnement.
 
 - Node ES modules, sans framework. Dépendances : `@slack/bolt` et `yaml` (orchestrateur) ; aucune ailleurs.
 - **Une décision de fusion ou de mise en production est prise par du code**, jamais par un modèle.
