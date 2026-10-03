@@ -15,7 +15,7 @@ features:
   slash_commands:
     - command: /usine
       description: Construire un produit à partir d'une demande
-      usage_hint: "<ce que tu veux construire> | statut | stop | reprendre"
+      usage_hint: "<ce que tu veux construire> | corriger <n°> … | couts [n°] | tableau | statut | stop | reprendre"
       should_escape: false
 oauth_config:
   scopes:
@@ -23,6 +23,8 @@ oauth_config:
       - chat:write
       - chat:write.public
       - commands
+      - bookmarks:read      # le signet « Tableau de bord » en haut du canal
+      - bookmarks:write
 settings:
   event_subscriptions:
     bot_events:

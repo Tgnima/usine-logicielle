@@ -7,7 +7,7 @@ import { obtenir } from "./db.mjs"
 import * as actions from "./pipeline.mjs"
 import { resoudre } from "./escalade.mjs"
 import { aiguiller } from "./aiguillage.mjs"
-import { blocsCoutProjet, blocsTableauCouts, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
+import { adresseTableau, blocsCoutProjet, blocsTableauCouts, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
@@ -16,6 +16,9 @@ import { adresses } from "./config.mjs"
 const tronquer = (t, n = 2900) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const section = (texte) => ({ type: "section", text: { type: "mrkdwn", text: tronquer(texte) } })
 const bouton = (texte, action_id, value, style) => ({ type: "button", text: { type: "plain_text", text: texte }, action_id, value: String(value), ...(style ? { style } : {}) })
+// Un bouton qui ouvre une page web : Slack exige quand même une réponse (ack), voir « lien_tableau ».
+const lien = (texte, url, action_id = "lien_tableau") => ({ type: "button", text: { type: "plain_text", text: texte }, url, action_id })
+
 const STATUTS = {
   analyse: ":brain: analyse", questions: ":question: questions", plan_a_valider: ":clipboard: plan à valider", creation: ":building_construction: création",
   fabrication: ":hammer_and_wrench: fabrication", bloque: ":octagonal_sign: bloqué", livre: ":package: livré", corrections: ":memo: corrections",
@@ -87,7 +90,7 @@ export async function demarrerSlack(ctx) {
     alerte: async (texte, boutons) => {
       const canal = config.slack.canal || db.prepare("SELECT canal FROM projets WHERE canal IS NOT NULL ORDER BY id DESC LIMIT 1").get()?.canal
       if (!canal) return console.log(`[alerte sans canal] ${texte}`)
-      await app.client.chat.postMessage({ channel: canal, text: texte, ...(boutons?.length ? { blocks: [section(texte), { type: "actions", elements: boutons.map((b) => bouton(b.texte, b.action, b.valeur, b.style)) }] } : {}) })
+      await app.client.chat.postMessage({ channel: canal, text: texte, blocks: [section(texte), { type: "actions", elements: [...(boutons ?? []).map((b) => bouton(b.texte, b.action, b.valeur, b.style)), lien("Tableau de bord", adresseTableau(config), "lien_tableau_alerte")] }] })
     },
     escaladeResolue: async (projet, esc, texte) => {
       const canal = projet.canal || config.slack.canal
@@ -102,7 +105,7 @@ export async function demarrerSlack(ctx) {
         section(r.lots.map((l, i) => `*Lot ${i + 1} : ${l.nom}*\n${l.taches.map((t) => `${t.statut === "fusionnee" ? ":white_check_mark:" : ":heavy_minus_sign:"} ${t.cle} ${t.titre}${t.pr ? ` <${r.depot}/pull/${t.pr}|#${t.pr}>` : ""}${t.statut === "abandonnee" ? " _(abandonnée)_" : ""}`).join("\n")}`).join("\n")),
         ...(ligneCoutProjet(ctx, projet.id) ? [{ type: "context", elements: [{ type: "mrkdwn", text: `:moneybag: ${ligneCoutProjet(ctx, projet.id)} · \`/usine couts ${projet.id}\` pour le détail` }] }] : []),
         { type: "context", elements: [{ type: "mrkdwn", text: `${r.tests} tests automatisés · ${r.refus} refus du vérificateur corrigés en autonomie · ${r.escalades} escalade(s) · ${r.decisions} décision(s) humaine(s)${r.duree_min ? ` · ${Math.floor(r.duree_min / 60)} h ${r.duree_min % 60} min de fabrication` : ""}` }] },
-        { type: "actions", elements: [bouton("Valider : mettre en production", "livraison_valider", projet.id, "primary"), bouton("Corriger", "livraison_corriger", projet.id)] },
+        { type: "actions", elements: [bouton("Valider : mettre en production", "livraison_valider", projet.id, "primary"), bouton("Corriger", "livraison_corriger", projet.id), lien("Tableau de bord", adresseTableau(config), "lien_tableau_rapport")] },
       ],
     }),
   }
@@ -122,7 +125,10 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+    }
+    if (mot === "tableau" || mot === "dashboard") {
+      return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Tableau de bord de l'usine* : coûts, budgets et évolution mensuelle."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
     }
     if (mot === "couts" || mot === "coûts") {
       return respond({ response_type: "ephemeral", text: "Coûts de l'usine", blocks: /^\d+$/.test(arg ?? "") ? blocsCoutProjet(ctx, Number(arg)) : blocsTableauCouts(ctx) })
@@ -175,6 +181,7 @@ export async function demarrerSlack(ctx) {
   let compteurAttentes = 0
   async function lancerNouveau(texte, user, canal) {
     const r = await app.client.chat.postMessage({ channel: canal, text: `:factory: *Nouvelle demande* de <@${user}> :\n>${texte.replace(/\n/g, "\n>")}` })
+    epinglerTableau(canal)
     await actions.nouveauProjet(ctx, { prompt: texte, demandeur: user, canal, fil: r.ts })
   }
   for (let i = 0; i < 4; i++) {
@@ -345,7 +352,7 @@ export async function demarrerSlack(ctx) {
     if (!(await garde(args))) return
     await retirerBoutons(args.body, `:octagonal_sign: Arrêt maintenu par <@${args.body.user.id}> jusqu'au mois prochain (ou jusqu'à ce que le budget soit relevé dans les réglages).`)
   })
-  app.action("lien_tableau", async ({ ack }) => ack())
+  for (const id of ["lien_tableau", "lien_tableau_rapport", "lien_tableau_alerte"]) app.action(id, async ({ ack }) => ack())
   app.action("couts_reglages", async (args) => {
     if (!(await garde(args))) return
     await app.client.views.open({ trigger_id: args.body.trigger_id, view: vueReglagesCouts(ctx) })
@@ -382,7 +389,27 @@ export async function demarrerSlack(ctx) {
     }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
   }
 
+  // Un signet « Tableau de bord » en haut de chaque canal de l'usine : on passe
+  // de Slack à la page web en un clic. Demande les portées bookmarks:read/write
+  // (manifeste) ; sans elles, on le signale une fois et on continue.
+  const epingles = new Set()
+  async function epinglerTableau(canal) {
+    if (!canal || epingles.has(canal)) return
+    epingles.add(canal)
+    const url = adresseTableau(config)
+    try {
+      const { bookmarks = [] } = await app.client.bookmarks.list({ channel_id: canal })
+      if (bookmarks.some((b) => b.link === url)) return
+      await app.client.bookmarks.add({ channel_id: canal, title: "Tableau de bord des coûts", type: "link", link: url, emoji: ":bar_chart:" })
+      console.log(`Signet « Tableau de bord » ajouté au canal ${canal}.`)
+    } catch (error) {
+      console.error(`Signet du tableau de bord impossible dans ${canal} : ${error.data?.error ?? error.message}${error.data?.error === "missing_scope" ? " (mets à jour le manifeste de l'app : bookmarks:read et bookmarks:write)" : ""}`)
+    }
+  }
+
   await app.start()
+  const canaux = new Set([config.slack.canal, ...db.prepare("SELECT DISTINCT canal FROM projets WHERE canal IS NOT NULL").all().map((p) => p.canal)].filter(Boolean))
+  for (const c of canaux) await epinglerTableau(c)
   console.log("Slack connecté (Socket Mode).")
   return notifier
 }
