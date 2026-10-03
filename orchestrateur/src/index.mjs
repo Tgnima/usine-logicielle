@@ -15,7 +15,7 @@ import * as actions from "./pipeline.mjs"
 import { demarrerSlack, notificateurConsole } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
-import { demarrerTableau } from "./tableau.mjs"
+import { demarrerConsole } from "./console.mjs"
 import { demarrerSynchronisationPortier } from "./portier.mjs"
 import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
@@ -44,7 +44,7 @@ for (const [nom, url] of [["atelier", config.atelier.url], ["vérificateur", con
 actions.reprise(ctx)
 demarrerFabrique(ctx)
 surveillerEscalades(ctx)
-demarrerTableau(ctx)
+demarrerConsole(ctx)
 demarrerSynchronisationPortier(ctx)
 demarrerCycle(ctx)
 demarrerDomaines(ctx)

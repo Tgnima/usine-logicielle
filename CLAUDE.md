@@ -14,6 +14,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/livraison.mjs` | Étage 3 : aperçus, rapport final, production, corrections |
 | `orchestrateur/src/pipeline.mjs` | Les actions (Slack, CLI) |
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
+| `orchestrateur/src/console.mjs`, `orchestrateur/console/` | La console web (API JSON + interface sans build), servie sur le port 8091 derrière le portier (administrateurs) |
 | `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |
 | `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes |
 | `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |

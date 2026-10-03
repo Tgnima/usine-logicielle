@@ -5,6 +5,7 @@ WORKDIR /app
 COPY orchestrateur/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY orchestrateur/src ./src
+COPY orchestrateur/console ./console
 RUN mkdir -p /app/data /app/etat && chown -R node:node /app
 USER node
 CMD ["node", "src/index.mjs"]

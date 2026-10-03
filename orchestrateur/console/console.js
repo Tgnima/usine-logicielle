@@ -1,0 +1,765 @@
+// La console de l'usine, côté navigateur. Sans framework ni étape de build :
+// un routeur sur l'ancre (#/…), des vues rendues en HTML échappé, une
+// délégation d'évènements (data-action), un rafraîchissement régulier.
+
+// --- Outils ------------------------------------------------------------------------
+const BRUT = Symbol("brut")
+const brut = (texte) => ({ [BRUT]: String(texte) })
+const echapper = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
+const valeur = (v) => (v === null || v === undefined || v === false ? "" : Array.isArray(v) ? v.map(valeur).join("") : v[BRUT] !== undefined ? v[BRUT] : echapper(v))
+// html`…${x}…` : chaque valeur est échappée, sauf ce qui vient déjà de html`` (ou de brut()).
+function html(chaines, ...valeurs) {
+  return brut(chaines.reduce((s, c, i) => s + c + (i < valeurs.length ? valeur(valeurs[i]) : ""), ""))
+}
+const $ = (sel, racine = document) => racine.querySelector(sel)
+
+async function api(methode, chemin, corps) {
+  const r = await fetch(`/api/${chemin}`, {
+    method: methode,
+    headers: corps !== undefined ? { "content-type": "application/json" } : {},
+    body: corps !== undefined ? JSON.stringify(corps) : undefined,
+    credentials: "same-origin",
+  })
+  const json = await r.json().catch(() => ({}))
+  if (r.status === 401 || r.status === 403) throw new Error(json.erreur ?? "Session expirée : recharge la page pour te reconnecter.")
+  if (!r.ok) throw new Error(json.erreur ?? `Erreur ${r.status}`)
+  return json
+}
+
+const STATUTS = {
+  analyse: ["Analyse", "bleu"], questions: ["Questions", "orange"], plan_a_valider: ["Plan à valider", "orange"],
+  creation: ["Création", "bleu"], fabrication: ["Fabrication", "bleu"], corrections: ["Corrections", "bleu"],
+  bloque: ["Bloqué", "rouge"], livre: ["Livré · à valider", "orange"], mise_en_production: ["Mise en production", "bleu"],
+  en_production: ["En production", "vert"], echec: ["Échec", "rouge"], arrete: ["Arrêté", ""], abandonne: ["Abandonné", ""],
+}
+const BRIQUES = { webapp: "Application web", site: "Site vitrine", api: "API", pwa: "Application mobile" }
+const badgeStatut = (s) => html`<span class="badge ${(STATUTS[s] ?? ["", ""])[1]}">${(STATUTS[s] ?? [s])[0]}</span>`
+const heure = (le) => {
+  const d = new Date(String(le).replace(" ", "T") + (String(le).includes("Z") ? "" : "Z"))
+  return isNaN(d) ? "" : d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+}
+const ICONES = {
+  plan: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+  livre: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`,
+  decision: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>`,
+  questions: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7M12 17h.01"/></svg>`,
+}
+
+// --- État ----------------------------------------------------------------------------
+const etat = {
+  route: { vue: "projets" },
+  resume: null,
+  projet: null,
+  sante: null,
+  acces: null,
+  reglages: null,
+  onglet: "journal",
+  brique: "webapp",
+  message: null, // { type: "ok" | "erreur" | "info", texte }
+  confirmer: null, // action en attente de confirmation
+  cleCreee: null,
+  invitation: null,
+  planModifie: false,
+}
+
+function lireRoute() {
+  const h = location.hash.replace(/^#/, "") || "/"
+  const m = h.match(/^\/projets\/(\d+)/)
+  if (m) return { vue: "projet", id: Number(m[1]) }
+  if (h.startsWith("/nouveau")) return { vue: "nouveau" }
+  if (h.startsWith("/sante")) return { vue: "sante" }
+  if (h.startsWith("/acces")) return { vue: "acces" }
+  if (h.startsWith("/reglages")) return { vue: "reglages" }
+  return { vue: "projets" }
+}
+
+// --- Vues ----------------------------------------------------------------------------
+function barreHaut() {
+  const u = etat.resume?.usine
+  const occupe = u?.taches_en_cours ?? 0
+  return html`<div class="barre">
+    <button type="button" class="recherche" data-action="palette">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+      <span style="flex:1">Rechercher un projet, lancer une commande…</span><span class="touche mono">Ctrl K</span>
+    </button>
+    ${u ? (u.arretee
+      ? html`<div class="rangee"><span class="etat-usine" style="color:var(--signal)"><span class="point alerte"></span>Usine à l'arrêt${occupe ? " après la tâche en cours" : ""}</span><button type="button" class="btn btn-s btn-petit" data-action="usine" data-quoi="reprendre">Reprendre</button></div>`
+      : html`<div class="etat-usine"><span class="point"></span>Usine en marche${occupe ? ` · ${occupe} tâche en cours` : " · au repos"}</div>`) : ""}
+  </div>`
+}
+
+function messageGlobal() {
+  if (!etat.message) return ""
+  return html`<div class="message ${etat.message.type}" role="${etat.message.type === "erreur" ? "alert" : "status"}"><span style="flex:1">${etat.message.texte}</span><button type="button" class="btn btn-s btn-petit" data-action="fermer-message">Fermer</button></div>`
+}
+
+function vueProjets() {
+  const r = etat.resume
+  if (!r) return html`<div class="chargement">Chargement…</div>`
+  const projets = r.projets.filter((p) => p.statut !== "abandonne")
+  return html`
+    ${barreHaut()}
+    <div class="entete">
+      <div><h1>Projets</h1><p class="chapeau">Ce qui se fabrique, ce qui attend une décision, ce qui est en ligne.</p></div>
+      <a href="#/nouveau" class="btn btn-p">+ Nouveau projet</a>
+    </div>
+    ${messageGlobal()}
+    ${r.a_traiter.length ? html`<section aria-labelledby="a-traiter" class="pile">
+      <h2 id="a-traiter" class="surtitre">À traiter · ${r.a_traiter.length}</h2>
+      <div class="grille">${r.a_traiter.map((x) => html`<a class="a-traiter" href="#/projets/${x.projet}">
+        <span class="icone">${ICONES[x.type] ?? ICONES.decision}</span>
+        <span style="flex:1;min-width:0"><strong>${x.titre}</strong><span>${x.detail}</span></span>
+        <em>${x.type === "plan" ? "Relire" : x.type === "livre" ? "Décider" : "Répondre"}</em></a>`)}</div>
+    </section>` : ""}
+    <section class="carte" aria-labelledby="tous">
+      <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="tous">Tous les projets</h2><span class="aide">${projets.length} projet(s)</span></div>
+      ${projets.length ? html`<div class="tableau"><table style="min-width:860px">
+        <thead><tr><th>Projet</th><th>Type</th><th>État</th><th>Avancement</th><th>Coût</th><th>Adresses</th></tr></thead>
+        <tbody>${projets.map((p) => {
+          const a = p.avancement
+          const pct = a.total ? Math.round((a.finies / a.total) * 100) : 0
+          return html`<tr>
+            <td><a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a><div class="sous">${p.resume}</div></td>
+            <td>${BRIQUES[p.brique] ?? "—"}</td>
+            <td>${badgeStatut(p.statut)}${p.escalades ? html` <span class="badge orange">${p.escalades} décision</span>` : ""}</td>
+            <td style="min-width:180px"><div class="rangee" style="flex-wrap:nowrap"><div class="jauge ${p.statut === "en_production" || p.statut === "livre" ? "verte" : ""}" style="flex:1"><div style="width:${pct}%"></div></div><span class="mono aide">${a.finies}/${a.total}</span></div>
+              <div class="sous">${a.en_cours ? `${a.en_cours.cle} ${a.en_cours.statut === "verification" ? "en vérification" : "en cours"}` : p.apercu_vie && p.apercu_vie !== "—" ? `aperçu : ${p.apercu_vie}` : ""}</div></td>
+            <td class="mono">${p.cout ?? "—"}</td>
+            <td>${p.production ? html`<a href="${p.production}" target="_blank" rel="noopener">production</a>` : ""}${p.production && p.apercu ? " · " : ""}${p.apercu ? html`<a href="${p.apercu}" target="_blank" rel="noopener">aperçu</a>` : ""}${!p.production && !p.apercu ? html`<span class="aide">pas encore</span>` : ""}</td>
+          </tr>`
+        })}</tbody></table></div>` : html`<div class="vide">Aucun projet pour l'instant. <a href="#/nouveau">Lance le premier</a>.</div>`}
+    </section>
+    <section class="grille" aria-label="Résumé de l'usine">
+      <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Budget du mois</div><div style="font-size:22px;font-weight:700">${r.couts.pct !== null ? `${r.couts.pct} % utilisé` : r.couts.mois}</div><div class="aide">${r.couts.budget ? `${r.couts.mois} sur ${r.couts.budget} (équivalent API)` : "pas de budget mensuel"}</div></a>
+      <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Serveur</div><div style="font-size:22px;font-weight:700">${r.serveur?.disque !== null && r.serveur ? `Disque ${r.serveur.disque} %` : "—"}</div><div class="aide">${r.serveur?.memoire !== null && r.serveur ? `mémoire ${r.serveur.memoire} %` : ""}</div></a>
+      <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Version de l'usine</div><div style="font-size:22px;font-weight:700">${r.usine.mise_a_jour?.disponible ? "Mise à jour disponible" : "À jour"}</div><div class="aide">${r.usine.mise_a_jour?.version ? `version ${r.usine.mise_a_jour.version}` : ""}</div></a>
+    </section>`
+}
+
+function vueNouveau() {
+  const choix = [
+    ["webapp", "Outil métier, tableau de bord, back-office"],
+    ["pwa", "Installable sur le téléphone, marche hors réseau"],
+    ["site", "Pages publiques référencées, formulaire de contact"],
+    ["api", "Relier des logiciels, sans écrans, avec clé d'API"],
+  ]
+  return html`
+    ${barreHaut()}
+    <div class="colonnes">
+      <form class="colonne-large" data-form="nouveau" style="gap:22px">
+        <div><a class="retour" href="#/">← Projets</a><h1 style="margin-top:8px">Que veux-tu construire ?</h1>
+          <p class="chapeau">Décris le besoin comme à un collègue. L'analyste pose ses questions s'il en a, puis te propose un plan à valider.</p></div>
+        ${messageGlobal()}
+        <div class="pile"><label class="titre-champ" for="demande">La demande</label>
+          <textarea id="demande" name="prompt" class="champ" rows="8" required minlength="20" style="resize:vertical;line-height:1.6" placeholder="Ex. : une application pour nos techniciens de maintenance : chaque matin ils voient leurs interventions du jour, sur place ils saisissent le compte rendu (photos, pièces changées, signature), même sans réseau. Le responsable suit tout depuis un tableau de bord."></textarea>
+          <div class="aide">Pour aller plus vite, précise : qui l'utilise · les écrans clés · ce qui n'est pas demandé.</div></div>
+        <fieldset><legend>Type de produit <span class="aide" style="font-weight:400">· une indication pour l'analyste, qui choisit en dernier ressort</span></legend>
+          <div class="briques">${choix.map(([id, texte]) => html`<button type="button" class="brique" data-action="brique" data-id="${id}" aria-pressed="${String(etat.brique === id)}"><strong>${BRIQUES[id]}</strong><span>${texte}</span></button>`)}</div>
+        </fieldset>
+        <div class="rangee"><button type="submit" class="btn btn-p">Lancer l'analyse</button><a href="#/" class="btn btn-s">Annuler</a></div>
+      </form>
+      <aside class="colonne-etroite" aria-label="Comment ça se passe">
+        <div class="sombre pile">
+          <div class="surtitre" style="color:inherit;opacity:.75">Ce qui va se passer</div>
+          <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px">
+            <li>L'analyste lit la demande et pose ses questions s'il en a.</li>
+            <li>Il propose un plan : lots, tâches, critères vérifiables, brief de design.</li>
+            <li><strong>Tu valides le plan</strong> (modifiable ici).</li>
+            <li>L'usine code, vérifie et met un aperçu en ligne à chaque lot.</li>
+            <li><strong>Tu valides le produit</strong> avant la production.</li>
+          </ol>
+        </div>
+        <div class="carte carte-p pile"><strong>Partir d'un exemple</strong>
+          ${["Un CRM léger pour une équipe de 5 commerciaux : contacts, opportunités, relances.", "Le site vitrine d'un cabinet d'architectes, avec réalisations et formulaire de contact.", "Une API qui relie notre ERP à la boutique en ligne : stocks et commandes.", "Le suivi des congés de l'équipe : demandes, validation par le manager, calendrier."].map((x) => html`<button type="button" class="lien-btn" style="text-align:left;padding:4px 0" data-action="exemple" data-texte="${x}">${x}</button>`)}
+        </div>
+      </aside>
+    </div>`
+}
+
+// Les étapes d'une tâche, d'après son statut.
+function etapesTache(t) {
+  const noms = ["Agent", "Contrôle", "Sécurité", "Vérificateur", "Design", "Fusion"]
+  const fait = t.statut === "fusionnee" ? 6 : t.statut === "verification" ? 3 : 0
+  return html`<ol class="etapes" aria-label="Étapes de la tâche">${noms.map((n, i) => html`<li class="${i < fait ? "fait" : i === fait && t.statut !== "fusionnee" ? "encours" : ""}">${n}</li>`)}</ol>`
+}
+
+function blocPlan(p) {
+  const plan = p.plan
+  if (!plan?.lots?.length) return ""
+  const d = plan.design
+  return html`
+    <div class="colonnes">
+      <form class="colonne-large" data-form="plan">
+        <p class="aide" style="margin:0">Tout est modifiable : clique sur un titre ou un critère. Les critères doivent rester observables sur l'application en marche.</p>
+        ${plan.lots.map((lot, i) => html`<section class="carte lot">
+          <div class="lot-tete"><span class="mono aide">LOT ${i + 1}</span><input class="champ-discret" style="flex:1;min-width:220px;font-weight:600;font-size:16px" aria-label="Nom du lot ${i + 1}" data-lot="${i}" data-champ="nom" value="${lot.nom}"></div>
+          <div style="padding:6px 8px">${lot.taches.map((t, j) => html`<div class="tache-plan">
+            <span class="cle mono">${t.cle}</span>
+            <div style="flex:1;min-width:0">
+              <input class="champ-discret" style="font-weight:600" aria-label="Titre de ${t.cle}" data-lot="${i}" data-tache="${j}" data-champ="titre" value="${t.titre}">
+              <ul class="criteres">${t.criteres.map((c, k) => html`<li><span style="color:var(--ok-point)" aria-hidden="true">✓</span><input class="champ-discret" style="padding:5px 8px" aria-label="Critère ${k + 1} de ${t.cle}" data-lot="${i}" data-tache="${j}" data-critere="${k}" value="${c}"></li>`)}</ul>
+              <button type="button" class="lien-btn" data-action="ajouter-critere" data-lot="${i}" data-tache="${j}">+ Ajouter un critère</button>
+            </div></div>`)}</div>
+        </section>`)}
+        <div class="rangee"><button type="submit" class="btn btn-s" ${etat.planModifie ? "" : "disabled"}>Enregistrer les modifications</button>${etat.planModifie ? html`<span class="aide">Modifications non enregistrées</span>` : ""}</div>
+        <div class="carte carte-p pile">
+          <label class="titre-champ" for="revision">Ou demander une révision à l'analyste</label>
+          <textarea id="revision" class="champ" rows="3" placeholder="Ex. : la signature du client n'est pas utile, mais il faut un mode sombre."></textarea>
+          <div><button type="button" class="btn btn-s" data-action="message" data-source="revision">Envoyer à l'analyste</button></div>
+        </div>
+      </form>
+      <aside class="colonne-etroite" aria-label="Brief et décision">
+        ${d ? html`<div class="carte carte-p pile"><strong>Brief de design</strong><p style="margin:0;font-size:14px;color:var(--texte)">${d.intention ?? ""}</p>
+          ${d.palette ? html`<div class="palette-couleurs" aria-label="Palette">${Object.entries(d.palette).slice(0, 6).map(([k, v]) => html`<span title="${k} ${v}" style="background:${/^#[0-9a-f]{3,8}$/i.test(v) ? v : "transparent"}"></span>`)}</div>` : ""}
+          ${d.typographie ? html`<div class="aide">Polices : ${[d.typographie.titres, d.typographie.texte].filter(Boolean).join(" · ")}</div>` : ""}</div>` : ""}
+        ${plan.hors_perimetre?.length || plan.risques?.length ? html`<div class="carte carte-p pile" style="font-size:14px">
+          ${plan.hors_perimetre?.length ? html`<strong>Hors périmètre</strong><div style="color:var(--texte)">${plan.hors_perimetre.join(" · ")}</div>` : ""}
+          ${plan.risques?.length ? html`<strong>Risques</strong><div style="color:var(--texte)">${plan.risques.join(" · ")}</div>` : ""}</div>` : ""}
+        <div class="sombre pile">
+          <div class="aide">${BRIQUES[plan.brique ?? "webapp"]} · ${plan.lots.length} lots · ${plan.lots.reduce((n, l) => n + l.taches.length, 0)} tâches</div>
+          <button type="button" class="btn" style="background:var(--fond);color:var(--encre)" data-action="valider-plan" ${etat.planModifie ? "disabled" : ""}>Valider le plan et lancer</button>
+          <div class="aide">${etat.planModifie ? "Enregistre d'abord tes modifications." : "Première porte humaine. La seconde viendra au produit fini."}</div>
+          <button type="button" class="lien-btn" style="color:inherit;opacity:.8;align-self:flex-start;padding-left:0" data-action="confirmer" data-quoi="abandonner">Abandonner ce plan</button>
+        </div>
+      </aside>
+    </div>`
+}
+
+function blocFabrication(p) {
+  const plan = p.plan ?? { lots: [] }
+  const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
+  const lotCourant = enCours?.lot ?? Math.min(plan.lots.length, p.lot_livre + 1)
+  const lotsAbandonnes = new Set(plan.lots.map((_, i) => i + 1).filter((n) => {
+    const ts = p.taches.filter((t) => t.lot === n)
+    return ts.length && ts.every((t) => t.statut === "abandonnee")
+  }))
+  const tachesLot = p.taches.filter((t) => t.lot === lotCourant)
+  const STT = { fusionnee: ["fusionnée", "ok"], en_cours: ["en cours", "actif"], verification: ["en vérif.", "actif"], prete: ["prête", ""], attente: ["en attente", ""], bloquee: ["bloquée", "actif"], abandonnee: ["abandonnée", ""] }
+  const discussion = p.journal.filter((j) => ["demande", "decision", "corrections", "diagnostic", "validation", "plan", "design", "abandon", "production", "domaine"].includes(j.type))
+  return html`
+    <section class="carte carte-p" aria-label="Lots">
+      <div class="barre" style="font-size:14px"><strong>Lots</strong><span class="aide">${p.avancement.fusionnees} tâches fusionnées sur ${p.avancement.total}</span></div>
+      <ol class="lots">${plan.lots.map((_, i) => {
+        const n = i + 1
+        const cls = lotsAbandonnes.has(n) ? "abandonne" : n <= p.lot_livre ? "livre" : n === lotCourant && ["fabrication", "corrections", "creation"].includes(p.statut) ? "courant" : ""
+        return html`<li class="mono ${cls}" title="Lot ${n} : ${plan.lots[i].nom}">${n}</li>`
+      })}</ol>
+      ${plan.lots[lotCourant - 1] ? html`<div style="margin-top:10px;font-size:14px">Lot ${lotCourant} · <strong>${plan.lots[lotCourant - 1].nom}</strong></div>` : ""}
+    </section>
+    <div class="colonnes">
+      <div class="colonne-large">
+        <section class="carte carte-p pile" style="gap:14px" aria-label="Tâche en cours">
+          ${enCours ? html`
+            <div class="barre"><div><span class="mono aide">${enCours.cle}</span> <strong style="font-size:17px">${enCours.titre}</strong></div>
+              ${enCours.approche || enCours.tentative ? html`<span style="font-size:13px;color:var(--signal);font-weight:600">${enCours.approche ? `approche ${enCours.approche + 1} · modèle renforcé` : `correction ${enCours.tentative}`}</span>` : ""}</div>
+            ${etapesTache(enCours)}` : html`<div class="barre"><strong>${p.statut === "en_production" ? "En production" : p.statut === "livre" ? "Tous les lots sont livrés" : "Aucune tâche en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">l'usine passe à la suite</span>` : ""}</div>`}
+          <div class="onglets" role="tablist" aria-label="Vues du projet">
+            ${[["journal", "Journal"], ["captures", `Captures${p.captures.length ? ` · ${p.captures.length}` : ""}`], ["discussion", "Discussion"]].map(([id, nom]) => html`<button type="button" role="tab" aria-selected="${String(etat.onglet === id)}" data-action="onglet" data-id="${id}">${nom}</button>`)}
+          </div>
+          ${etat.onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
+            ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message}</div>`)}
+            ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
+          </div>` : ""}
+          ${etat.onglet === "captures" ? (p.captures.length ? html`<div class="captures">${p.captures.map((c) => html`<figure><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture ${c.fichier} de la tâche ${c.tache}" loading="lazy"></a><figcaption>${c.tache} · ${c.fichier}</figcaption></figure>`)}</div>` : html`<div class="vide">Les captures arrivent avec chaque tâche vérifiée (ordinateur et mobile).</div>`) : ""}
+          ${etat.onglet === "discussion" ? html`<div class="pile" style="gap:12px">
+            ${discussion.slice(-20).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type} · ${heure(j.le)}</small>${j.message.length > 900 ? j.message.slice(0, 900) + "…" : j.message}</div>`)}
+            <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
+              <input id="message-libre" class="champ" placeholder="Une correction, une précision… (pendant la fabrication, elle part à la fin du lot)">
+              <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
+          </div>` : ""}
+        </section>
+      </div>
+      <aside class="colonne-etroite" aria-label="Tâches et décisions">
+        ${p.escalades.map((e) => html`<section class="carte carte-p pile" style="border-color:var(--signal-trait)">
+          <h2 style="font-size:15px;color:var(--signal)">Décision attendue${e.tache ? ` · ${e.tache}` : ""}</h2>
+          <p style="margin:0;font-size:14px;color:var(--texte)">${e.raison}</p>
+          <label class="cache" for="consigne-${e.id}">Consigne (facultative)</label>
+          <textarea id="consigne-${e.id}" class="champ" rows="2" placeholder="Consigne pour l'agent (facultatif)"></textarea>
+          ${e.options.map((o) => html`<button type="button" class="btn btn-s" style="justify-content:flex-start;text-align:left" data-action="decider" data-id="${e.id}" data-choix="${o.cle}" title="${o.detail}">${o.cle} · ${o.libelle}</button>`)}
+        </section>`)}
+        ${tachesLot.length ? html`<section class="carte carte-p"><h2 style="font-size:15px;margin-bottom:10px">Lot ${lotCourant} · tâches</h2>
+          <ul class="taches">${tachesLot.map((t) => html`<li><span class="cle mono">${t.cle}</span><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></section>` : ""}
+        ${p.depot ? html`<section class="carte carte-p pile" style="font-size:14px"><strong>Liens</strong>
+          <a href="${p.depot}" target="_blank" rel="noopener">Code sur GitHub</a>
+          ${p.apercu ? html`<a href="${p.apercu}" target="_blank" rel="noopener">Aperçu</a>` : ""}
+          ${p.production ? html`<a href="${p.production}" target="_blank" rel="noopener">Production</a>` : ""}</section>` : ""}
+      </aside>
+    </div>`
+}
+
+function blocProduction(p) {
+  if (!["livre", "en_production"].includes(p.statut)) return ""
+  const c = p.production_choix ?? {}
+  const radio = (nom, val, titre, sous) => html`<label class="choix"><input type="radio" name="${nom}" value="${val}" ${c[nom] === val ? "checked" : ""}><span><strong>${titre}</strong>${sous ? html`<br><span class="aide">${sous}</span>` : ""}</span></label>`
+  return html`
+    <div class="colonnes">
+      <section class="carte carte-p colonne-large" aria-labelledby="prod" style="gap:20px">
+        <h2 id="prod">${p.statut === "en_production" ? "Production · changer les réglages" : "Mettre en production"}</h2>
+        ${p.production_texte ? html`<div class="aide">Réglages actuels : ${p.production_texte}</div>` : ""}
+        <form class="pile" style="gap:18px" data-form="production">
+          <fieldset><legend>Données au démarrage</legend><div class="grille">${radio("donnees", "vide", "Base vide", "les vraies données arrivent avec l'usage")}${radio("donnees", "demo", "Données de démo", "pour une présentation")}</div></fieldset>
+          <fieldset><legend>Emails</legend><div class="grille">${radio("emails", "captures", "Capturés", "rien ne part, visibles dans Mailpit")}${radio("emails", "reels", "Réels, destinataires autorisés", "seulement vers la liste ci-dessous")}</div>
+            <label class="aide" for="destinataires">Destinataires autorisés (adresses ou @domaine, séparés par des virgules)</label>
+            <input id="destinataires" name="destinataires_autorises" class="champ" value="${(c.destinataires_autorises ?? []).join(", ")}"></fieldset>
+          <fieldset><legend>Accès</legend><div class="grille">${radio("acces", "protege", "Protégé", "page de connexion de l'usine")}${radio("acces", "public", "Public", "ouvert à tous, sans connexion")}</div></fieldset>
+          <fieldset><legend>Horloge</legend><div class="grille">${radio("horloge", "reelle", "Réelle")}${radio("horloge", "acceleree", "Accélérée", "un jour = une minute (démo)")}</div></fieldset>
+          ${etat.confirmer === "production" ? html`<div class="confirmer" role="alertdialog" aria-labelledby="conf-prod">
+            <strong id="conf-prod" style="font-size:16px">Mettre ${p.nom} en production ?</strong>
+            <ul style="margin:0;padding-left:18px;font-size:14px;color:var(--texte)"><li>Dernière version vérifiée, avec les réglages ci-dessus.</li><li>Bascule sans coupure ; sauvegarde des données avant.</li><li>Ta validation est tracée dans le dépôt d'état.</li></ul>
+            <div class="rangee"><button type="submit" class="btn btn-p">Oui, mettre en production</button><button type="button" class="btn btn-s" data-action="annuler">Annuler</button></div>
+          </div>` : html`<div class="rangee"><button type="button" class="btn btn-p" data-action="confirmer" data-quoi="production">${p.statut === "en_production" ? "Appliquer en production" : "Mettre en production"}</button></div>`}
+        </form>
+        <div class="pile" style="border-top:1px solid var(--trait-2);padding-top:16px">
+          <label class="titre-champ" for="corrections">Demander des corrections</label>
+          <textarea id="corrections" class="champ" rows="3" placeholder="Ce qui ne va pas, ce qui manque. L'analyste enquête (journaux, réglages) et ajoute un lot."></textarea>
+          <div><button type="button" class="btn btn-s" data-action="corriger">Envoyer à l'analyste</button></div>
+        </div>
+      </section>
+      <aside class="colonne-etroite" aria-label="Adresses et durée de vie">
+        <section class="carte carte-p pile" aria-labelledby="domaines">
+          <h2 id="domaines" style="font-size:15px">Adresses</h2>
+          ${p.production ? html`<div style="font-size:14px"><span class="aide">Usine :</span> <a class="mono" href="${p.production}" target="_blank" rel="noopener">${p.production.replace(/^https?:\/\//, "")}</a></div>` : ""}
+          ${p.domaines_liste.map((d) => html`<div class="pile" style="border:1px solid ${d.statut === "actif" ? "var(--trait)" : "var(--signal-trait)"};border-radius:10px;padding:12px;gap:8px">
+            <div class="barre"><span class="mono" style="font-weight:500">${d.hote}</span>${d.statut === "actif" ? html`<span class="badge vert">actif</span>` : d.statut === "certificat" ? html`<span class="badge bleu">certificat en cours</span>` : html`<span class="badge orange">en attente du DNS</span>`}</div>
+            ${d.statut === "attente_dns" ? html`<div style="font-size:13px">Crée cet enregistrement chez ton fournisseur de domaine :</div>
+              <div class="dns mono"><span>type</span><span>nom</span><span>valeur</span><span>A</span><span>${d.hote.split(".").length > 2 ? d.hote.split(".").slice(0, -2).join(".") : "@"}</span><span>IP du serveur</span></div>
+              <div class="aide">${d.message ?? "vérifié toutes les 2 minutes"}</div>` : ""}
+            <div><button type="button" class="btn btn-d btn-petit" data-action="retirer-domaine" data-hote="${d.hote}">Retirer</button></div>
+          </div>`)}
+          ${p.statut === "en_production" ? html`<form class="rangee" style="flex-wrap:nowrap" data-form="domaine"><label class="cache" for="hote">Nouveau domaine</label><input id="hote" name="hote" class="champ" placeholder="app.mon-entreprise.fr"><button type="submit" class="btn btn-s">Ajouter</button></form>` : html`<div class="aide">Un domaine personnalisé s'ajoute une fois le produit en production.</div>`}
+        </section>
+        ${p.apercu ? html`<section class="carte carte-p pile"><h2 style="font-size:15px">Aperçu</h2>
+          <div style="font-size:14px">${p.apercu_garde ? "Gardé sans limite de durée." : `Durée de vie : ${p.apercu_vie}.`}</div>
+          <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="apercu" data-quoi="prolonger">Prolonger</button>${p.apercu_garde ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="apercu" data-quoi="garder">Garder</button>`}<button type="button" class="btn btn-d btn-petit" data-action="apercu" data-quoi="retirer">Retirer</button></div></section>` : ""}
+      </aside>
+    </div>`
+}
+
+function vueProjet() {
+  const p = etat.projet
+  if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement du projet…</div>`
+  const enPlan = p.statut === "plan_a_valider"
+  return html`
+    ${barreHaut()}
+    <div class="entete">
+      <div><a class="retour" href="#/">← Projets</a>
+        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgeStatut(p.statut)}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.cout ? html`<span class="badge mono">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
+        <p class="chapeau">${p.resume}</p></div>
+      <div class="rangee">
+        ${p.apercu ? html`<a class="btn btn-s" href="${p.apercu}" target="_blank" rel="noopener">Ouvrir l'aperçu</a>` : ""}
+        ${p.depot ? html`<a class="btn btn-s" href="${p.depot}" target="_blank" rel="noopener">Code</a>` : ""}
+      </div>
+    </div>
+    ${messageGlobal()}
+    ${p.statut === "analyse" ? html`<div class="message info"><span>L'analyste étudie la demande et prépare le plan. Cette page se met à jour toute seule.</span></div>` : ""}
+    ${p.statut === "questions" ? html`<section class="carte carte-p pile"><h2>L'analyste a des questions</h2>
+      <ol style="margin:0;padding-left:20px">${(p.plan?.questions ?? []).map((q) => html`<li>${q}</li>`)}</ol>
+      <label class="cache" for="reponses">Tes réponses</label><textarea id="reponses" class="champ" rows="5" placeholder="Réponds librement, dans l'ordre des questions."></textarea>
+      <div><button type="button" class="btn btn-p" data-action="message" data-source="reponses">Envoyer les réponses</button></div></section>` : ""}
+    ${enPlan ? blocPlan(p) : ""}
+    ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
+    ${blocProduction(p)}
+    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">La demande d'origine et la zone sensible</summary>
+      <p style="white-space:pre-wrap;color:var(--texte)">${p.prompt}</p>
+      ${etat.confirmer === "supprimer" ? html`<div class="confirmer" role="alertdialog" aria-labelledby="conf-sup"><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
+        <div style="font-size:14px">L'aperçu et la production s'arrêtent et la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.</div>
+        <div class="rangee"><button type="button" class="btn btn-d" data-action="supprimer">Oui, supprimer le projet</button><button type="button" class="btn btn-s" data-action="annuler">Annuler</button></div></div>`
+      : html`<button type="button" class="btn btn-d btn-petit" data-action="confirmer" data-quoi="supprimer">Supprimer le projet</button>`}
+    </details>`
+}
+
+function vueSante() {
+  const s = etat.sante
+  if (!s) return html`${barreHaut()}<div class="chargement">Mesure de la santé de l'usine…</div>`
+  const max = Math.max(1e-9, ...s.couts.evolution.map((e) => Math.max(e.api, e.reel)))
+  const mj = s.serveur?.mise_a_jour
+  return html`
+    ${barreHaut()}
+    <div class="entete"><div><h1>Santé et coûts</h1><p class="chapeau">Mesuré chaque minute · une alerte Slack seulement quand un état change.</p></div>
+      ${mj?.disponible ? html`<div class="carte rangee" style="padding:10px 14px;gap:12px"><span><strong>Mise à jour disponible</strong> · ${mj.disponible} changement(s)</span><button type="button" class="btn btn-p" data-action="usine" data-quoi="mettre-a-jour">Mettre à jour l'usine</button></div>` : ""}</div>
+    ${messageGlobal()}
+    <section class="pile" aria-labelledby="services">
+      <h2 id="services" class="surtitre">Composants · ${s.composants.filter((c) => c.etat === "ok").length}/${s.composants.length} en bon état</h2>
+      <div class="grille" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">${s.composants.map((c) => html`<div class="carte" style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start">
+        <span class="point ${c.etat === "ok" ? "" : c.etat}" style="margin-top:7px" aria-hidden="true"></span>
+        <span style="min-width:0"><strong style="font-size:14px">${c.nom}</strong><br><span class="aide">${c.detail}</span></span></div>`)}</div>
+    </section>
+    <section class="carte carte-p pile" style="gap:16px" aria-labelledby="couts">
+      <div class="barre"><h2 id="couts">Coûts du mois</h2><span class="aide">équivalent API et coût réel · <a href="/couts">détail complet</a></span></div>
+      <div class="grille">
+        <div><div class="aide">Équivalent API</div><div style="font-size:26px;font-weight:700">${s.couts.api}</div></div>
+        <div><div class="aide">Coût réel</div><div style="font-size:26px;font-weight:700">${s.couts.reel}</div></div>
+        <div><div class="aide">Budget mensuel${s.couts.budget ? ` · ${s.couts.budget}` : ""}</div>
+          ${s.couts.pct !== null ? html`<div class="jauge bleue" style="height:12px;margin-top:10px"><div style="width:${Math.min(100, s.couts.pct)}%"></div></div><div class="aide" style="margin-top:6px">${s.couts.pct} % · alertes à 50, 80 et 100 %</div>` : html`<div style="font-size:18px;font-weight:600">non défini</div>`}</div>
+      </div>
+      <div class="graph" aria-label="Coûts des six derniers mois">${s.couts.evolution.map((e) => html`<div title="${e.mois} : ${e.api_texte} équivalent API, ${e.reel_texte} réel"><i style="height:${Math.round((e.api / max) * 100)}%"></i><i class="reel" style="height:${Math.round((e.reel / max) * 100)}%"></i></div>`)}</div>
+      <div class="graph-legende">${s.couts.evolution.map((e) => html`<span>${e.mois.slice(5)}/${e.mois.slice(2, 4)}</span>`)}</div>
+      <div class="rangee aide"><span><span class="badge bleu">■</span> équivalent API</span><span><span class="badge vert">■</span> coût réel</span></div>
+      <div class="tableau"><table style="min-width:560px"><thead><tr><th>Projet</th><th>État</th><th>Équiv. API</th><th>Réel</th><th>Budget</th><th>Refus</th></tr></thead>
+        <tbody>${s.couts.projets.map((p) => html`<tr><td><a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a></td><td>${badgeStatut(p.statut)}</td><td class="mono">${p.mesure ? p.api : "non mesuré"}</td><td class="mono">${p.mesure ? p.reel : "—"}</td><td>${p.budget_pct !== null ? html`<span class="${p.budget_pct >= 80 ? "badge orange" : "aide"}">${p.budget_pct} %</span>` : "—"}</td><td>${p.refus}</td></tr>`)}</tbody></table></div>
+    </section>
+    <section class="carte carte-p pile"><h2>Pilotage de l'usine</h2>
+      <div class="rangee"><button type="button" class="btn btn-s" data-action="usine" data-quoi="stop">Arrêter après la tâche en cours</button><button type="button" class="btn btn-s" data-action="usine" data-quoi="reprendre">Reprendre</button></div>
+      <div class="aide">L'arrêt laisse finir la tâche en cours ; rien n'est perdu.</div></section>`
+}
+
+function vueAcces() {
+  const a = etat.acces
+  if (!a) return html`${barreHaut()}<div class="chargement">Chargement des accès…</div>`
+  const projets = (etat.resume?.projets ?? []).filter((p) => p.statut !== "abandonne")
+  const slugs = Object.entries(a.noms)
+  const options = html`<option value="*">Toutes les applications</option>${slugs.map(([slug, nom]) => html`<option value="${slug}">${nom ?? slug}</option>`)}`
+  const decrire = (u) => (u.role === "admin" ? "tout, dont la console" : u.applis.includes("*") ? "toutes les applications" : u.applis.map((s) => a.noms[s] ?? s).join(", ") || "aucune")
+  return html`
+    ${barreHaut()}
+    <div><h1>Accès et clés d'API</h1><p class="chapeau">Chaque application est derrière la page de connexion de l'usine. Les personnes entrent par invitation ; les programmes, avec une clé.</p></div>
+    ${messageGlobal()}
+    <section class="carte" aria-labelledby="personnes">
+      <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="personnes">Personnes</h2></div>
+      <div class="tableau"><table style="min-width:640px"><thead><tr><th>Personne</th><th>Rôle</th><th>Applications</th><th>État</th><th><span class="cache">Actions</span></th></tr></thead>
+        <tbody>${a.utilisateurs.map((u) => html`<tr><td><strong>${u.email}</strong>${u.nom ? html`<div class="sous">${u.nom}</div>` : ""}</td><td>${u.role === "admin" ? "Administrateur" : "Membre"}</td><td>${decrire(u)}</td>
+          <td>${u.active ? html`<span class="badge vert">actif</span>` : html`<span class="badge orange">invitation en attente</span>`}</td>
+          <td style="text-align:right">${etat.confirmer === `retirer-${u.id}` ? html`<button type="button" class="btn btn-d btn-petit" data-action="retirer-personne" data-id="${u.id}">Confirmer le retrait</button> <button type="button" class="btn btn-s btn-petit" data-action="annuler">Annuler</button>` : html`<button type="button" class="btn btn-s btn-petit" data-action="confirmer" data-quoi="retirer-${u.id}">Retirer l'accès</button>`}</td></tr>`)}</tbody></table></div>
+      ${etat.invitation ? html`<div class="message info" style="margin:16px">${etat.invitation}</div>` : ""}
+      <form class="pile" style="padding:16px;border-top:1px solid var(--trait-2)" data-form="inviter">
+        <strong>Inviter une personne</strong>
+        <div class="grille">
+          <div class="pile" style="gap:6px"><label class="aide" for="inv-email">Adresse email</label><input id="inv-email" name="email" type="email" class="champ" required></div>
+          <div class="pile" style="gap:6px"><label class="aide" for="inv-role">Rôle</label><select id="inv-role" name="role" class="champ"><option value="membre">Membre : les applications choisies</option><option value="admin">Administrateur : tout</option></select></div>
+          <div class="pile" style="gap:6px"><label class="aide" for="inv-applis">Applications (membre)</label><select id="inv-applis" name="applis" class="champ" multiple size="3">${options}</select></div>
+        </div>
+        <div><button type="submit" class="btn btn-p">Envoyer l'invitation</button></div>
+      </form>
+    </section>
+    <section class="carte" aria-labelledby="cles">
+      <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><div><h2 id="cles">Clés d'API</h2><div class="aide">En-tête <span class="mono">Authorization: Bearer &lt;clé&gt;</span> · seule l'empreinte est gardée</div></div></div>
+      ${etat.cleCreee ? html`<div class="cle-unique" role="status" style="margin:16px"><strong>Copie la clé maintenant : elle ne sera plus jamais affichée.</strong>
+        <div class="rangee" style="flex-wrap:nowrap"><code class="mono" id="cle-texte">${etat.cleCreee}</code><button type="button" class="btn" style="background:var(--fond);color:var(--encre)" data-action="copier-cle">Copier</button><button type="button" class="btn" style="background:var(--fond);color:var(--encre)" data-action="fermer-cle">C'est fait</button></div></div>` : ""}
+      ${a.cles.length ? html`<div class="tableau"><table style="min-width:640px"><thead><tr><th>Nom</th><th>Début</th><th>Applications</th><th>Dernier usage</th><th><span class="cache">Actions</span></th></tr></thead>
+        <tbody>${a.cles.map((c) => html`<tr><td><strong>${c.nom}</strong><div class="sous">créée le ${heure(c.cree_le)}${c.cree_par ? ` par ${c.cree_par}` : ""}</div></td><td class="mono">${c.debut}…</td><td>${c.applis.includes("*") ? "toutes" : c.applis.map((s) => a.noms[s] ?? s).join(", ")}</td><td>${c.utilisee_le ? heure(c.utilisee_le) : html`<span class="aide">jamais</span>`}</td>
+          <td style="text-align:right"><button type="button" class="btn btn-d btn-petit" data-action="revoquer" data-id="${c.id}">Révoquer</button></td></tr>`)}</tbody></table></div>` : html`<div class="vide">Aucune clé pour l'instant.</div>`}
+      <form class="pile" style="padding:16px;border-top:1px solid var(--trait-2)" data-form="cle">
+        <strong>Créer une clé</strong>
+        <div class="grille">
+          <div class="pile" style="gap:6px"><label class="aide" for="cle-nom">Nom (qui s'en sert)</label><input id="cle-nom" name="nom" class="champ" required maxlength="60" placeholder="intégration CRM"></div>
+          <div class="pile" style="gap:6px"><label class="aide" for="cle-applis">Applications</label><select id="cle-applis" name="applis" class="champ" multiple size="3" required>${options}</select></div>
+        </div>
+        <div><button type="submit" class="btn btn-s">Créer la clé</button></div>
+      </form>
+    </section>
+    ${projets.length ? "" : ""}`
+}
+
+const ROLES = { analyste: "Analyste (plan)", atelier: "Agents (code)", verificateur: "Vérificateur", petites_taches: "Petites tâches", produit: "Dans les produits", renfort: "Renfort (autre approche)" }
+const POLITIQUES = { jamais: "jamais", manuel: "un humain décide", "sur-criteres": "automatique si les critères passent" }
+const ACTIONS_POLITIQUES = { implementer: "Coder une tâche", merger: "Fusionner", deployer_apercu: "Mettre un aperçu en ligne", mettre_en_production: "Mettre en production", supprimer_des_donnees: "Supprimer des données" }
+
+function vueReglages() {
+  const r = etat.reglages
+  if (!r) return html`${barreHaut()}<div class="chargement">Chargement des réglages…</div>`
+  const f = r.forge
+  const c = r.couts
+  const k = r.contrat
+  return html`
+    ${barreHaut()}
+    <div><h1>Réglages</h1><p class="chapeau">Où vont les dépôts des produits, ce que l'usine a le droit de dépenser, et les règles qu'elle applique.</p></div>
+    ${messageGlobal()}
+    <section class="carte carte-p pile" aria-labelledby="forge" style="gap:16px">
+      <div><h2 id="forge">Dépôt de code</h2><p class="aide" style="margin:4px 0 0">Chaque produit reçoit son dépôt : le code, une pull request par tâche, les issues du plan.</p></div>
+      <div class="grille">
+        <div class="carte carte-p pile" style="border-color:var(--accent);gap:8px">
+          <div class="barre"><strong>GitHub</strong>${f.compte?.ok ? html`<span class="badge vert">connecté</span>` : html`<span class="badge rouge">${f.compte?.detail ?? "non connecté"}</span>`}</div>
+          <div style="font-size:14px">${f.compte?.ok ? html`Compte du jeton : <span class="mono">${f.compte.login}</span>` : "Le jeton GitHub ne répond pas."}</div>
+          <div style="font-size:14px">Dépôts créés chez <span class="mono">${f.proprietaire}</span> · ${f.visibilite === "public" ? "publics" : "privés"}</div>
+          <div style="font-size:14px">État souhaité : <span class="mono">${f.proprietaire}/${f.depot_etat}</span></div>
+          <div class="aide">Changer de compte ou d'organisation : un nouveau jeton, posé sur le serveur (<span class="mono">bash secrets.sh editer</span>), jamais saisi ici ; puis <span class="mono">github.proprietaire</span> dans le contrat.</div>
+        </div>
+        <div class="carte carte-p pile" style="gap:8px">
+          <div class="barre"><strong>GitLab</strong><span class="badge">prochaine étape</span></div>
+          <div style="font-size:14px">GitLab.com ou une instance auto-hébergée : groupes, merge requests, issues.</div>
+          <div class="aide">Prévu : le même parcours qu'avec GitHub (dépôt par produit, une merge request par tâche, état souhaité), avec un jeton de groupe GitLab posé sur le serveur.</div>
+        </div>
+      </div>
+    </section>
+    <form class="carte carte-p pile" style="gap:16px" data-form="couts" aria-labelledby="budgets">
+      <div><h2 id="budgets">Budgets et coûts</h2><p class="aide" style="margin:4px 0 0">Les budgets portent sur l'équivalent API. Alertes à ${c.alertes.join(", ")} % ; au-delà, l'usine demande avant de continuer. 0 = pas de limite.</p></div>
+      <div class="grille">
+        <div class="pile" style="gap:6px"><label class="aide" for="b-mensuel">Budget mensuel de l'usine (${c.devise})</label><input id="b-mensuel" name="budget_mensuel" class="champ" inputmode="decimal" value="${c.budget_mensuel}"></div>
+        <div class="pile" style="gap:6px"><label class="aide" for="b-projet">Budget par projet (${c.devise})</label><input id="b-projet" name="budget_par_projet" class="champ" inputmode="decimal" value="${c.budget_par_projet}"></div>
+        <div class="pile" style="gap:6px"><label class="aide" for="b-serveur">Serveur, par mois (${c.devise})</label><input id="b-serveur" name="serveur_mensuel" class="champ" inputmode="decimal" value="${c.serveur_mensuel}"></div>
+        ${c.abonnements.map((a, i) => html`<div class="pile" style="gap:6px"><label class="aide" for="b-ab-${i}">${a.nom}, par mois (${c.devise})</label><input id="b-ab-${i}" name="abonnement" class="champ" inputmode="decimal" value="${a.mensuel}"></div>`)}
+      </div>
+      <div><button type="submit" class="btn btn-p">Enregistrer</button></div>
+    </form>
+    <section class="carte carte-p pile" style="gap:16px" aria-labelledby="contrat">
+      <div><h2 id="contrat">Le contrat de l'usine</h2><p class="aide" style="margin:4px 0 0">Appliqué par le code, pas par les agents. Il se modifie dans <span class="mono">usine.config.yml</span> sur le serveur.</p></div>
+      <div class="colonnes">
+        <div class="colonne-large" style="gap:8px"><strong>Modèles</strong>
+          <div class="tableau"><table><tbody>${k.modeles.map((m) => html`<tr><td>${ROLES[m.role] ?? m.role}</td><td class="mono">${m.modele}</td><td class="aide">${m.moteur}</td></tr>`)}</tbody></table></div></div>
+        <div class="colonne-etroite" style="gap:8px"><strong>Qui décide</strong>
+          ${Object.entries(k.politiques).map(([a, v]) => html`<div class="barre" style="font-size:14px"><span>${ACTIONS_POLITIQUES[a] ?? a}</span><span class="badge ${v === "manuel" ? "orange" : v === "jamais" ? "rouge" : "vert"}">${POLITIQUES[v] ?? v}</span></div>`)}</div>
+      </div>
+      <div class="grille" style="font-size:14px">
+        <div><div class="aide">Corrections par tâche</div><strong>${k.autonomie.tentatives_par_tache ?? 2}</strong>, puis ${k.autonomie.changements_d_approche ?? 1} autre approche</div>
+        <div><div class="aide">Durée d'un agent</div><strong>${k.autonomie.minutes_max_par_agent ?? 30} min</strong> au plus</div>
+        <div><div class="aide">Aperçus</div>retirés après <strong>${k.apercus_jours} jours</strong> sans activité</div>
+        <div><div class="aide">Lot de finition</div><strong>${k.finition ? "oui" : "non"}</strong> · mode démo ${k.demo ? "actif" : "inactif"}</div>
+      </div>
+      <div class="aide">Fichiers protégés des produits : <span class="mono">${k.perimetre_protege.join(" · ")}</span></div>
+    </section>`
+}
+
+// --- Rendu et chargement ------------------------------------------------------------------
+function rendre() {
+  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages }[etat.route.vue]
+  const m = $("#principal")
+  // Garder le défilement du journal s'il était en bas.
+  const j = $("#journal")
+  const enBas = !j || j.scrollTop + j.clientHeight >= j.scrollHeight - 20
+  m.innerHTML = vue()[BRUT]
+  const j2 = $("#journal")
+  if (j2 && enBas) j2.scrollTop = j2.scrollHeight
+  for (const a of document.querySelectorAll(".nav a")) {
+    const actif = a.dataset.nav === (etat.route.vue === "projet" ? "projets" : etat.route.vue)
+    if (actif) a.setAttribute("aria-current", "page")
+    else a.removeAttribute("aria-current")
+  }
+  const r = etat.resume
+  if (r) {
+    $("#base").textContent = r.usine.base
+    $("#cote-bas").innerHTML = html`${r.usine.mise_a_jour?.disponible ? html`<a href="#/sante" class="carte" style="display:block;padding:12px;color:var(--encre);text-decoration:none"><strong style="display:block">Mise à jour disponible</strong><span class="aide">${r.usine.mise_a_jour.disponible} changement(s)</span></a>` : ""}
+      <a href="${r.usine.portail}" target="_blank" rel="noopener">Mes applications</a><span class="aide" id="moi"></span>`[BRUT]
+    if (etat.moi) $("#moi").textContent = `${etat.moi.email} · administrateur`
+  }
+}
+
+async function charger({ silencieux = false } = {}) {
+  try {
+    const r = etat.route
+    // Chaque partie s'affiche dès qu'elle arrive : une page lente ne bloque pas le reste.
+    const taches = [api("GET", "resume").then((x) => { etat.resume = x; rendre() })]
+    if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => { etat.projet = x; rendre() }))
+    if (r.vue === "sante") taches.push(api("GET", "sante").then((x) => { etat.sante = x; rendre() }))
+    if (r.vue === "acces") taches.push(api("GET", "acces").then((x) => { etat.acces = x; rendre() }))
+    if (r.vue === "reglages") taches.push(api("GET", "reglages").then((x) => { etat.reglages = x; rendre() }))
+    await Promise.all(taches)
+  } catch (e) {
+    if (!silencieux) etat.message = { type: "erreur", texte: e.message }
+  }
+  rendre()
+}
+
+// Pendant une saisie, on ne redessine pas (on perdrait le texte ou le curseur).
+function enSaisie() {
+  const a = document.activeElement
+  if (a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && $("#principal").contains(a)) return true
+  if (etat.planModifie || etat.confirmer) return true
+  return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio])")].some((x) => x.value && x.defaultValue !== x.value)
+}
+
+async function agir(fonction, { succes } = {}) {
+  try {
+    const r = await fonction()
+    etat.message = { type: "ok", texte: succes ?? r?.message ?? "C'est fait." }
+    return r
+  } catch (e) {
+    etat.message = { type: "erreur", texte: e.message }
+    return null
+  } finally {
+    etat.confirmer = null
+    await charger({ silencieux: true })
+    $("#principal").focus({ preventScroll: true })
+  }
+}
+
+// --- Plan modifiable --------------------------------------------------------------------
+function planDepuisFormulaire() {
+  const plan = structuredClone(etat.projet.plan)
+  for (const el of document.querySelectorAll("[data-form=plan] [data-lot]")) {
+    const lot = plan.lots[Number(el.dataset.lot)]
+    if (!lot || el.tagName !== "INPUT") continue
+    if (el.dataset.champ === "nom") lot.nom = el.value.trim()
+    else if (el.dataset.critere !== undefined) lot.taches[Number(el.dataset.tache)].criteres[Number(el.dataset.critere)] = el.value.trim()
+    else if (el.dataset.champ === "titre") lot.taches[Number(el.dataset.tache)].titre = el.value.trim()
+  }
+  for (const lot of plan.lots) for (const t of lot.taches) t.criteres = t.criteres.filter(Boolean)
+  return plan
+}
+
+// --- Évènements ----------------------------------------------------------------------------
+const ACTIONS = {
+  palette: () => ouvrirPalette(),
+  "fermer-message": () => { etat.message = null; rendre() },
+  brique: (el) => { etat.brique = el.dataset.id; const t = $("#demande")?.value; rendre(); if (t) $("#demande").value = t },
+  exemple: (el) => { $("#demande").value = el.dataset.texte; $("#demande").focus() },
+  onglet: (el) => { etat.onglet = el.dataset.id; rendre() },
+  confirmer: (el) => { etat.confirmer = el.dataset.quoi; rendre() },
+  annuler: () => { etat.confirmer = null; rendre() },
+  usine: (el) => agir(() => api("POST", `usine/${el.dataset.quoi}`, {})),
+  message: (el) => {
+    const champ = $(`#${el.dataset.source}`)
+    const texte = champ?.value.trim()
+    if (!texte) return champ?.focus()
+    return agir(() => api("POST", `projets/${etat.projet.id}/message`, { texte }))
+  },
+  corriger: () => {
+    const texte = $("#corrections")?.value.trim()
+    if (!texte) return $("#corrections")?.focus()
+    return agir(() => api("POST", `projets/${etat.projet.id}/corriger`, { texte }), { succes: "Demande transmise : l'analyste enquête." })
+  },
+  decider: (el) => agir(() => api("POST", `escalades/${el.dataset.id}`, { choix: el.dataset.choix, texte: $(`#consigne-${el.dataset.id}`)?.value ?? "" }), { succes: "Décision transmise : l'usine reprend." }),
+  "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
+  "ajouter-critere": (el) => {
+    etat.projet.plan = planDepuisFormulaire()
+    etat.projet.plan.lots[Number(el.dataset.lot)].taches[Number(el.dataset.tache)].criteres.push("")
+    etat.planModifie = true
+    rendre()
+    const champs = document.querySelectorAll(`[data-lot="${el.dataset.lot}"][data-tache="${el.dataset.tache}"][data-critere]`)
+    champs[champs.length - 1]?.focus()
+  },
+  abandonner: () => agir(() => api("POST", `projets/${etat.projet.id}/abandonner`, {})),
+  supprimer: async () => { await agir(() => api("POST", `projets/${etat.projet.id}/supprimer`, { confirme: true })); location.hash = "#/" },
+  "retirer-domaine": (el) => agir(() => api("DELETE", `projets/${etat.projet.id}/domaines/${encodeURIComponent(el.dataset.hote)}`, {})),
+  apercu: (el) => agir(() => api("POST", `projets/${etat.projet.id}/apercu/${el.dataset.quoi}`, {})),
+  "retirer-personne": (el) => agir(() => api("DELETE", `acces/utilisateurs/${el.dataset.id}`, {}), { succes: "Accès retiré." }),
+  revoquer: (el) => agir(() => api("DELETE", `acces/cles/${el.dataset.id}`, {}), { succes: "Clé révoquée." }),
+  "copier-cle": async () => { await navigator.clipboard?.writeText(etat.cleCreee).catch(() => {}); etat.message = { type: "ok", texte: "Clé copiée dans le presse-papiers." }; rendre() },
+  "fermer-cle": () => { etat.cleCreee = null; rendre() },
+}
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]")
+  if (!el) return
+  if (el.dataset.action === "confirmer" && el.dataset.quoi === "abandonner") {
+    if (!window.confirm("Abandonner ce plan ? Rien n'a encore été créé.")) return
+    return ACTIONS.abandonner(el)
+  }
+  e.preventDefault()
+  ACTIONS[el.dataset.action]?.(el)
+})
+
+document.addEventListener("input", (e) => {
+  if (e.target.closest("[data-form=plan]") && !etat.planModifie) {
+    etat.planModifie = true
+    // Activer « Enregistrer » sans tout redessiner.
+    const b = $("[data-form=plan] button[type=submit]")
+    if (b) b.disabled = false
+    const v = $("[data-action=valider-plan]")
+    if (v) v.disabled = true
+  }
+})
+
+document.addEventListener("submit", async (e) => {
+  const f = e.target.closest("[data-form]")
+  if (!f) return
+  e.preventDefault()
+  const d = new FormData(f)
+  const type = f.dataset.form
+  if (type === "nouveau") {
+    const prompt = String(d.get("prompt") ?? "").trim()
+    const indication = etat.brique !== "webapp" ? `\n\n(Type de produit souhaité : ${BRIQUES[etat.brique]}.)` : ""
+    const r = await agir(() => api("POST", "projets", { prompt: prompt + indication }), { succes: "Demande envoyée : l'analyste prépare le plan." })
+    if (r?.id) location.hash = `#/projets/${r.id}`
+  }
+  if (type === "plan") {
+    const plan = planDepuisFormulaire()
+    const r = await agir(() => api("PUT", `projets/${etat.projet.id}/plan`, { plan }), { succes: "Plan enregistré. Tu peux le valider." })
+    if (r) etat.planModifie = false
+    rendre()
+  }
+  if (type === "production") {
+    await agir(() => api("POST", `projets/${etat.projet.id}/production`, {
+      confirme: true, donnees: d.get("donnees"), emails: d.get("emails"), acces: d.get("acces"), horloge: d.get("horloge"), destinataires_autorises: d.get("destinataires_autorises") ?? "",
+    }), { succes: "Mise en production lancée : suis-la dans le journal." })
+  }
+  if (type === "domaine") await agir(() => api("POST", `projets/${etat.projet.id}/domaines`, { hote: d.get("hote") }))
+  if (type === "inviter") {
+    const r = await agir(() => api("POST", "acces/utilisateurs", { email: d.get("email"), role: d.get("role"), applis: d.getAll("applis") }), { succes: "Invitation créée." })
+    etat.invitation = r ? (r.envoye ? `Invitation envoyée par email à ${d.get("email")} (lien valable 72 h).` : `L'email n'est pas parti : transmets ce lien toi-même (personnel, 72 h) : ${r.lien}`) : null
+    rendre()
+  }
+  if (type === "couts") {
+    await agir(() => api("PUT", "reglages/couts", { budget_mensuel: d.get("budget_mensuel"), budget_par_projet: d.get("budget_par_projet"), serveur_mensuel: d.get("serveur_mensuel"), abonnements: d.getAll("abonnement") }))
+  }
+  if (type === "cle") {
+    const r = await agir(() => api("POST", "acces/cles", { nom: d.get("nom"), applis: d.getAll("applis") }), { succes: "Clé créée." })
+    if (r?.cle) { etat.cleCreee = r.cle; rendre() }
+  }
+})
+
+// --- Palette de commandes (Ctrl K) ----------------------------------------------------------
+let choixPalette = 0
+function entreesPalette(filtre) {
+  const f = filtre.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "")
+  const projets = (etat.resume?.projets ?? []).filter((p) => p.statut !== "abandonne").map((p) => ({ texte: p.nom, aide: (STATUTS[p.statut] ?? [p.statut])[0], aller: `#/projets/${p.id}` }))
+  const commandes = [
+    { texte: "Nouveau projet", aide: "commande", aller: "#/nouveau" },
+    { texte: "Projets", aide: "page", aller: "#/" },
+    { texte: "Santé et coûts", aide: "page", aller: "#/sante" },
+    { texte: "Accès et clés d'API", aide: "page", aller: "#/acces" },
+    { texte: "Réglages : dépôt de code, budgets, contrat", aide: "page", aller: "#/reglages" },
+    { texte: "Arrêter l'usine après la tâche en cours", aide: "commande", faire: () => agir(() => api("POST", "usine/stop", {})) },
+    { texte: "Reprendre l'usine", aide: "commande", faire: () => agir(() => api("POST", "usine/reprendre", {})) },
+    { texte: "Mettre à jour l'usine", aide: "commande", faire: () => agir(() => api("POST", "usine/mettre-a-jour", {})) },
+  ]
+  return [...commandes, ...projets].filter((x) => !f || x.texte.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").includes(f)).slice(0, 12)
+}
+function dessinerPalette() {
+  const liste = entreesPalette($("#palette-saisie").value)
+  choixPalette = Math.min(choixPalette, Math.max(0, liste.length - 1))
+  $("#palette-liste").innerHTML = liste.map((x, i) => html`<li><button type="button" role="option" aria-selected="${String(i === choixPalette)}" data-i="${i}">${x.texte}<small>${x.aide}</small></button></li>`[BRUT]).join("") || `<li class="vide">Rien ne correspond.</li>`
+  return liste
+}
+function executerPalette(i) {
+  const x = entreesPalette($("#palette-saisie").value)[i]
+  if (!x) return
+  $("#palette").close()
+  if (x.aller) location.hash = x.aller
+  else x.faire()
+}
+function ouvrirPalette() {
+  $("#palette-saisie").value = ""
+  choixPalette = 0
+  dessinerPalette()
+  $("#palette").showModal()
+}
+$("#palette-saisie").addEventListener("input", () => { choixPalette = 0; dessinerPalette() })
+$("#palette-saisie").addEventListener("keydown", (e) => {
+  const n = entreesPalette($("#palette-saisie").value).length
+  if (e.key === "ArrowDown") { choixPalette = (choixPalette + 1) % Math.max(1, n); dessinerPalette(); e.preventDefault() }
+  if (e.key === "ArrowUp") { choixPalette = (choixPalette - 1 + n) % Math.max(1, n); dessinerPalette(); e.preventDefault() }
+  if (e.key === "Enter") { executerPalette(choixPalette); e.preventDefault() }
+})
+$("#palette-liste").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-i]")
+  if (b) executerPalette(Number(b.dataset.i))
+})
+$("#palette").addEventListener("click", (e) => { if (e.target === $("#palette")) $("#palette").close() })
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); ouvrirPalette() }
+})
+
+// --- Démarrage ---------------------------------------------------------------------------
+window.addEventListener("hashchange", () => {
+  etat.route = lireRoute()
+  etat.message = null
+  etat.confirmer = null
+  etat.planModifie = false
+  etat.cleCreee = null
+  etat.invitation = null
+  if (etat.route.vue !== "projet") etat.onglet = "journal"
+  rendre()
+  charger()
+  window.scrollTo(0, 0)
+})
+etat.route = lireRoute()
+api("GET", "moi").then((m) => { etat.moi = m; rendre() }).catch(() => {})
+charger()
+// La page se met à jour toute seule (toutes les 5 s sur un projet, 15 s ailleurs), sauf pendant une saisie.
+let dernier = 0
+setInterval(() => {
+  const pas = etat.route.vue === "projet" ? 5000 : 15000
+  if (Date.now() - dernier < pas || document.hidden || enSaisie() || $("#palette").open) return
+  dernier = Date.now()
+  charger({ silencieux: true })
+}, 1000)

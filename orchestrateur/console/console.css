@@ -1,0 +1,188 @@
+/* La console de l'usine : un poste de pilotage sobre. Clair et sombre. */
+:root {
+  color-scheme: light;
+  --fond: #f3f4f1; --panneau: #eceee9; --surface: #ffffff; --surface-2: #f7f8f5;
+  --encre: #15181c; --texte: #3a4048; --doux: #565d66; --trait: #dee1dc; --trait-2: #eceeea; --champ: #c9cdc6;
+  --accent: #2b47c9; --accent-fort: #1f3496; --accent-fond: #e6eafa; --accent-texte: #ffffff;
+  --signal: #8a3e06; --signal-fond: #fbebdc; --signal-trait: #e8c9a8;
+  --ok: #14532d; --ok-point: #1d7a46; --ok-fond: #e3f1e8;
+  --danger: #a1261b; --danger-fond: #fdecea;
+  --code: #15181c; --code-texte: #d5d9df; --code-doux: #8b93a0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --fond: #101317; --panneau: #0b0d10; --surface: #171b20; --surface-2: #1d2228;
+    --encre: #eef0f2; --texte: #c9ced6; --doux: #9aa2ad; --trait: #2a3038; --trait-2: #232830; --champ: #3a414b;
+    --accent: #7d93f0; --accent-fort: #a5b4fc; --accent-fond: #1f2747; --accent-texte: #0b0d10;
+    --signal: #f5b27a; --signal-fond: #3a2412; --signal-trait: #6b4422;
+    --ok: #8fd6a8; --ok-point: #4cc27a; --ok-fond: #12301f;
+    --danger: #f19a91; --danger-fond: #3a1714;
+    --code: #0b0d10;
+  }
+}
+* { box-sizing: border-box }
+html, body { margin: 0 }
+body { background: var(--fond); color: var(--encre); font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif }
+a { color: var(--accent) } a:hover { color: var(--accent-fort) }
+.mono { font-family: "IBM Plex Mono", ui-monospace, monospace }
+.cache { position: absolute; left: -9999px }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+/* Charpente */
+.app { min-height: 100vh; display: flex; flex-wrap: wrap; align-items: stretch }
+.cote { flex: 1 1 232px; max-width: 100%; padding: 20px 16px; display: flex; flex-direction: column; gap: 24px; background: var(--panneau); border-right: 1px solid var(--trait) }
+.marque { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--encre) }
+.logo { width: 34px; height: 34px; border-radius: 8px; background: var(--encre); color: var(--fond); display: flex; align-items: center; justify-content: center; font-weight: 500 }
+.marque strong { display: block; font-size: 15px } .marque small { color: var(--doux); font-size: 12px }
+.nav { display: flex; flex-direction: column; gap: 2px }
+.nav a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; color: var(--texte); text-decoration: none; font-weight: 500 }
+.nav a:hover { background: var(--trait); color: var(--encre) }
+.nav a[aria-current="page"] { background: var(--encre); color: var(--fond) }
+.cote-bas { margin-top: auto; display: flex; flex-direction: column; gap: 12px; font-size: 13px }
+.principal { flex: 999 1 560px; min-width: 0; padding: 24px 40px 56px; display: flex; flex-direction: column; gap: 24px }
+@media (max-width: 720px) { .principal { padding: 16px 16px 48px } .cote { border-right: 0; border-bottom: 1px solid var(--trait) } }
+
+.barre { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between }
+.recherche { flex: 1 1 320px; max-width: 520px; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--champ); border-radius: 8px; background: var(--surface); color: var(--doux); font: inherit; font-size: 14px; cursor: pointer; text-align: left }
+.touche { font-size: 12px; padding: 2px 6px; border: 1px solid var(--trait); border-radius: 4px }
+.etat-usine { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ok) }
+.point { width: 8px; height: 8px; border-radius: 999px; background: var(--ok-point); flex: none }
+.point.alerte { background: #b35309 } .point.panne { background: #c0392b } .point.inconnu { background: var(--doux) }
+
+/* Titres */
+.entete { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between }
+h1 { margin: 0; font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em }
+.chapeau { margin: 6px 0 0; color: var(--doux); max-width: 760px }
+.retour { font-size: 14px; text-decoration: none }
+.surtitre { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--doux) }
+h2 { margin: 0; font-size: 17px; font-weight: 600 }
+
+/* Boutons et champs */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border-radius: 8px; font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; text-decoration: none; border: 1px solid transparent }
+.btn-p { background: var(--accent); color: var(--accent-texte) } .btn-p:hover { background: var(--accent-fort); color: var(--accent-texte) }
+.btn-s { background: var(--surface); color: var(--encre); border-color: var(--champ) } .btn-s:hover { border-color: var(--encre); color: var(--encre) }
+.btn-d { background: var(--surface); color: var(--danger); border-color: var(--champ) } .btn-d:hover { border-color: var(--danger) }
+.btn-petit { min-height: 36px; padding: 0 12px; font-size: 13px }
+.btn:disabled { opacity: .55; cursor: not-allowed }
+.champ { width: 100%; padding: 11px 14px; border: 1px solid var(--champ); border-radius: 8px; background: var(--surface); color: var(--encre); font: inherit }
+.champ-discret { width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--encre); font: inherit }
+.champ-discret:hover { border-color: var(--trait) } .champ-discret:focus { background: var(--surface); outline: 2px solid var(--accent); outline-offset: 0 }
+label.titre-champ { font-weight: 600 }
+.aide { font-size: 13px; color: var(--doux) }
+
+/* Cartes et blocs */
+.carte { background: var(--surface); border: 1px solid var(--trait); border-radius: 12px }
+.carte-p { padding: 18px 20px }
+.grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px }
+.colonnes { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start }
+.colonne-large { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px }
+.colonne-etroite { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px }
+.pile { display: flex; flex-direction: column; gap: 10px }
+.rangee { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+
+.a-traiter { display: flex; gap: 14px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--signal-trait); border-radius: 12px; text-decoration: none; color: var(--encre) }
+.a-traiter .icone { width: 36px; height: 36px; flex: none; border-radius: 8px; background: var(--signal-fond); color: var(--signal); display: flex; align-items: center; justify-content: center }
+.a-traiter strong { display: block } .a-traiter span { font-size: 14px; color: var(--doux) }
+.a-traiter em { align-self: center; font-style: normal; font-weight: 600; color: var(--accent); font-size: 14px; margin-left: auto }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--trait-2); color: var(--texte) }
+.badge.bleu { background: var(--accent-fond); color: var(--accent-fort) }
+.badge.orange { background: var(--signal-fond); color: var(--signal) }
+.badge.vert { background: var(--ok-fond); color: var(--ok) }
+.badge.rouge { background: var(--danger-fond); color: var(--danger) }
+
+.jauge { height: 6px; border-radius: 999px; background: var(--trait-2); overflow: hidden }
+.jauge > div { height: 100%; border-radius: 999px; background: var(--encre) }
+.jauge.verte > div { background: var(--ok-point) } .jauge.bleue > div { background: var(--accent) }
+
+table { border-collapse: collapse; width: 100% }
+.tableau { overflow-x: auto }
+th { text-align: left; font-size: 12px; color: var(--doux); font-weight: 600; padding: 10px 16px; border-bottom: 1px solid var(--trait); white-space: nowrap }
+td { padding: 14px 16px; border-bottom: 1px solid var(--trait-2); vertical-align: middle; font-size: 14px }
+tbody tr:last-child td { border-bottom: 0 }
+td .sous { font-size: 13px; color: var(--doux) }
+.lien-projet { color: var(--encre); font-weight: 600; text-decoration: none } .lien-projet:hover { color: var(--accent) }
+
+/* Projet */
+.lots { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(34px, 1fr)); gap: 6px }
+.lots li { height: 34px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 13px; background: var(--trait-2); color: var(--doux) }
+.lots li.livre { background: var(--encre); color: var(--fond) }
+.lots li.courant { background: var(--accent); color: var(--accent-texte); outline: 3px solid var(--accent-fond) }
+.lots li.abandonne { background: repeating-linear-gradient(45deg, var(--trait-2), var(--trait-2) 6px, var(--surface-2) 6px, var(--surface-2) 12px) }
+.etapes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; font-size: 12px }
+.etapes li { display: flex; flex-direction: column; gap: 6px; color: var(--doux) }
+.etapes li::before { content: ""; height: 4px; border-radius: 999px; background: var(--trait-2) }
+.etapes li.fait::before { background: var(--ok-point) } .etapes li.fait { color: var(--encre) }
+.etapes li.encours::before { background: var(--accent) } .etapes li.encours { color: var(--encre); font-weight: 600 }
+.onglets { display: flex; gap: 4px; border-bottom: 1px solid var(--trait); overflow-x: auto }
+.onglets button { min-height: 40px; padding: 0 14px; border: 0; background: none; font: inherit; font-size: 14px; cursor: pointer; margin-bottom: -1px; color: var(--doux); border-bottom: 2px solid transparent; white-space: nowrap }
+.onglets button[aria-selected="true"] { color: var(--encre); font-weight: 600; border-bottom-color: var(--encre) }
+.journal { background: var(--code); color: var(--code-texte); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.7; max-height: 460px; overflow: auto }
+.journal div { white-space: pre-wrap; word-break: break-word }
+.journal time { color: var(--code-doux); margin-right: 8px }
+.journal .t-refus { color: #f5b27a } .journal .t-fusion, .journal .t-validation, .journal .t-production { color: #7fd39b } .journal .t-erreur { color: #f19a91 }
+.taches { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 14px }
+.taches li { display: flex; gap: 10px; align-items: baseline }
+.taches .cle { color: var(--doux); width: 36px; flex: none }
+.taches .titre { flex: 1; min-width: 0 }
+.taches .st { font-size: 12px; color: var(--doux) } .taches .st.actif { color: var(--accent-fort); font-weight: 600 } .taches .st.ok { color: var(--ok) }
+.captures { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px }
+.captures figure { margin: 0 } .captures img { width: 100%; border-radius: 8px; border: 1px solid var(--trait); display: block; background: var(--surface-2) }
+.captures figcaption { font-size: 12px; color: var(--doux); margin-top: 4px }
+.bulle { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; word-break: break-word }
+.bulle.moi { align-self: flex-end; background: var(--accent-fond); border-bottom-right-radius: 4px }
+.bulle.usine { align-self: flex-start; background: var(--surface-2); border-bottom-left-radius: 4px }
+.bulle small { display: block; font-size: 12px; color: var(--doux) }
+
+/* Plan */
+.lot { overflow: hidden }
+.lot-tete { padding: 14px 18px; border-bottom: 1px solid var(--trait-2); display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline }
+.tache-plan { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px }
+.tache-plan .cle { flex: none; width: 34px; padding-top: 9px; font-size: 13px; color: var(--doux) }
+.criteres { margin: 2px 0 0; padding: 0 0 0 12px; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 14px }
+.criteres li { display: flex; gap: 6px; align-items: center }
+.lien-btn { border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 12px; min-height: 32px }
+.sombre { background: var(--encre); color: var(--fond); border-radius: 12px; padding: 18px 20px }
+.sombre .aide { color: color-mix(in srgb, var(--fond) 72%, transparent) }
+.palette-couleurs { display: flex; gap: 6px } .palette-couleurs span { width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--trait) }
+
+/* Choix (radios en cartes) */
+.choix { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--trait); border-radius: 10px; cursor: pointer; font-size: 14px; background: var(--surface) }
+.choix:has(input:checked) { border-color: var(--accent); background: var(--accent-fond) }
+.choix input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent) }
+fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px }
+legend { font-weight: 600; margin-bottom: 8px; padding: 0 }
+.briques { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px }
+.brique { text-align: left; padding: 14px 16px; border-radius: 10px; cursor: pointer; font: inherit; color: var(--encre); background: var(--surface); border: 2px solid var(--trait) }
+.brique[aria-pressed="true"] { background: var(--accent-fond); border-color: var(--accent) }
+.brique span { display: block; font-size: 13px; color: var(--doux); margin-top: 4px }
+
+/* Messages */
+.message { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 10px; font-size: 14px }
+.message.ok { background: var(--ok-fond); color: var(--ok) }
+.message.erreur { background: var(--danger-fond); color: var(--danger) }
+.message.info { background: var(--accent-fond); color: var(--accent-fort) }
+.confirmer { border: 2px solid var(--encre); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px }
+.dns { display: grid; grid-template-columns: auto auto auto; gap: 4px 14px; font-size: 13px; background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto }
+.dns span:nth-child(-n+3) { color: var(--doux) }
+.cle-unique { background: var(--encre); color: var(--fond); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px }
+.cle-unique code { flex: 1; min-width: 0; overflow-x: auto; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--fond) 14%, var(--encre)); font-size: 13px; white-space: nowrap }
+.vide { padding: 28px; text-align: center; color: var(--doux) }
+.chargement { padding: 48px; text-align: center; color: var(--doux) }
+
+/* Palette de commandes */
+dialog.palette { width: min(640px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--trait); border-radius: 12px; background: var(--surface); color: var(--encre); box-shadow: 0 24px 64px rgba(0, 0, 0, .25); margin-top: 12vh }
+dialog.palette::backdrop { background: rgba(15, 18, 22, .45) }
+.palette input { width: 100%; border: 0; border-bottom: 1px solid var(--trait); padding: 16px 18px; font: inherit; font-size: 16px; background: transparent; color: var(--encre) }
+.palette input:focus { outline: none }
+.palette ul { list-style: none; margin: 0; padding: 6px; max-height: 360px; overflow: auto }
+.palette li button { width: 100%; text-align: left; display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 0; border-radius: 8px; background: none; color: var(--encre); font: inherit; cursor: pointer }
+.palette li button[aria-selected="true"], .palette li button:hover { background: var(--accent-fond) }
+.palette li small { margin-left: auto; color: var(--doux); font-size: 12px }
+
+.graph { display: flex; align-items: flex-end; gap: 10px; height: 140px; padding-top: 8px; border-bottom: 1px solid var(--trait) }
+.graph div { flex: 1; display: flex; gap: 3px; align-items: flex-end; height: 100% }
+.graph i { flex: 1; border-radius: 4px 4px 0 0; background: var(--accent); min-height: 2px }
+.graph i.reel { background: var(--ok-point) }
+.graph-legende { display: flex; justify-content: space-between; font-size: 12px; color: var(--doux) }
