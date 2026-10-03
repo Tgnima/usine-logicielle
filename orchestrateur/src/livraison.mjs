@@ -13,7 +13,7 @@ import { ecrireEtat, shaPrincipal } from "./github.mjs"
 import { analyserCorrections } from "./analyste.mjs"
 import { ajouterLot } from "./creation.mjs"
 import { escalader } from "./escalade.mjs"
-import { enregistrer } from "./couts.mjs"
+import { ecrireReglage, enregistrer, lireReglage } from "./couts.mjs"
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
@@ -137,6 +137,14 @@ export async function finaliserSiFini(ctx, projetId) {
   const tout = taches(db, projetId)
   if (!tout.every(fini) || projet.lot_livre < Math.max(...tout.map((t) => t.lot))) return false
   maj(db, "projets", projetId, { statut: "livre" })
+  // Des demandes reçues pendant la fabrication : elles partent maintenant, sans attendre
+  // l'humain ; le rapport final viendra quand elles seront livrées à leur tour.
+  const enFile = retirerFile(db, projetId)
+  if (enFile.length) {
+    await ctx.notifier.etape(obtenir(db, "projets", projetId), `:inbox_tray: Lot terminé. ${enFile.length > 1 ? `${enFile.length} demandes reçues` : "Une demande reçue"} pendant la fabrication ${enFile.length > 1 ? "partent" : "part"} maintenant chez l'analyste.`)
+    await demanderCorrections(ctx, projetId, enFile.map((d) => d.texte).join("\n\n"), [...new Set(enFile.map((d) => d.par))].join(", "))
+    return true
+  }
   const sha = await shaPrincipal(config, projet.depot.split("/")[1])
   await ctx.notifier.rapportFinal(obtenir(db, "projets", projetId), rapport(ctx, projetId, sha))
   return true
@@ -231,6 +239,20 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
     await ctx.notifier.etape(projet, `:x: L'analyste n'a pas pu traiter la demande : ${error.message.slice(0, 500)}\n_Tu peux reformuler en répondant dans ce fil._`, [{ texte: "Reformuler", action: "livraison_corriger", valeur: projetId }])
     return { ok: false, message: error.message }
   }
+}
+
+// La file des demandes de correction reçues pendant une fabrication.
+const cleFile = (projetId) => `corrections_en_attente_${projetId}`
+export function mettreEnFile(db, projetId, texte, par) {
+  const file = JSON.parse(lireReglage(db, cleFile(projetId), "[]"))
+  file.push({ texte, par, le: new Date().toISOString() })
+  ecrireReglage(db, cleFile(projetId), JSON.stringify(file))
+  return file.length
+}
+function retirerFile(db, projetId) {
+  const file = JSON.parse(lireReglage(db, cleFile(projetId), "[]"))
+  if (file.length) ecrireReglage(db, cleFile(projetId), "[]")
+  return file
 }
 
 // Les derniers échanges avec l'analyste sur ce produit (demandes et diagnostics).

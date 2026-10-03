@@ -4,10 +4,10 @@
 //   - des questions de l'analyste        -> ses réponses
 //   - un plan à valider                  -> une correction du plan
 //   - un produit livré ou en production  -> une demande de correction (l'analyste enquête)
-//   - pendant la fabrication             -> une remarque transmise aux agents des tâches suivantes
+//   - pendant la fabrication             -> mise en file, envoyée à l'analyste à la fin du lot
 import { noter, obtenir } from "./db.mjs"
 import { corrigerPlan, repondreQuestions } from "./pipeline.mjs"
-import { demanderCorrections } from "./livraison.mjs"
+import { demanderCorrections, mettreEnFile } from "./livraison.mjs"
 import { lireReponse, resoudre } from "./escalade.mjs"
 
 export async function repondreDansLeFil(ctx, projetId, texte, par) {
@@ -34,14 +34,14 @@ export async function repondreDansLeFil(ctx, projetId, texte, par) {
       return null // demanderCorrections répond elle-même dans le fil
     case "analyse":
     case "corrections":
-      return ":hourglass_flowing_sand: L'analyste travaille déjà sur ce projet : renvoie ton message quand il aura répondu."
     case "creation":
     case "fabrication":
-    case "bloque":
-      // Les décisions sont relues par chaque agent avant sa tâche (consigne de fabrique.mjs).
-      db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Remarque", texte, par)
-      noter(db, { projet: projetId, type: "remarque", message: `${par} : ${texte}` })
-      return ":memo: Noté : les agents en tiendront compte dans les tâches suivantes. Pour changer le plan lui-même, attends la livraison et demande une correction."
+    case "bloque": {
+      // Pendant la fabrication : la demande attend la fin du lot, puis part seule chez l'analyste.
+      const n = mettreEnFile(db, projetId, texte, par)
+      noter(db, { projet: projetId, type: "remarque", message: `En file (${n}) : ${par} : ${texte}` })
+      return `:inbox_tray: Bien reçu. La fabrication est en cours : ta demande ${n > 1 ? `(${n} en attente) ` : ""}partira automatiquement chez l'analyste dès la fin du lot, sans que tu aies à la renvoyer.`
+    }
     default:
       return `Ce projet est « ${projet.statut} » : il n'attend pas de réponse.`
   }
