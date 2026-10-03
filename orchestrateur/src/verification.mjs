@@ -34,6 +34,7 @@ Méthode :
 - Teste toi-même : appels HTTP avec curl, et pour l'interface un script Node avec Playwright (\`const { chromium } = require('playwright')\`, Chromium est installé). Ne te fie pas aux tests existants.
 - Les tests automatisés (npm test) ont déjà été lancés par l'usine, dans un environnement propre : ne les relance pas, juge l'application en marche.
 - Tu peux lire le code pour trouver les routes, mais ne le modifie pas.
+- Adresse publique : ici PUBLIC_URL=http://localhost:4100. Des liens absolus en http://localhost:4100 (dans les emails, par exemple) sont donc NORMAUX pendant la vérification : en ligne, l'usine fixe PUBLIC_URL à la vraie adresse. Pour juger une exigence d'URL absolues, relance l'application avec PUBLIC_URL=https://exemple.test et vérifie que les nouveaux liens l'utilisent.
 - Environnement de l'application : DEMO=1, emails capturés par Mailpit (SMTP_HOST=mailpit, interface web sur http://mailpit:8025, API /api/v1/messages), aucune liste de destinataires autorisés. Si un critère dépend d'une variable d'environnement (voir le tableau d'AGENTS.md, par exemple EMAIL_DESTINATAIRES_AUTORISES), arrête l'application et relance-la toi-même avec cette variable (\`PORT=4100 DATA_DIR=… npm start\`), puis remets-la comme avant.
 - Un critère est validé seulement si tu l'as observé. Dans le doute, il est refusé.
 - Note aussi un défaut grave hors critères (page blanche, erreur 500, donnée incohérente).
