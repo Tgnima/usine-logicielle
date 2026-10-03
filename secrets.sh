@@ -95,18 +95,17 @@ migrer() {
   [ -n "${VALEURS[PORTIER_SECRET]:-}" ] || VALEURS[PORTIER_SECRET]=$(openssl rand -hex 32)
   [ -n "${VALEURS[PORTIER_API_TOKEN]:-}" ] || VALEURS[PORTIER_API_TOKEN]=$(openssl rand -hex 32)
   [ -n "${VALEURS[WORKER_TOKEN]:-}" ] || VALEURS[WORKER_TOKEN]=$(openssl rand -hex 32)
-  # Chiffrement : le clair ne passe que par un fichier temporaire en mémoire, effacé aussitôt.
-  local clair
-  clair=$(mktemp -p /dev/shm usine.XXXXXX)
-  chmod 600 "$clair"
-  for nom in "${SECRETS[@]}"; do printf '%s=%s\n' "$nom" "${VALEURS[$nom]:-}" >> "$clair"; done
-  sops --encrypt --age "$(sudo_si_besoin age-keygen -y "$CLE")" --input-type dotenv --output-type dotenv "$clair" > "$CHIFFRE.nouveau"
+  # Chiffrement : le clair ne passe que par un fichier temporaire en mémoire, effacé
+  # dans TOUS les cas (succès, erreur, interruption) grâce au piège de sortie.
+  CLAIR=$(mktemp -p /dev/shm usine.XXXXXX)
+  trap 'shred -u "$CLAIR" 2>/dev/null; rm -f "$CHIFFRE.nouveau"' EXIT
+  chmod 600 "$CLAIR"
+  for nom in "${SECRETS[@]}"; do printf '%s=%s\n' "$nom" "${VALEURS[$nom]:-}" >> "$CLAIR"; done
+  sops --encrypt --age "$(sudo_si_besoin age-keygen -y "$CLE")" --input-type dotenv --output-type dotenv "$CLAIR" > "$CHIFFRE.nouveau"
   # Vérifier avant de remplacer : le fichier chiffré doit redonner exactement le clair.
-  if ! diff -q <(sudo_si_besoin env SOPS_AGE_KEY_FILE="$CLE" sops --decrypt --input-type dotenv --output-type dotenv "$CHIFFRE.nouveau") "$clair" >/dev/null; then
-    shred -u "$clair"; rm -f "$CHIFFRE.nouveau"
+  if ! diff -q <(sudo_si_besoin env SOPS_AGE_KEY_FILE="$CLE" sops --decrypt --input-type dotenv --output-type dotenv "$CHIFFRE.nouveau") "$CLAIR" >/dev/null; then
     echo "Le chiffrement n'a pas pu être vérifié : rien n'a changé."; exit 1
   fi
-  shred -u "$clair"
   mv "$CHIFFRE.nouveau" "$CHIFFRE"
   chmod 600 "$CHIFFRE"
   # Les secrets quittent .env (les autres réglages restent).
