@@ -140,6 +140,23 @@ docker compose exec orchestrateur node src/cli.mjs decider 3 A "utilise une tabl
 docker compose exec orchestrateur node src/cli.mjs production 1
 ```
 
+## Surveiller et entretenir l'usine
+
+- **La santé** (onglet Accueil, `/usine sante`, page web) : déployeur, ateliers, vérificateur,
+  portier, Caddy, Mailpit, connexions Claude et Codex, GitHub, disque, mémoire, applications.
+  Une alerte Slack seulement quand un état change (confirmé deux fois de suite).
+- **La durée de vie des aperçus** (`apercus.duree_vie_jours`, 7 par défaut) : un aperçu est
+  retiré après 7 jours sans activité sur son projet, avec un rappel 24 h avant
+  (Prolonger / Garder / Retirer). La production n'est jamais retirée automatiquement.
+- **Supprimer un projet** (`/usine supprimer <n°>` ou la fenêtre de détail) : aperçu et
+  production s'arrêtent, la place est libérée ; le code reste sur GitHub et les données de
+  production restent sur le serveur.
+- **L'entretien**, toutes les 6 heures : vieilles images, cache de construction, sauvegardes
+  de plus de 30 jours. La base de l'usine est sauvegardée chaque jour (14 jours gardés).
+- **La mise à jour** : quand une nouvelle version est sur GitHub, le bouton
+  « Mettre à jour l'usine » apparaît dans l'onglet Accueil. L'usine termine sa tâche en
+  cours, se reconstruit, redémarre et reprend seule (`cli.mjs mettre-a-jour` fait de même).
+
 ## Le contrat
 
 `usine.config.yml` (créé depuis `usine.config.example.yml`, non suivi par Git) fixe les
