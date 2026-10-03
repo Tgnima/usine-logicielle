@@ -7,6 +7,7 @@ import { analyser } from "./analyste.mjs"
 import { creerProduit } from "./creation.mjs"
 import { adresses } from "./config.mjs"
 import { enregistrer } from "./couts.mjs"
+import { demanderCorrections } from "./livraison.mjs"
 
 export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null }) {
   const id = Number(ctx.db.prepare("INSERT INTO projets (prompt, demandeur, canal, fil) VALUES (?, ?, ?, ?)").run(prompt, demandeur, canal, fil).lastInsertRowid)
@@ -138,4 +139,17 @@ export function reprise(ctx) {
   const n = db.prepare("UPDATE taches SET statut = 'prete' WHERE statut IN ('en_cours', 'verification')").run().changes
   if (n) console.log(`Reprise : ${n} tâche(s) interrompue(s) remise(s) en file.`)
   for (const p of db.prepare("SELECT id FROM projets WHERE statut = 'analyse'").all()) lancerAnalyse(ctx, p.id).catch((e) => console.error(e))
+  // Une demande de correction ou une mise en production interrompue : le produit
+  // reprend son état d'avant, et la dernière demande de correction est relancée.
+  for (const p of db.prepare("SELECT id FROM projets WHERE statut IN ('corrections', 'mise_en_production')").all()) {
+    const enProd = db.prepare("SELECT 1 FROM journal WHERE projet_id = ? AND type = 'production' AND message LIKE 'En production%'").get(p.id)
+    const avant = obtenir(db, "projets", p.id).statut
+    maj(db, "projets", p.id, { statut: enProd ? "en_production" : "livre" })
+    if (avant !== "corrections") continue
+    const derniere = db.prepare("SELECT reponse, par FROM decisions WHERE projet_id = ? AND question = 'Corrections après livraison' ORDER BY id DESC LIMIT 1").get(p.id)
+    if (!derniere) continue
+    console.log(`Reprise : demande de correction relancée sur le projet ${p.id}.`)
+    db.prepare("DELETE FROM decisions WHERE projet_id = ? AND question = 'Corrections après livraison' AND id = (SELECT MAX(id) FROM decisions WHERE projet_id = ? AND question = 'Corrections après livraison')").run(p.id, p.id)
+    demanderCorrections(ctx, p.id, derniere.reponse, derniere.par ?? "?").catch((e) => console.error(e))
+  }
 }
