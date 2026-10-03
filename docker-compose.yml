@@ -74,12 +74,16 @@ services:
       TABLEAU_HOTE: ${TABLEAU_HOTE:-}
       DOMAINE_BASE: ${DOMAINE_BASE:-45-93-21-17.sslip.io}
       RESEAU: produits
+      # La mise à jour de l'usine : son dossier, monté au même chemin, et son dépôt GitHub.
+      USINE_DIR: ${USINE_DIR:-}
+      DEPOT_USINE: ${DEPOT_USINE:-}
     secrets: [github_token, deploy_token, ai_gateway_api_key, smtp_user, smtp_pass]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./caddy:/caddy
       - etat:/etat
       - deployeur-srv:/srv
+      - ${USINE_DIR:-./.usine-dir-absent}:${USINE_DIR:-/usine-dir-absent}
     mem_limit: 512m
     networks: [usine, produits]
 

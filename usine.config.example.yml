@@ -86,3 +86,9 @@ budget:
   mensuel: 0                       # pour toute l'usine, par mois civil
   par_projet: 0                    # pour un projet, de l'analyse aux corrections
   alertes: [50, 80, 100]
+
+# La durée de vie des aperçus, pour tenir sur un petit serveur : un aperçu est retiré
+# après ce nombre de jours sans activité sur le projet (rappel dans Slack 24 h avant :
+# Prolonger / Garder / Retirer). La production n'est jamais retirée automatiquement.
+apercus:
+  duree_vie_jours: 7

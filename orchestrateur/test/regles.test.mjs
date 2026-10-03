@@ -128,3 +128,16 @@ test("porte sécurité : refus seulement si la PR AJOUTE une faille grave de dé
   assert.match(porte({ marqueurs: { ...tout, VULN_GRAVES: "3", VULN_GRAVES_MAIN: "2" }, verdict: approuve }).join(), /ajoute 1 faille/)
   assert.deepEqual(porte({ marqueurs: { ...tout, VULN_GRAVES: "?" }, verdict: approuve }), []) // audit indisponible : pas bloquant
 })
+
+test("santé : le pire état l'emporte ; durée de vie d'un aperçu lisible", async () => {
+  const { resumeEtat } = await import("../src/sante.mjs")
+  assert.equal(resumeEtat([{ etat: "ok" }, { etat: "inconnu" }]), "ok")
+  assert.equal(resumeEtat([{ etat: "ok" }, { etat: "alerte" }]), "alerte")
+  assert.equal(resumeEtat([{ etat: "alerte" }, { etat: "panne" }]), "panne")
+  const { decrireApercu } = await import("../src/cycle.mjs")
+  assert.equal(decrireApercu({ lot_livre: 0 }), "—")
+  assert.equal(decrireApercu({ lot_livre: 1, apercu_retire: 1 }), "retiré")
+  assert.equal(decrireApercu({ lot_livre: 1, apercu_garde: 1 }), "gardé")
+  assert.equal(decrireApercu({ lot_livre: 1, apercu_expire_le: new Date(Date.now() + 3.2 * 86_400_000).toISOString() }), "expire dans 3 j")
+  assert.equal(decrireApercu({ lot_livre: 1, apercu_expire_le: new Date(Date.now() + 5 * 3600_000).toISOString() }), "expire dans 5 h")
+})

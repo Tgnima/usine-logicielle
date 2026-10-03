@@ -8,6 +8,13 @@
 //
 // Puis il régénère le Caddyfile (HTTPS automatique) et écrit /etat/statut.json,
 // que l'orchestrateur lit pour savoir où en est chaque déploiement.
+//
+// Le pilotage (phase 2) :
+//   - /etat/sante.json : disque, mémoire, charge, conteneurs, place de chaque produit ;
+//   - un environnement absent de l'état souhaité est retiré (conteneurs, images, adresse ;
+//     les données de production sont gardées) ;
+//   - l'entretien : vieilles images, cache de construction, sauvegardes de plus de 30 jours ;
+//   - la mise à jour de l'usine elle-même (usine/mise-a-jour.json), par un conteneur d'aide.
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -36,6 +43,9 @@ const MEMOIRE = env.MEMOIRE_PRODUIT ?? "384m"
 const HTTPS = env.HTTPS !== "0"
 // Des résolveurs de secours pour les produits aussi (coupures DNS de l'hébergeur).
 const DNS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"].flatMap((d) => ["--dns", d])
+// Le dossier de l'usine sur le serveur, monté au même chemin (mise à jour de l'usine).
+const USINE_DIR = env.USINE_DIR ?? ""
+const DEPOT_USINE = env.DEPOT_USINE ?? ""
 if (!DEPOT_ETAT || !JETON) throw new Error("DEPOT_ETAT et GITHUB_TOKEN sont requis.")
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -88,6 +98,7 @@ function ecrireStatut(statut) {
   renameSync(`${FICHIER_STATUT}.tmp`, FICHIER_STATUT)
 }
 
+let demandeMiseAJour = null
 async function synchroniserEtat() {
   const dossier = join(SRV, "etat")
   if (!existsSync(join(dossier, ".git"))) await ok("git", ["clone", "-q", `https://github.com/${DEPOT_ETAT}.git`, dossier], { git: true })
@@ -96,6 +107,11 @@ async function synchroniserEtat() {
     await ok("git", ["reset", "-q", "--hard", "origin/HEAD"], { cwd: dossier })
   }
   const souhaits = []
+  try {
+    demandeMiseAJour = JSON.parse(readFileSync(join(dossier, "usine", "mise-a-jour.json"), "utf8"))
+  } catch {
+    demandeMiseAJour = null
+  }
   for (const environnement of ["apercus", "production"]) {
     const d = join(dossier, environnement)
     if (!existsSync(d)) continue
@@ -277,7 +293,176 @@ async function tour() {
       ecrireStatut(statut)
     }
   }
+  await retirerAbsents(souhaits, statut)
   await regenererCaddy(statut)
+}
+
+// --- Retirer ce qui n'est plus souhaité ---------------------------------------------
+// Garde-fous : une absence doit être vue 3 tours de suite, 2 retraits au plus par tour,
+// et rien du tout si l'état souhaité paraît vide alors que des produits tournent.
+const absences = new Map()
+async function retirerAbsents(souhaits, statut) {
+  const voulus = new Set(souhaits.filter(valide).map((s) => `${s.environnement}/${s.produit}`))
+  const enPlace = Object.keys(statut)
+  if (voulus.size === 0 && enPlace.length > 0) return
+  let retraits = 0
+  for (const cle of enPlace) {
+    if (voulus.has(cle)) {
+      absences.delete(cle)
+      continue
+    }
+    absences.set(cle, (absences.get(cle) ?? 0) + 1)
+    if (absences.get(cle) < 3 || retraits >= 2) continue
+    retraits += 1
+    absences.delete(cle)
+    await retirer(cle, statut[cle]).catch((e) => log(`Retrait de ${cle} : ${e.message}`))
+    delete statut[cle]
+    ecrireStatut(statut)
+  }
+}
+
+async function retirer(cle, s) {
+  const [environnement, produit] = cle.split("/")
+  if (!/^[a-z0-9-]{3,24}$/.test(produit ?? "")) return
+  log(`Retrait de ${cle}…`)
+  if (environnement === "apercu") {
+    // Les données d'un aperçu sont fictives ; elles sont quand même sauvegardées avant.
+    const volume = `usine-apercu-${produit}-data`
+    if ((await lancer("docker", ["volume", "inspect", volume])).code === 0) {
+      await lancer("docker", ["run", "--rm", "--user", "root", "--entrypoint", "tar", "-v", `${volume}:/d:ro`, "-v", "usine-sauvegardes:/s", "usine-logicielle-deployeur", "czf", `/s/${produit}-apercu-${horodatage().replace(/[:.]/g, "-")}.tgz`, "-C", "/d", "."])
+    }
+    await lancer("docker", ["rm", "-f", `usine-apercu-${produit}`])
+    await lancer("docker", ["volume", "rm", volume])
+  } else {
+    // Production : les conteneurs s'arrêtent, les données restent (« supprimer_des_donnees : jamais »).
+    for (const couleur of ["blue", "green"]) await lancer("docker", ["rm", "-f", `usine-prod-${produit}-${couleur}`])
+  }
+  // Plus aucun environnement pour ce produit : ses images et ses sources partent aussi.
+  const restant = Object.keys(lireStatut()).some((k) => k !== cle && k.endsWith(`/${produit}`))
+  if (!restant) {
+    const images = (await lancer("docker", ["image", "ls", "-q", `usine-produit-${produit}`])).sortie.split("\n").filter(Boolean)
+    if (images.length) await lancer("docker", ["image", "rm", "-f", ...new Set(images)])
+    await lancer("rm", ["-rf", join(SRV, "produits", produit)])
+  }
+  log(`${cle} retiré.`)
+}
+
+// --- La santé du serveur et des conteneurs ---------------------------------------------
+const FICHIER_SANTE = join(ETAT, "sante.json")
+let placeProduits = {}
+let dernierEntretien = null
+let miseAJour = { disponible: 0, commits: [], version: null, verifie_le: null, en_cours: null, derniere: null }
+
+async function mesurerPlace() {
+  // La place de chaque produit : ses images et ses volumes (docker system df -v).
+  const r = await lancer("docker", ["system", "df", "-v", "--format", "{{json .}}"], { minutes: 3 })
+  if (r.code !== 0) return
+  let d
+  try {
+    d = JSON.parse(r.sortie)
+  } catch {
+    return
+  }
+  const octets = (t) => {
+    const m = String(t ?? "").match(/^([\d.]+)\s*([kKMGT]?)B/)
+    return m ? Number(m[1]) * { "": 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12 }[m[2]] : 0
+  }
+  const place = {}
+  const ajouter = (produit, cle, n) => {
+    place[produit] ??= { images_mo: 0, volumes_mo: 0 }
+    place[produit][cle] += Math.round(n / 1e6)
+  }
+  for (const i of d.Images ?? []) {
+    const m = String(i.Repository ?? "").match(/^usine-produit-([a-z0-9-]+)$/)
+    if (m) ajouter(m[1], "images_mo", octets(i.UniqueSize ?? i.Size))
+  }
+  for (const v of d.Volumes ?? []) {
+    const m = String(v.Name ?? "").match(/^usine-(?:apercu|prod)-([a-z0-9-]+?)(?:-reel)?-data$/)
+    if (m) ajouter(m[1], "volumes_mo", octets(v.Size))
+  }
+  placeProduits = place
+}
+
+async function ecrireSante() {
+  const df = (await lancer("df", ["-B1", "--output=size,used,avail", "/"])).sortie.trim().split("\n").pop().trim().split(/\s+/).map(Number)
+  const mem = Object.fromEntries(readFileSync("/proc/meminfo", "utf8").split("\n").filter(Boolean).map((l) => [l.split(":")[0], Number(l.split(":")[1].trim().split(" ")[0]) * 1024]))
+  const conteneurs = (await lancer("docker", ["ps", "-a", "--format", "{{json .}}"])).sortie.split("\n").filter(Boolean).flatMap((l) => {
+    try {
+      const c = JSON.parse(l)
+      return [{ nom: c.Names, etat: c.State, statut: c.Status, image: c.Image }]
+    } catch {
+      return []
+    }
+  }).filter((c) => /^usine-/.test(c.nom))
+  const sante = {
+    le: horodatage(),
+    disque: { total_go: +(df[0] / 1e9).toFixed(1), utilise_go: +(df[1] / 1e9).toFixed(1), libre_go: +(df[2] / 1e9).toFixed(1), pct: Math.round((df[1] / df[0]) * 100) },
+    memoire: { total_mo: Math.round(mem.MemTotal / 1e6), dispo_mo: Math.round(mem.MemAvailable / 1e6), swap_utilise_mo: Math.round((mem.SwapTotal - mem.SwapFree) / 1e6) },
+    charge: readFileSync("/proc/loadavg", "utf8").split(" ").slice(0, 3).map(Number),
+    conteneurs,
+    produits: placeProduits,
+    entretien: dernierEntretien,
+    mise_a_jour: miseAJour,
+  }
+  writeFileSync(`${FICHIER_SANTE}.tmp`, JSON.stringify(sante, null, 2))
+  renameSync(`${FICHIER_SANTE}.tmp`, FICHIER_SANTE)
+}
+
+// --- L'entretien (toutes les 6 heures) --------------------------------------------------
+async function entretenir() {
+  const avant = Number((await lancer("df", ["-B1", "--output=used", "/"])).sortie.trim().split("\n").pop())
+  const utilisees = new Set((await lancer("docker", ["ps", "-a", "--format", "{{.Image}}"])).sortie.split("\n").filter(Boolean))
+  const produits = new Set((await lancer("docker", ["image", "ls", "--format", "{{.Repository}}"])).sortie.split("\n").filter((r) => /^usine-produit-/.test(r)))
+  let images = 0
+  for (const depot of produits) {
+    // Les plus récentes d'abord ; on garde celles en service et les 2 dernières.
+    const liste = (await lancer("docker", ["image", "ls", depot, "--format", "{{.Repository}}:{{.Tag}}"])).sortie.split("\n").filter(Boolean)
+    for (const [i, image] of liste.entries()) {
+      if (i < 2 || utilisees.has(image)) continue
+      if ((await lancer("docker", ["image", "rm", image])).code === 0) images += 1
+    }
+  }
+  await lancer("docker", ["image", "prune", "-f"])
+  await lancer("docker", ["builder", "prune", "-f", "--keep-storage", "3GB"], { minutes: 10 })
+  await lancer("docker", ["run", "--rm", "--user", "root", "--entrypoint", "find", "-v", "usine-sauvegardes:/s", "usine-logicielle-deployeur", "/s", "-name", "*.tgz", "-mtime", "+30", "-delete"])
+  const apres = Number((await lancer("df", ["-B1", "--output=used", "/"])).sortie.trim().split("\n").pop())
+  dernierEntretien = { le: horodatage(), images_supprimees: images, libere_mo: Math.max(0, Math.round((avant - apres) / 1e6)) }
+  log(`Entretien : ${images} image(s) supprimée(s), ${dernierEntretien.libere_mo} Mo libérés.`)
+}
+
+// --- La mise à jour de l'usine ----------------------------------------------------------
+// Vérifier : le dépôt de l'usine (monté au même chemin) est comparé à GitHub.
+async function verifierMiseAJour() {
+  if (!USINE_DIR || !DEPOT_USINE || !existsSync(join(USINE_DIR, ".git"))) return
+  const git = (args, options = {}) => lancer("git", ["-c", `safe.directory=${USINE_DIR}`, "-C", USINE_DIR, ...args], options)
+  const f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: true })
+  if (f.code !== 0) return
+  await lancer("chown", ["-R", "1000:1000", join(USINE_DIR, ".git")])
+  const commits = (await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/main"])).sortie.split("\n").filter(Boolean)
+  miseAJour = { ...miseAJour, disponible: commits.length, commits: commits.slice(0, 15), version: (await git(["rev-parse", "--short", "HEAD"])).sortie.trim(), verifie_le: horodatage() }
+}
+
+// Appliquer : un conteneur d'aide (il survit au redémarrage du déployeur) remet le dépôt
+// à jour, reconstruit et relance l'usine. Les données et les secrets ne bougent pas.
+async function appliquerMiseAJour(demande) {
+  if (!USINE_DIR || !existsSync(join(USINE_DIR, ".git"))) return log("Mise à jour impossible : USINE_DIR n'est pas monté.")
+  log(`Mise à jour de l'usine demandée par ${demande.par ?? "?"}…`)
+  miseAJour = { ...miseAJour, en_cours: demande.demande_le }
+  await ecrireSante()
+  const gidDocker = (await lancer("stat", ["-c", "%g", "/var/run/docker.sock"])).sortie.trim()
+  await lancer("docker", ["rm", "-f", "usine-mise-a-jour"])
+  const script = [
+    "set -e",
+    `git -c safe.directory=${USINE_DIR} reset -q --hard refs/remotes/github/main`,
+    "docker compose build --pull 2>&1 | tail -5",
+    "docker compose up -d --remove-orphans 2>&1 | tail -10",
+  ].join(" && ")
+  const r = await lancer("docker", ["run", "-d", "--name", "usine-mise-a-jour", "--user", `1000:${gidDocker}`, "-e", "HOME=/tmp",
+    "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", `${USINE_DIR}:${USINE_DIR}`, "-w", USINE_DIR,
+    "--entrypoint", "sh", "usine-logicielle-deployeur", "-c", script])
+  if (r.code !== 0) log(`Mise à jour : lancement impossible : ${r.sortie.slice(-300)}`)
+  // Le déployeur sera lui-même recréé ; la suite (statut) est écrite au redémarrage.
+  writeFileSync(join(ETAT, "mise-a-jour.json"), JSON.stringify({ demande_le: demande.demande_le, par: demande.par, lancee_le: horodatage() }))
 }
 
 // Les journaux récents de chaque produit en ligne, sur le volume partagé : quand
@@ -311,8 +496,23 @@ mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
 log(`Déployeur prêt : tire ${DEPOT_ETAT} toutes les 20 s.`)
+// Une mise à jour vient d'être appliquée : on note sa fin (l'orchestrateur l'annonce).
+try {
+  const m = JSON.parse(readFileSync(join(ETAT, "mise-a-jour.json"), "utf8"))
+  miseAJour = { ...miseAJour, derniere: { ...m, terminee_le: horodatage() }, en_cours: null }
+} catch {}
+let derniereDemande = miseAJour.derniere?.demande_le ?? null
 for (let n = 0; ; n++) {
   await tour().catch((e) => log(`Tour en échec : ${e.message.split("\n")[0]}`))
   if (n % 3 === 0) await publierJournaux().catch((e) => log(`Journaux : ${e.message}`))
+  if (n % 9 === 0) await mesurerPlace().catch((e) => log(`Place : ${e.message}`))
+  if (n % 30 === 0) await verifierMiseAJour().catch((e) => log(`Vérification de mise à jour : ${e.message}`))
+  if (n % 1080 === 540) await entretenir().catch((e) => log(`Entretien : ${e.message}`))
+  await ecrireSante().catch((e) => log(`Santé : ${e.message}`))
+  if (demandeMiseAJour?.demande_le && demandeMiseAJour.demande_le !== derniereDemande) {
+    derniereDemande = demandeMiseAJour.demande_le
+    await verifierMiseAJour().catch(() => {})
+    await appliquerMiseAJour(demandeMiseAJour).catch((e) => log(`Mise à jour : ${e.message}`))
+  }
   await pause(20_000)
 }

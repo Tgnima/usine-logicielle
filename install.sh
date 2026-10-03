@@ -50,6 +50,13 @@ if [ -n "$SOURCE" ] && [ -f "$SOURCE/.env" ]; then
   if [ -n "$vol" ] && [ "$(valeur CODEX_VOLUME)" = "usine-logicielle-codex" ]; then poser CODEX_VOLUME "$vol"; echo "• Volume Codex réutilisé : $vol"; fi
 fi
 
+# La mise à jour depuis Slack : le dossier de l'usine et son dépôt GitHub.
+[ -n "$(valeur USINE_DIR)" ] || poser USINE_DIR "$(pwd)"
+if [ -z "$(valeur DEPOT_USINE)" ]; then
+  depot=$(git remote get-url origin 2>/dev/null | sed -E 's#^https://github.com/##; s#^git@github.com:##; s#\.git$##')
+  [ -n "$depot" ] && poser DEPOT_USINE "$depot"
+fi
+
 # Les secrets : chiffrés (SOPS + age), retirés de .env, déchiffrés en mémoire au démarrage.
 bash secrets.sh installer
 bash secrets.sh migrer

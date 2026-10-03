@@ -7,6 +7,7 @@ import { createServer } from "node:http"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, evolution, montant, reglagesCouts } from "./couts.mjs"
 import { duree, nomMois } from "./slack-couts.mjs"
 import { quiEstConnecte } from "./portier.mjs"
+import { PICTO, etatUsine } from "./sante.mjs"
 
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
 const jetons = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(".", ",")} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n))
@@ -34,7 +35,8 @@ function graphique(config, evo) {
   </svg>`
 }
 
-export function page(ctx) {
+export async function page(ctx) {
+  const { composants } = await etatUsine(ctx).catch(() => ({ composants: [] }))
   const { db } = ctx
   const config = reglagesCouts(db, ctx.config)
   const b = bilanMois(db, config)
@@ -76,7 +78,11 @@ code { font-size: 13px } .note { color: var(--doux); font-size: 13px; margin-top
   <div class="carte"><div class="libelle">Jetons, ce mois-ci</div><div class="chiffre">${echapper(jetons(b.jetons))}</div><div class="libelle">${b.appels} appels de modèles</div></div>
   <div class="carte"><div class="libelle">Temps de calcul, ce mois-ci</div><div class="chiffre">${echapper(duree(calcul))}</div><div class="libelle">Agents, analyste et vérificateur</div></div>
 </div>
-<div class="carte"><h2>Évolution sur 12 mois</h2>${graphique(config, evo)}
+<div class="carte section"><h2>Santé de l'usine</h2><div class="tableau"><table>
+  <tr><th></th><th>Composant</th><th>État</th></tr>
+  ${composants.map((x) => `<tr><td>${PICTO[x.etat]}</td><td>${echapper(x.nom)}</td><td style="white-space:normal">${echapper(x.detail)}</td></tr>`).join("")}
+</table></div></div>
+<div class="carte section"><h2>Évolution sur 12 mois</h2>${graphique(config, evo)}
   <div class="legende"><span><span class="pastille" style="background:var(--api)"></span>Équivalent API</span><span><span class="pastille" style="background:var(--reel)"></span>Coût réel</span></div></div>
 <div class="carte section"><h2>Ce que chaque produit a coûté</h2><div class="tableau"><table>
   <tr><th>Produit</th><th>Statut</th><th class="n">Équiv. API</th><th class="n">Coût réel</th><th class="n">Budget</th><th>Modèles</th><th class="n">Calcul</th><th class="n">Tâches</th><th class="n">Refus</th><th class="n">Corrections</th><th class="n">Escalades</th></tr>
@@ -106,7 +112,7 @@ export function demarrerTableau(ctx, port = 8091) {
     }
     try {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY" })
-      res.end(page(ctx))
+      res.end(await page(ctx))
     } catch (error) {
       console.error("Tableau de bord :", error)
       res.writeHead(500, { "content-type": "text/plain; charset=utf-8" })

@@ -94,6 +94,14 @@ async function lireEtat(config, chemin, branche = "main") {
   return r.statut === 200 ? r.json : null
 }
 
+// Retire un état souhaité : le déployeur, au tour suivant, retire ce qui y correspondait.
+export async function supprimerEtat(config, chemin, message) {
+  const actuel = await lireEtat(config, chemin)
+  if (!actuel) return false
+  await gh(config, `${depot(config, config.github.depot_etat)}/contents/${chemin}`, { method: "DELETE", corps: { message, sha: actuel.sha } })
+  return true
+}
+
 // Écrit un état souhaité. Direct sur main pour un aperçu ; par pull request
 // (aussitôt fusionnée, puisqu'un humain vient de valider) pour la production :
 // chaque mise en production laisse ainsi une trace relisible.

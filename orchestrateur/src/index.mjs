@@ -17,11 +17,14 @@ import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
 import { demarrerTableau } from "./tableau.mjs"
 import { demarrerSynchronisationPortier } from "./portier.mjs"
+import { demarrerCycle, ouvrirCycle } from "./cycle.mjs"
+import { surveillerSante } from "./sante.mjs"
 
 const config = chargerConfig()
 mkdirSync(config.dataDir, { recursive: true })
 const db = ouvrirDb(join(config.dataDir, "usine.db"))
 ouvrirCouts(db)
+ouvrirCycle(db)
 const ctx = { config, db, notifier: notificateurConsole(), livraison }
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
@@ -41,6 +44,8 @@ demarrerFabrique(ctx)
 surveillerEscalades(ctx)
 demarrerTableau(ctx)
 demarrerSynchronisationPortier(ctx)
+demarrerCycle(ctx)
+surveillerSante(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).
 // Elle n'écoute que dans le conteneur.

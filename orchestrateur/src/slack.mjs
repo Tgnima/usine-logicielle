@@ -10,6 +10,8 @@ import { aiguiller } from "./aiguillage.mjs"
 import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
 import { blocsResume, vueAccueil } from "./accueil.mjs"
 import { repondreDansLeFil } from "./conversation.mjs"
+import { blocsSante } from "./accueil.mjs"
+import { garderApercu, mettreAJourUsine, prolongerApercu, retirerApercu, supprimerProjet, decrireApercu } from "./cycle.mjs"
 import { brancherAcces } from "./slack-acces.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
@@ -25,7 +27,7 @@ const lien = (texte, url, action_id = "lien_tableau") => ({ type: "button", text
 const STATUTS = {
   analyse: ":brain: analyse", questions: ":question: questions", plan_a_valider: ":clipboard: plan à valider", creation: ":building_construction: création",
   fabrication: ":hammer_and_wrench: fabrication", bloque: ":octagonal_sign: bloqué", livre: ":package: livré", corrections: ":memo: corrections",
-  mise_en_production: ":rocket: mise en production", abandonne: ":wastebasket: abandonné", en_production: ":large_green_circle: en production", echec: ":x: échec", arrete: ":black_square_for_stop: arrêté",
+  mise_en_production: ":rocket: mise en production", abandonne: ":wastebasket: abandonné", supprime: ":wastebasket: supprimé", en_production: ":large_green_circle: en production", echec: ":x: échec", arrete: ":black_square_for_stop: arrêté",
 }
 
 // --- Le notificateur console (sans Slack) ------------------------------------
@@ -128,7 +130,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
     }
     if (mot === "tableau" || mot === "dashboard") {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Tableau de bord de l'usine* : coûts, budgets et évolution mensuelle."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
@@ -142,6 +144,12 @@ export async function demarrerSlack(ctx) {
     }
     if (!estAdmin(command.user_id)) return repondre(refus)
     if (mot === "acces" || mot === "accès") return ouvrirAcces(command.trigger_id, command.user_id)
+    if (mot === "sante" || mot === "santé") return ouvrirSante(command.trigger_id)
+    if (mot === "supprimer" && /^\d+$/.test(arg ?? "")) {
+      const p = obtenir(db, "projets", Number(arg))
+      if (!p) return repondre(`Pas de projet ${arg}.`)
+      return app.client.views.open({ trigger_id: command.trigger_id, view: vueDetail(p.id) })
+    }
     if (mot === "stop") return repondre(actions.arreter(ctx, command.user_name).message)
     if (mot === "reprendre") return repondre(actions.reprendre(ctx).message)
     if (mot === "relancer" && /^\d+$/.test(arg ?? "")) {
@@ -380,10 +388,10 @@ export async function demarrerSlack(ctx) {
   async function publierAccueil(user) {
     // De vrais tableaux si Slack les accepte ; sinon la même chose en grilles.
     try {
-      await app.client.views.publish({ user_id: user, view: vueAccueil(ctx) })
+      await app.client.views.publish({ user_id: user, view: await vueAccueil(ctx) })
     } catch (error) {
       console.error("Accueil (tableaux refusés, repli en grilles) :", error.data?.error ?? error.message, JSON.stringify(error.data?.response_metadata?.messages ?? []))
-      await app.client.views.publish({ user_id: user, view: vueAccueil(ctx, { tableaux: false }) }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
+      await app.client.views.publish({ user_id: user, view: await vueAccueil(ctx, { tableaux: false }) }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
     }
   }
 
@@ -407,13 +415,54 @@ export async function demarrerSlack(ctx) {
   })
 
   // Le menu « Voir le détail d'un projet » : une fenêtre avec ce qu'il a coûté.
+  const vueDetail = (id) => {
+    const p = obtenir(db, "projets", id)
+    const actionsProjet = !p ? [] : [{
+      type: "actions",
+      elements: [
+        ...(p.lot_livre && !p.apercu_retire ? [bouton(`Prolonger l'aperçu`, "apercu_prolonger", id), bouton("Garder l'aperçu", "apercu_garder", id), bouton("Retirer l'aperçu", "apercu_retirer", id)] : []),
+        ...(!["supprime", "abandonne"].includes(p.statut) ? [{ ...bouton("Supprimer le projet", "projet_supprimer", id, "danger"), confirm: { title: { type: "plain_text", text: "Supprimer le projet ?" }, text: { type: "mrkdwn", text: `*${p.nom ?? "Ce projet"}* : l'aperçu et la production s'arrêtent, la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.` }, confirm: { type: "plain_text", text: "Supprimer" }, deny: { type: "plain_text", text: "Annuler" }, style: "danger" } }] : []),
+      ],
+    }]
+    return {
+      type: "modal", title: { type: "plain_text", text: "Détail du projet" }, close: { type: "plain_text", text: "Fermer" },
+      blocks: [...blocsCoutProjet(ctx, id), ...(p?.lot_livre ? [{ type: "context", elements: [{ type: "mrkdwn", text: `Aperçu : ${decrireApercu(p)}` }] }] : []), ...actionsProjet.filter((a) => a.elements.length)],
+    }
+  }
   app.action("projet_detail_choix", async ({ ack, body }) => {
     await ack()
     const id = Number(body.actions[0].selected_option.value)
-    await app.client.views.open({
-      trigger_id: body.trigger_id,
-      view: { type: "modal", title: { type: "plain_text", text: "Détail du projet" }, close: { type: "plain_text", text: "Fermer" }, blocks: blocsCoutProjet(ctx, id) },
-    }).catch((e) => console.error("Détail :", e.data?.error ?? e.message))
+    await app.client.views.open({ trigger_id: body.trigger_id, view: vueDetail(id) }).catch((e) => console.error("Détail :", e.data?.error ?? e.message))
+  })
+  // Le cycle de vie : depuis le rappel dans le fil, ou depuis la fenêtre de détail.
+  const actionCycle = (fn) => async (args) => {
+    if (!(await garde(args))) return
+    const { body } = args
+    const id = Number(body.actions[0].value)
+    const r = await fn(ctx, id, body.user.name ?? body.user.id).catch((e) => ({ ok: false, message: e.message }))
+    if (body.view?.id && body.view.type === "modal") await app.client.views.update({ view_id: body.view.id, view: vueDetail(id) }).catch(() => {})
+    else if (body.message) await retirerBoutons(body, `${r.ok ? ":white_check_mark:" : ":x:"} ${r.message} (<@${body.user.id}>)`)
+    if (!r.ok && body.view?.type === "modal") console.error("Cycle :", r.message)
+  }
+  app.action("apercu_prolonger", actionCycle(prolongerApercu))
+  app.action("apercu_garder", actionCycle(garderApercu))
+  app.action("apercu_retirer", actionCycle(retirerApercu))
+  app.action("projet_supprimer", actionCycle(supprimerProjet))
+  // La santé détaillée, et la mise à jour de l'usine.
+  const ouvrirSante = async (trigger_id) => {
+    const r = await app.client.views.open({ trigger_id, view: { type: "modal", title: { type: "plain_text", text: "Santé de l'usine" }, close: { type: "plain_text", text: "Fermer" }, blocks: [section(":hourglass_flowing_sand: Contrôle en cours…")] } }).catch(() => null)
+    if (!r?.view?.id) return
+    const blocs = await blocsSante(ctx, { complet: true }).catch((e) => [section(`:x: ${e.message}`)])
+    await app.client.views.update({ view_id: r.view.id, view: { type: "modal", title: { type: "plain_text", text: "Santé de l'usine" }, close: { type: "plain_text", text: "Fermer" }, blocks: blocs.filter((b) => !(b.type === "actions" && b.elements.some((e) => e.action_id === "sante_voir"))) } }).catch((e) => console.error("Santé :", e.data?.error ?? e.message))
+  }
+  app.action("sante_voir", async ({ ack, body }) => {
+    await ack()
+    await ouvrirSante(body.trigger_id)
+  })
+  app.action("usine_mettre_a_jour", async (args) => {
+    if (!(await garde(args))) return
+    const r = await mettreAJourUsine(ctx, args.body.user.name ?? args.body.user.id).catch((e) => ({ ok: false, message: e.message }))
+    if (!r.ok) await notifier.alerte(`:information_source: ${r.message}`)
   })
 
   // Un signet « Tableau de bord » en haut de chaque canal de l'usine : on passe

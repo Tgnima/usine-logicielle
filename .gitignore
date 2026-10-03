@@ -1,4 +1,5 @@
 .env
+.usine-dir-absent/
 usine.config.yml
 data/
 node_modules/

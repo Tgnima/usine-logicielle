@@ -128,6 +128,8 @@ async function livrerApercu(ctx, projetId, lot) {
     return
   }
   noter(db, { projet: projetId, type: "livraison", message: `Aperçu du lot ${lot} en ligne (${sha.slice(0, 7)})` })
+  // La durée de vie de l'aperçu repart (cycle.mjs la surveille).
+  maj(db, "projets", projetId, { apercu_expire_le: new Date(Date.now() + Number(config.apercus?.duree_vie_jours ?? 7) * 86_400_000).toISOString(), apercu_rappel: 0, apercu_retire: 0 })
   if (!(await finaliserSiFini(ctx, projetId))) {
     await ctx.notifier.etape(projet, `:eyes: *Aperçu du lot ${lot}* en ligne : ${a.apercu}${(config.demo?.services ?? []).includes("mailpit") ? ` · emails capturés : ${a.mails}` : ""}\nLa fabrication continue avec le lot ${lot + 1}.`)
   }
