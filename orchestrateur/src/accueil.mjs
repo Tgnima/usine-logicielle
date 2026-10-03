@@ -1,10 +1,12 @@
-// L'onglet Accueil de l'app Slack : le tableau de bord de l'usine.
-// Les chiffres clés en grille, puis de vrais tableaux (bloc « table » de Slack)
-// pour les projets, les modèles et les mois. Si Slack refuse les tableaux, la
-// même information est rendue en grilles de champs (vueAccueil(ctx, { tableaux: false })).
-// Les courbes sont sur la page web (bouton en haut).
+// L'onglet Accueil de l'app Slack : le tableau de bord de l'usine, en trois onglets
+// (Slack n'en a pas : une rangée de boutons, l'onglet actif mis en avant) :
+//   🩺 Santé   les composants, la mise à jour, l'entretien ;
+//   💶 Coûts   le mois, le budget, les modèles, l'historique ;
+//   🏭 Projets le tableau des projets, puis une carte par projet avec ses actions.
+// De vrais tableaux (bloc « table ») ; si Slack les refuse, des grilles de champs.
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, evolution, montant, reglagesCouts } from "./couts.mjs"
 import { adresseTableau, duree, nomMois } from "./slack-couts.mjs"
+import { adresses } from "./config.mjs"
 import { PICTO, etatUsine, lireSanteServeur, resumeEtat } from "./sante.mjs"
 import { decrireApercu } from "./cycle.mjs"
 
@@ -71,7 +73,7 @@ export function blocsResume(ctx) {
   if (!(budget > 0)) conseils.push("fixe un budget mensuel pour recevoir des alertes")
   if (b.projets.some((p) => p.api_inconnu)) conseils.push("ajoute le prix de Codex pour inclure le vérificateur")
   if (conseils.length) blocs.push(contexte(`⚙️ Dans *Réglages* : ${conseils.join(" · ")}.`))
-  blocs.push({ type: "actions", elements: [lien("📈 Ouvrir le tableau de bord", adresseTableau(config), "lien_tableau", "primary"), bouton("⚙️ Réglages des coûts", "couts_reglages", "1"), bouton("👥 Accès", "acces_ouvrir", "1")] })
+  blocs.push({ type: "actions", elements: [bouton("⚙️ Réglages des coûts et budgets", "couts_reglages", "1"), lien("📈 Courbes sur le tableau de bord web", adresseTableau(config), "lien_tableau")] })
   return blocs
 }
 
@@ -104,19 +106,33 @@ function blocsProjets(ctx, config, avecTableaux) {
     ]
   })
   blocs.push(...rendre(avecTableaux, ["N°", "Projet", "Statut", "Tâches", "Équiv. API", "Coût réel", "Calcul", "Budget", "Aperçu", "Disque"], lignes, [0, 3, 4, 5, 6, 7, 9]))
-  blocs.push({
-    type: "actions",
-    elements: [{
-      type: "static_select", action_id: "projet_detail_choix",
-      placeholder: { type: "plain_text", text: "🔎 Voir le détail d'un projet…" },
-      options: actifs.slice(0, 100).map((p) => ({ value: String(p.id), text: { type: "plain_text", text: tronquer(`${p.id}. ${p.nom ?? p.prompt}`, 75) } })),
-    }],
-  })
   const notes = []
   if (lignes.some((l) => String(l[4]).endsWith("*"))) notes.push("* sans le vérificateur (prix de Codex à renseigner)")
   if (lignes.some((l) => l[2].includes("🚨"))) notes.push("🚨 une décision est attendue")
   if (abandonnes) notes.push(`🗑️ ${pluriel(abandonnes, "projet abandonné ou supprimé")} masqué${abandonnes > 1 ? "s" : ""}`)
   if (notes.length) blocs.push(contexte(notes.join(" · ")))
+  blocs.push(separateur, ...blocsGestion(ctx, actifs))
+  return blocs
+}
+
+// Une carte par projet : son état en une ligne, et ses actions dans leur propre espace.
+function blocsGestion(ctx, actifs) {
+  const blocs = [titre("🛠️ Gérer les projets")]
+  const confirmer = (texte) => ({ title: { type: "plain_text", text: "Supprimer le projet ?" }, text: { type: "mrkdwn", text: texte }, confirm: { type: "plain_text", text: "Supprimer" }, deny: { type: "plain_text", text: "Annuler" }, style: "danger" })
+  for (const p of actifs.slice(0, 20)) {
+    const a = p.slug ? adresses(ctx.config, p.slug) : null
+    const enProd = ["en_production", "mise_en_production"].includes(p.statut)
+    const apercuActif = p.lot_livre && !p.apercu_retire
+    blocs.push(section(`*${p.id}. ${p.nom ?? p.prompt.slice(0, 50)}* · ${STATUTS[p.statut] ?? p.statut}${apercuActif ? ` · aperçu ${decrireApercu(p)}` : ""}`))
+    const elements = [bouton("🔎 Détail", "projet_detail", p.id)]
+    if (a && enProd) elements.push(lien("🌐 Production", a.production, `lien_prod_${p.id}`))
+    if (a && apercuActif) elements.push(lien("👁️ Aperçu", a.apercu, `lien_apercu_${p.id}`))
+    if (apercuActif && !p.apercu_garde) elements.push(bouton("📌 Garder l'aperçu", "apercu_garder", p.id), bouton("⏳ Prolonger 7 j", "apercu_prolonger", p.id))
+    if (!["creation", "fabrication", "corrections", "mise_en_production"].includes(p.statut)) {
+      elements.push({ ...bouton("🗑️ Supprimer", "projet_supprimer", p.id, "danger"), confirm: confirmer(`*${p.nom ?? "Ce projet"}* : l'aperçu et la production s'arrêtent, la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.`) })
+    }
+    blocs.push({ type: "actions", elements: elements.slice(0, 5) })
+  }
   return blocs
 }
 
@@ -156,32 +172,42 @@ export async function blocsSante(ctx, { avecTableaux = true, complet = false } =
     ...rendre(avecTableaux, ["État", "Composant", "Détail"], affiches.map((x) => [PICTO[x.etat], x.nom, x.detail]), []),
   ]
   const m = serveur?.mise_a_jour
-  const elements = [bouton("🩺 Santé détaillée", "sante_voir", "1")]
+  const elements = complet ? [] : [bouton("🩺 Santé détaillée", "sante_voir", "1")]
   if (m?.disponible) {
     blocs.push(section(`⬆️ *Mise à jour disponible* : ${pluriel(m.disponible, "changement")}\n${m.commits.slice(0, 5).map((c) => `• ${c.replace(/^\w+ /, "")}`).join("\n")}`))
     elements.unshift({ ...bouton("⬆️ Mettre à jour l'usine", "usine_mettre_a_jour", "1", "primary"), confirm: { title: { type: "plain_text", text: "Mettre à jour l'usine ?" }, text: { type: "mrkdwn", text: "L'usine termine la tâche en cours, se reconstruit et redémarre (quelques minutes), puis reprend seule. Les données et les secrets ne bougent pas." }, confirm: { type: "plain_text", text: "Mettre à jour" }, deny: { type: "plain_text", text: "Annuler" } } })
   }
   if (serveur?.entretien) blocs.push(contexte(`🧹 Dernier entretien : ${new Date(serveur.entretien.le).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} · ${serveur.entretien.libere_mo} Mo libérés${m?.version ? ` · version ${m.version}` : ""}`))
   else if (m?.version) blocs.push(contexte(`Version ${m.version}`))
-  blocs.push({ type: "actions", elements })
+  if (elements.length) blocs.push({ type: "actions", elements })
   return blocs
 }
 
-export async function vueAccueil(ctx, { tableaux = true } = {}) {
+export const ONGLETS = { sante: "🩺 Santé", couts: "💶 Coûts", projets: "🏭 Projets" }
+
+export async function vueAccueil(ctx, { tableaux = true, onglet = "sante" } = {}) {
   const config = reglagesCouts(ctx.db, ctx.config)
   const b = bilanMois(ctx.db, config)
-  const sante = await blocsSante(ctx, { avecTableaux: tableaux }).catch((e) => [section(`🩺 Santé indisponible : ${e.message}`)])
-  const blocs = [
-    ...sante,
+  const actif = ONGLETS[onglet] ? onglet : "sante"
+  const { composants } = await etatUsine(ctx).catch(() => ({ composants: [] }))
+  const etat = resumeEtat(composants)
+  const nbProjets = ctx.db.prepare("SELECT COUNT(*) AS n FROM projets WHERE statut NOT IN ('abandonne', 'supprime')").get().n
+  const enCours = ctx.db.prepare("SELECT COUNT(*) AS n FROM projets WHERE statut IN ('analyse', 'creation', 'fabrication', 'corrections')").get().n
+  // L'en-tête et les onglets : toujours visibles, avec un résumé de chaque onglet.
+  const entete = [
+    titre("🏭 Usine logicielle"),
+    contexte(`${PICTO[etat]} Santé : ${etat === "ok" ? "tout va bien" : etat === "alerte" ? "à surveiller" : "panne"}   ·   💶 ${moisLong(b.mois)} : ${montant(config, b.api)} équiv. API${b.fixe > 0 ? `, ${montant(config, b.reel)} réel` : ""}   ·   🏭 ${pluriel(nbProjets, "projet")}${enCours ? `, ${enCours} en fabrication` : ""}`),
+    { type: "actions", block_id: "onglets", elements: Object.entries(ONGLETS).map(([cle, nom]) => bouton(nom, `onglet_${cle}`, cle, cle === actif ? "primary" : undefined)) },
     separateur,
-    ...blocsResume(ctx),
+  ]
+  let contenu
+  if (actif === "sante") contenu = await blocsSante(ctx, { avecTableaux: tableaux, complet: true }).catch((e) => [section(`🩺 Santé indisponible : ${e.message}`)])
+  else if (actif === "couts") contenu = [...blocsResume(ctx), separateur, ...blocsModeles(config, b, tableaux), ...blocsHistorique(config, evolution(ctx.db, config, 12), tableaux)]
+  else contenu = blocsProjets(ctx, config, tableaux)
+  const pied = [
     separateur,
-    ...blocsProjets(ctx, config, tableaux),
-    separateur,
-    ...blocsModeles(config, b, tableaux),
-    ...blocsHistorique(config, evolution(ctx.db, config, 12), tableaux),
-    separateur,
+    { type: "actions", elements: [bouton("👥 Accès aux applications", "acces_ouvrir", "1"), lien("📈 Tableau de bord web", adresseTableau(config), "lien_tableau_pied")] },
     contexte("Commandes : `/usine <demande>` · `/usine corriger <n°> …` · `/usine couts <n°>` · `/usine sante` · `/usine supprimer <n°>` · `/usine acces` · `/usine tableau` · `/usine statut`"),
   ]
-  return { type: "home", blocks: blocs.slice(0, 100) }
+  return { type: "home", blocks: [...entete, ...contenu.slice(0, 100 - entete.length - pied.length), ...pied] }
 }

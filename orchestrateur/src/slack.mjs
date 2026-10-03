@@ -367,7 +367,7 @@ export async function demarrerSlack(ctx) {
     if (!(await garde(args))) return
     await retirerBoutons(args.body, `:octagonal_sign: Arrêt maintenu par <@${args.body.user.id}> jusqu'au mois prochain (ou jusqu'à ce que le budget soit relevé dans les réglages).`)
   })
-  for (const id of ["lien_tableau", "lien_tableau_rapport", "lien_tableau_alerte"]) app.action(id, async ({ ack }) => ack())
+  app.action(/^lien_/, async ({ ack }) => ack())
   app.action("couts_reglages", async (args) => {
     if (!(await garde(args))) return
     await app.client.views.open({ trigger_id: args.body.trigger_id, view: vueReglagesCouts(ctx) })
@@ -385,13 +385,15 @@ export async function demarrerSlack(ctx) {
 
   // L'onglet Accueil : l'état de l'usine d'un coup d'œil.
   app.event("app_home_opened", async ({ event }) => publierAccueil(event.user))
+  const ongletDe = new Map() // l'onglet choisi par chaque personne (santé par défaut)
   async function publierAccueil(user) {
+    const onglet = ongletDe.get(user) ?? "sante"
     // De vrais tableaux si Slack les accepte ; sinon la même chose en grilles.
     try {
-      await app.client.views.publish({ user_id: user, view: await vueAccueil(ctx) })
+      await app.client.views.publish({ user_id: user, view: await vueAccueil(ctx, { onglet }) })
     } catch (error) {
       console.error("Accueil (tableaux refusés, repli en grilles) :", error.data?.error ?? error.message, JSON.stringify(error.data?.response_metadata?.messages ?? []))
-      await app.client.views.publish({ user_id: user, view: await vueAccueil(ctx, { tableaux: false }) }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
+      await app.client.views.publish({ user_id: user, view: await vueAccueil(ctx, { tableaux: false, onglet }) }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
     }
   }
 
@@ -429,6 +431,19 @@ export async function demarrerSlack(ctx) {
       blocks: [...blocsCoutProjet(ctx, id), ...(p?.lot_livre ? [{ type: "context", elements: [{ type: "mrkdwn", text: `Aperçu : ${decrireApercu(p)}` }] }] : []), ...actionsProjet.filter((a) => a.elements.length)],
     }
   }
+  // Les onglets de l'accueil.
+  for (const cle of ["sante", "couts", "projets"]) {
+    app.action(`onglet_${cle}`, async ({ ack, body }) => {
+      await ack()
+      ongletDe.set(body.user.id, cle)
+      await publierAccueil(body.user.id)
+    })
+  }
+  // Le détail d'un projet, depuis sa carte.
+  app.action("projet_detail", async ({ ack, body }) => {
+    await ack()
+    await app.client.views.open({ trigger_id: body.trigger_id, view: vueDetail(Number(body.actions[0].value)) }).catch((e) => console.error("Détail :", e.data?.error ?? e.message))
+  })
   app.action("projet_detail_choix", async ({ ack, body }) => {
     await ack()
     const id = Number(body.actions[0].selected_option.value)
@@ -440,7 +455,8 @@ export async function demarrerSlack(ctx) {
     const { body } = args
     const id = Number(body.actions[0].value)
     const r = await fn(ctx, id, body.user.name ?? body.user.id).catch((e) => ({ ok: false, message: e.message }))
-    if (body.view?.id && body.view.type === "modal") await app.client.views.update({ view_id: body.view.id, view: vueDetail(id) }).catch(() => {})
+    if (body.view?.type === "home") await publierAccueil(body.user.id)
+    else if (body.view?.id && body.view.type === "modal") await app.client.views.update({ view_id: body.view.id, view: vueDetail(id) }).catch(() => {})
     else if (body.message) await retirerBoutons(body, `${r.ok ? ":white_check_mark:" : ":x:"} ${r.message} (<@${body.user.id}>)`)
     if (!r.ok && body.view?.type === "modal") console.error("Cycle :", r.message)
   }
