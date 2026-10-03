@@ -79,7 +79,7 @@ function consigne(ctx, projet, tache) {
     `Ta tâche : ${tache.cle} · ${tache.titre}`,
     tache.description,
     "",
-    "Critères d'acceptation. Un vérificateur indépendant les testera un par un sur l'application en marche, comme un visiteur :",
+    "Critères d'acceptation. Un vérificateur indépendant les testera un par un sur l'application en marche, comme un visiteur (avec DEMO=1, emails capturés par Mailpit, sans liste de destinataires autorisés ; il peut relancer l'application avec une variable d'environnement si un critère l'exige) :",
     ...criteres.map((c, i) => `${i + 1}. ${c}`),
     "",
     "Règles :",
