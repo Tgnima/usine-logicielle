@@ -1,6 +1,7 @@
 // Parler au portier (la page de connexion devant les applications) : comptes,
 // invitations, et la liste des applications qu'il protège.
 import { adresses, secret } from "./config.mjs"
+import { domainesActifs } from "./domaines.mjs"
 
 const URL_PORTIER = process.env.PORTIER_URL ?? "http://portier:8080"
 
@@ -39,6 +40,7 @@ export async function synchroniserApplis(ctx) {
       nom: p.nom ?? p.slug,
       liens: [
         ...(["en_production", "mise_en_production"].includes(p.statut) || ctx.db.prepare("SELECT 1 FROM journal WHERE projet_id = ? AND type = 'production' AND message LIKE 'En production%'").get(p.id) ? [{ url: a.production, libelle: "production" }] : []),
+        ...domainesActifs(ctx.db, p.id).map((h) => ({ url: `https://${h}`, libelle: "production (domaine)" })),
         ...(p.lot_livre ? [{ url: a.apercu, libelle: "aperçu" }] : []),
       ],
     }

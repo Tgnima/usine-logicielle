@@ -19,12 +19,14 @@ import { demarrerTableau } from "./tableau.mjs"
 import { demarrerSynchronisationPortier } from "./portier.mjs"
 import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
+import { demarrerDomaines, ouvrirDomaines } from "./domaines.mjs"
 
 const config = chargerConfig()
 mkdirSync(config.dataDir, { recursive: true })
 const db = ouvrirDb(join(config.dataDir, "usine.db"))
 ouvrirCouts(db)
 ouvrirCycle(db)
+ouvrirDomaines(db)
 const ctx = { config, db, notifier: notificateurConsole(), livraison }
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
@@ -45,6 +47,7 @@ surveillerEscalades(ctx)
 demarrerTableau(ctx)
 demarrerSynchronisationPortier(ctx)
 demarrerCycle(ctx)
+demarrerDomaines(ctx)
 surveillerSante(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).

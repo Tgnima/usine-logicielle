@@ -18,7 +18,7 @@
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { CHEMINS_PUBLICS, cheminsDeclares } from "./chemins.mjs"
+import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides } from "./chemins.mjs"
 
 const env = process.env
 // Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
@@ -97,6 +97,7 @@ function ecrireStatut(statut) {
 }
 
 let demandeMiseAJour = null
+let domaines = {} // produit -> adresses personnalisées (servies comme sa production)
 async function synchroniserEtat() {
   const dossier = join(SRV, "etat")
   if (!existsSync(join(dossier, ".git"))) await ok("git", ["clone", "-q", `https://github.com/${DEPOT_ETAT}.git`, dossier], { git: true })
@@ -110,6 +111,18 @@ async function synchroniserEtat() {
   } catch {
     demandeMiseAJour = null
   }
+  const dossierDomaines = join(dossier, "domaines")
+  const fichiersDomaines = []
+  if (existsSync(dossierDomaines)) {
+    for (const f of readdirSync(dossierDomaines).filter((x) => x.endsWith(".json"))) {
+      try {
+        fichiersDomaines.push(JSON.parse(readFileSync(join(dossierDomaines, f), "utf8")))
+      } catch (e) {
+        log(`État illisible domaines/${f} : ${e.message}`)
+      }
+    }
+  }
+  domaines = domainesValides(fichiersDomaines, BASE)
   for (const environnement of ["apercus", "production"]) {
     const d = join(dossier, environnement)
     if (!existsSync(d)) continue
@@ -220,7 +233,7 @@ async function deployerProduction(s, precedent) {
 function blocSite(hote, cible, { protege = true, publics = CHEMINS_PUBLICS } = {}) {
   const site = HTTPS ? hote : `http://${hote}`
   const entetes = `\theader {\n\t\tStrict-Transport-Security "max-age=31536000"\n\t\tX-Content-Type-Options "nosniff"\n\t\tReferrer-Policy "strict-origin-when-cross-origin"\n\t\tX-Frame-Options "SAMEORIGIN"\n\t\t-Server\n\t}\n`
-  if (!protege) return `${site} {\n\tencode zstd gzip\n${entetes}\treverse_proxy ${cible}\n}`
+  if (!protege) return `${site} {\n\tencode zstd gzip\n${entetes}\trequest_header -X-Usine-Utilisateur\n\treverse_proxy ${cible}\n}`
   return `${site} {
 \tencode zstd gzip
 ${entetes}\trequest_header -X-Usine-Utilisateur
@@ -243,10 +256,14 @@ ${publics.length ? `\t@public path ${publics.join(" ")}\n\thandle @public {\n\t\
 async function regenererCaddy(statut) {
   const blocs = []
   const mails = new Set()
-  for (const s of Object.values(statut)) {
+  for (const [cle, s] of Object.entries(statut)) {
     if (!s.conteneur || !s.hote) continue
     // Un aperçu est toujours protégé ; une production l'est sauf choix explicite « public ».
-    blocs.push(blocSite(s.hote, `${s.conteneur}:3000`, { protege: s.acces !== "public" || s.hote.includes(".apercu."), publics: [...CHEMINS_PUBLICS, ...(s.chemins_publics ?? [])] }))
+    const reglages = { protege: s.acces !== "public" || s.hote.includes(".apercu."), publics: [...CHEMINS_PUBLICS, ...(s.chemins_publics ?? [])] }
+    blocs.push(blocSite(s.hote, `${s.conteneur}:3000`, reglages))
+    // Les domaines personnalisés d'une production : mêmes réglages, même conteneur.
+    const [environnement, produit] = cle.split("/")
+    if (environnement === "production") for (const h of domaines[produit] ?? []) blocs.push(blocSite(h, `${s.conteneur}:3000`, reglages))
     if (s.hote_mails) mails.add(s.hote_mails)
   }
   // Les adresses de l'usine elle-même : réservées aux administrateurs (le portier le vérifie).

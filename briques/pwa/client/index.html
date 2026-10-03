@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>{{NOM}}</title>
+    <meta name="description" content="{{RESUME}}" />
+    <meta name="theme-color" content="#1f2937" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="icon" href="/icone.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icone.svg" />
+    <!-- use-credentials : derrière la page de connexion de l'usine, le manifeste a besoin du cookie. -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+  </head>
+  <body>
+    <div id="racine"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

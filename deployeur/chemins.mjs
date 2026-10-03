@@ -30,3 +30,19 @@ export function cheminsDeclares(contenu) {
   }
   return { chemins: [...new Set(chemins)], refuses }
 }
+
+// Les domaines personnalisés d'un produit (domaines/<slug>.json du dépôt d'état) :
+// de vrais noms de domaine, jamais une adresse de l'usine, 5 au plus, et une adresse
+// ne sert qu'un seul produit (le premier qui la déclare).
+export function domainesValides(fichiers, base, max = 5) {
+  const pris = new Set()
+  const resultat = {}
+  for (const f of fichiers) {
+    if (!/^[a-z0-9-]{3,24}$/.test(f?.produit ?? "") || !Array.isArray(f.hotes)) continue
+    resultat[f.produit] = f.hotes
+      .map((h) => String(h).toLowerCase())
+      .filter((h) => /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(h) && !(base && (h === base || h.endsWith(`.${base}`))) && !pris.has(h) && pris.add(h))
+      .slice(0, max)
+  }
+  return resultat
+}

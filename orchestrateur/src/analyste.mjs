@@ -8,8 +8,19 @@ import { SCHEMA_DESIGN, grilleEnTexte, verifierDesign } from "./design.mjs"
 
 const SYSTEME = "Tu es l'analyste d'une usine logicielle. Tu transformes une demande en plan de fabrication précis, réaliste et testable. Tu réponds uniquement par un objet JSON valide, sans texte autour."
 
-const brique = `Brique « webapp » (la seule disponible) : Node 24, Express 5, SQLite (node:sqlite), React 19 + Vite + Tailwind 4.
-Une fonctionnalité = une action serveur (logique métier testée avec node:test) + une route /api + un écran React.
+// Les briques de départ (dossier briques/ de l'atelier, chacune avec son brique.json).
+// Un test vérifie que cette liste et les dossiers concordent.
+export const BRIQUES = {
+  webapp: "Application web : écrans React, API Express, base SQLite. Pour un outil métier, un tableau de bord, un back-office, un SaaS.",
+  site: "Site vitrine : quelques pages publiques soignées, pensées pour le référencement (titre et description par page, plan du site), avec un formulaire de contact. Pour présenter une activité, une offre, un événement.",
+  api: "API seule, sans écrans : des points d'accès JSON documentés (docs/API.md), une base SQLite, appelés par d'autres logiciels avec une clé d'API. Pour un service d'intégration, un connecteur, un back-end mobile.",
+  pwa: "Application mobile installable (PWA) : pensée d'abord pour le téléphone, installable sur l'écran d'accueil, utilisable en mobilité, avec une API Express et une base SQLite. Pour une appli de terrain, de saisie rapide, de suivi au quotidien.",
+}
+
+const brique = `Briques de départ (choisis-en UNE, la plus simple qui répond à la demande) :
+${Object.entries(BRIQUES).map(([nom, d]) => `- « ${nom} » : ${d}`).join("\n")}
+Toutes : Node 24, Express 5, SQLite (node:sqlite) ; « webapp », « site » et « pwa » ajoutent React 19 + Vite + Tailwind 4.
+Une fonctionnalité = une action serveur (logique métier testée avec node:test) + une route /api + son écran React (pour « api » : sa documentation dans docs/API.md à la place de l'écran).
 Aides fournies : maintenant() (horloge accélérée en démo), generer() (appel d'un modèle de langage via Vercel AI Gateway, texte de secours sans clé), envoyer() (email, capturé par Mailpit en démo).
 Le produit est publié derrière la page de connexion de l'usine (le portier) : l'accès est déjà protégé, le produit ne code JAMAIS d'authentification. Les pages qui doivent s'ouvrir sans connexion (liens d'emails envoyés à des prospects, formulaires publics) vont sous /public/ ou /api/public/, ou sont déclarées dans usine.json (chemins_publics).`
 
@@ -37,6 +48,7 @@ Produis le plan de fabrication, en français, au format JSON exact :
   "slug": "nom-en-minuscules",
   "resume": "Une phrase : ce que fait le produit et pour qui.",
   "type_produit": "application web | site | outil | …",
+  "brique": "${Object.keys(BRIQUES).join(" | ")}",
   "lots": [
     { "nom": "…", "objectif": "Ce que l'utilisateur peut faire à la fin du lot",
       "taches": [
@@ -58,7 +70,7 @@ Règles du plan :
 4. Chaque critère est observable sur l'application en marche (« la page /contacts liste 50 contacts fictifs », « POST /api/segments renvoie 201 ») : jamais « le code est propre ».
 5. "depend_de" ne cite que des clés de tâches précédentes. Les clés sont T1, T2, … uniques et dans l'ordre.
 6. "slug" : 3 à 20 caractères, lettres minuscules, chiffres et tirets.
-7. Reste dans la brique : pas d'autre langage, pas de service externe hors Vercel AI Gateway et Mailpit.
+7. Reste dans la brique choisie ("brique") : pas d'autre langage, pas de service externe hors Vercel AI Gateway et Mailpit.
 8. Une démo doit impressionner : prévois une interface soignée et un parcours qui raconte une histoire.
 9. Le "design" est un vrai brief, propre à CE produit et à son public (pas une palette passe-partout) : il sera écrit dans docs/DESIGN.md, suivi par les agents et vérifié sur captures d'écran avec cette grille :
 ${grilleEnTexte()}
@@ -73,6 +85,7 @@ export function verifierPlan(plan, { lotsMax = 6 } = {}) {
   if (plan.questions?.length && !plan.lots?.length) return []
   if (!/^[a-z0-9-]{3,20}$/.test(plan.slug ?? "")) p.push(`slug invalide : « ${plan.slug} »`)
   if (!plan.nom) p.push("nom manquant")
+  if (plan.brique !== undefined && !Object.hasOwn(BRIQUES, plan.brique)) p.push(`brique inconnue : « ${plan.brique} » (au choix : ${Object.keys(BRIQUES).join(", ")})`)
   if (!Array.isArray(plan.lots) || plan.lots.length < 1 || plan.lots.length > lotsMax) p.push(`il faut de 1 à ${lotsMax} lots`)
   const cles = new Set()
   for (const [i, lot] of (plan.lots ?? []).entries()) {
@@ -206,7 +219,7 @@ ${grilleEnTexte()}`
 
 // Le plan, lisible par un humain (Slack, docs/PLAN.md, issue).
 export function planEnMarkdown(plan) {
-  const lignes = [`# ${plan.nom}`, "", plan.resume, ""]
+  const lignes = [`# ${plan.nom}`, "", plan.resume, "", `Brique : ${plan.brique ?? "webapp"}`, ""]
   plan.lots.forEach((lot, i) => {
     lignes.push(`## Lot ${i + 1} : ${lot.nom}`, "", `*${lot.objectif}*`, "")
     for (const t of lot.taches) {

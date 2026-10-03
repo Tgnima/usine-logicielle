@@ -24,6 +24,8 @@ export async function creerProduit(ctx, projetId) {
   const plan = lirePlan(projet)
   const nomDepot = plan.slug
   const o = config.github.proprietaire
+  // La brique choisie par l'analyste (webapp par défaut) : briques/<nom>, assemblée par briques/assembler.mjs.
+  const brique = /^[a-z0-9-]+$/.test(plan.brique ?? "") ? plan.brique : "webapp"
 
   noter(db, { projet: projetId, type: "creation", message: `Création du dépôt ${o}/${nomDepot}` })
   await creerDepot(config, nomDepot, plan.resume)
@@ -33,20 +35,20 @@ export async function creerProduit(ctx, projetId) {
     "set -eo pipefail",
     RESEAU,
     `rm -rf /travail/${nomDepot} && mkdir -p /travail/${nomDepot} && cd /travail/${nomDepot}`,
-    "cp -r /opt/usine/briques/webapp depot && cd depot",
-    // Le nom et le résumé remplacent les jalons de la brique (sans passer par sed).
-    `NOM=${q(plan.nom)} RESUME=${q(plan.resume)} node -e 'const fs=require("fs");for(const f of ["client/index.html","client/src/App.jsx","AGENTS.md"]){fs.writeFileSync(f,fs.readFileSync(f,"utf8").replaceAll("{{NOM}}",process.env.NOM).replaceAll("{{RESUME}}",process.env.RESUME))}'`,
+    // Les couleurs et les polices du brief deviennent les jetons Tailwind de la brique.
+    ecrireFichier("/tmp/sorties/jetons.css", jetonsCss(plan.design)),
+    // La brique (et sa base), le nom et le résumé à la place des jalons, les jetons ; puis ses dépendances.
+    `NOM=${q(plan.nom)} RESUME=${q(plan.resume)} node /opt/usine/briques/assembler.mjs ${brique} depot /tmp/sorties/jetons.css | tee /tmp/sorties/brique.txt`,
+    "cd depot",
     "mkdir -p docs .usine",
     ecrireFichier("docs/PLAN.md", planEnMarkdown(plan)),
     ecrireFichier("docs/DESIGN.md", designEnMarkdown(plan)),
-    // Les couleurs et les polices du brief deviennent les jetons Tailwind de la brique.
-    ecrireFichier("/tmp/sorties/jetons.css", jetonsCss(plan.design)),
-    `node -e 'const fs=require("fs");const f="client/src/styles.css";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace("/* JETONS */",fs.readFileSync("/tmp/sorties/jetons.css","utf8")))'`,
     ecrireFichier(".usine/plan.json", `${JSON.stringify(plan, null, 2)}\n`),
-    "npm install --no-audit --no-fund express nodemailer react react-dom 2>&1 | tail -2",
-    "npm install -D --no-audit --no-fund vite @vitejs/plugin-react tailwindcss @tailwindcss/vite 2>&1 | tail -2",
+    `DEPS=$(sed -n 's/^@@ DEPENDANCES //p' /tmp/sorties/brique.txt); DEV=$(sed -n 's/^@@ DEV //p' /tmp/sorties/brique.txt)`,
+    'if [ -n "$DEPS" ]; then npm install --no-audit --no-fund $DEPS 2>&1 | tail -2; fi',
+    'if [ -n "$DEV" ]; then npm install -D --no-audit --no-fund $DEV 2>&1 | tail -2; fi',
     `npm run verify 2>&1 | tee /tmp/sorties/socle.log | tail -15; ${COMPTER_TESTS} /tmp/sorties/socle.log`,
-    "git init -q -b main && git add -A && git commit -q -m 'Socle : brique webapp et plan de fabrication'",
+    `git init -q -b main && git add -A && git commit -q -m 'Socle : brique ${brique} et plan de fabrication'`,
     `reessayer git push -q "https://x-access-token:$JETON@github.com/${o}/${nomDepot}.git" main 2>&1 | sed "s/$JETON/***/g"`,
     `git remote add origin https://github.com/${o}/${nomDepot}.git`,
     "echo '@@ CREATION_OK'",

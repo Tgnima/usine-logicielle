@@ -1,11 +1,22 @@
 // Point d'entrée du serveur : l'API sous /api, l'interface (construite par Vite)
 // pour tout le reste.
 import express from "express"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { routes } from "./routes/index.js"
 import { entetes, gestionErreurs, limiter } from "./securite.js"
+
+const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
+let meta = null
+const chargerMeta = () => (meta ??= import("./meta.js").catch(() => ({})))
+// Remplace le titre et la description de la page dans index.html.
+function injecterMeta(html, { titre, description }) {
+  let h = html
+  if (titre) h = h.replace(/<title>[^<]*<\/title>/, `<title>${echapper(titre)}</title>`)
+  if (description) h = h.replace(/<meta name="description" content="[^"]*"\s*\/?>/, `<meta name="description" content="${echapper(description)}" />`)
+  return h
+}
 
 export function creerApp() {
   const app = express()
@@ -32,9 +43,27 @@ export function creerApp() {
   app.use("/api", routes())
 
   const dist = join(dirname(fileURLToPath(import.meta.url)), "..", "dist")
-  if (existsSync(dist)) {
-    app.use(express.static(dist))
-    app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(join(dist, "index.html")))
+  if (existsSync(join(dist, "index.html"))) {
+    app.use(express.static(dist, { index: false }))
+    // server/meta.js (facultatif, modifiable) : le titre et la description de chaque page,
+    // et la liste des pages publiques (plan du site). Utile au référencement d'un site.
+    const gabarit = readFileSync(join(dist, "index.html"), "utf8")
+    const base = (req) => process.env.PUBLIC_URL ?? `${req.protocol}://${req.get("host")}`
+    app.get("/sitemap.xml", async (req, res, next) => {
+      const m = await chargerMeta()
+      if (typeof m.pages !== "function") return next()
+      const urls = (await m.pages()).map((p) => `<url><loc>${echapper(base(req) + p)}</loc></url>`).join("")
+      res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`)
+    })
+    app.get("/robots.txt", async (req, res) => {
+      const m = await chargerMeta()
+      res.type("text/plain").send(`User-agent: *\nAllow: /\n${typeof m.pages === "function" ? `Sitemap: ${base(req)}/sitemap.xml\n` : ""}`)
+    })
+    app.get(/^(?!\/api\/).*/, async (req, res) => {
+      const m = await chargerMeta()
+      const info = typeof m.meta === "function" ? await m.meta(req.path) : null
+      res.type("html").send(info ? injecterMeta(gabarit, info) : gabarit)
+    })
   }
 
   // Les erreurs restent explicites pour qui exploite (journal), jamais un détail

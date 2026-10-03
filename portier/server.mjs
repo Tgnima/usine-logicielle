@@ -8,7 +8,10 @@
 //   /_portier/invitation    choisir son mot de passe à partir d'un lien d'invitation
 //   /_portier/deconnexion   fermer la session
 //   /_portier/qui           (interne) qui est connecté, pour le tableau de bord
-//   /_portier/api/…         (interne, jeton) comptes et applications, gérés depuis Slack
+//   /_portier/api/…         (interne, jeton) comptes, clés d'API et applications, gérés depuis Slack
+//
+// Un programme (et non une personne) s'authentifie par une clé d'API :
+// « Authorization: Bearer usk_… », valable pour les applications choisies.
 //
 // Une session est un cookie signé (HMAC), propre à une adresse : se connecter à
 // une application n'ouvre pas les autres. Aucune dépendance.
@@ -44,6 +47,12 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS invitations (jeton TEXT PRIMARY KEY, utilisateur_id INTEGER NOT NULL, expire INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS applis (slug TEXT PRIMARY KEY, nom TEXT, liens TEXT NOT NULL DEFAULT '[]');
   CREATE TABLE IF NOT EXISTS evenements (le TEXT NOT NULL DEFAULT (datetime('now')), email TEXT, evenement TEXT NOT NULL, ip TEXT);
+  -- Les clés d'API : seule leur empreinte est gardée ; une clé révoquée reste en base (actif = 0).
+  CREATE TABLE IF NOT EXISTS cles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT NOT NULL, empreinte TEXT NOT NULL UNIQUE, debut TEXT NOT NULL,
+    applis TEXT NOT NULL DEFAULT '[]', actif INTEGER NOT NULL DEFAULT 1, cree_par TEXT,
+    cree_le TEXT NOT NULL DEFAULT (datetime('now')), utilisee_le TEXT
+  );
 `)
 const noter = (email, evenement, ip) => db.prepare("INSERT INTO evenements (email, evenement, ip) VALUES (?, ?, ?)").run(email, evenement, ip)
 
@@ -96,6 +105,21 @@ const autorise = (u, appli) => {
   if (appli.slug === "portail") return true
   const applis = JSON.parse(u.applis)
   return applis.includes("*") || applis.includes(appli.slug)
+}
+
+// --- Clés d'API ----------------------------------------------------------------------
+const empreinteCle = (cle) => createHmac("sha256", CLE).update(`cle:${cle}`).digest("hex")
+// La clé présentée (Authorization: Bearer usk_…), ou null si la requête n'en porte pas.
+function clePresentee(req) {
+  const [type, valeur] = String(req.headers.authorization ?? "").split(" ")
+  return type === "Bearer" && /^usk_[A-Za-z0-9_-]{20,80}$/.test(valeur ?? "") ? valeur : null
+}
+// Une clé ne donne jamais accès aux adresses d'administration ni au portail.
+function cleAutorisee(cle, appli) {
+  const c = db.prepare("SELECT * FROM cles WHERE empreinte = ? AND actif = 1").get(empreinteCle(cle))
+  if (!c || !appli.slug || appli.admin || appli.slug === "portail") return null
+  const applis = JSON.parse(c.applis)
+  return applis.includes("*") || applis.includes(appli.slug) ? c : null
 }
 
 // --- Limitation des tentatives ------------------------------------------------------
@@ -198,6 +222,20 @@ createServer(async (req, res) => {
   try {
     // 1. La vérification demandée par Caddy pour chaque requête vers une application.
     if (url.pathname === "/_portier/verifier") {
+      // Un programme : sa clé d'API, sans repli sur la page de connexion.
+      const cle = clePresentee(req)
+      if (cle) {
+        if (tropDEchecs(`cle:${ip}`)) return envoyerJson(res, 429, { erreur: "trop d'essais" })
+        const c = cleAutorisee(cle, appli)
+        if (!c) {
+          echec(`cle:${ip}`)
+          noter(null, `clé d'API refusée pour ${appli.slug ?? hote}`, ip)
+          return envoyerJson(res, 401, { erreur: "clé d'API invalide pour cette application" })
+        }
+        db.prepare("UPDATE cles SET utilisee_le = datetime('now') WHERE id = ?").run(c.id)
+        res.writeHead(200, { "x-usine-utilisateur": `cle:${c.nom}` })
+        return res.end()
+      }
       const u = lireSession(req, hote)
       if (autorise(u, appli)) {
         res.writeHead(200, { "x-usine-utilisateur": u.email })
@@ -305,6 +343,23 @@ createServer(async (req, res) => {
         const ins = db.prepare("INSERT INTO applis (slug, nom, liens) VALUES (?, ?, ?)")
         for (const a of corps.applis ?? []) if (/^[a-z0-9-]{1,40}$/.test(a.slug)) ins.run(a.slug, String(a.nom ?? a.slug), JSON.stringify(a.liens ?? []))
         db.exec("COMMIT")
+        return envoyerJson(res, 200, { ok: true })
+      }
+      // Les clés d'API : la clé n'est montrée qu'une fois, à sa création.
+      if (ressource === "cles" && req.method === "GET") return envoyerJson(res, 200, db.prepare("SELECT id, nom, debut, applis, actif, cree_par, cree_le, utilisee_le FROM cles ORDER BY actif DESC, cree_le DESC").all().map((c) => ({ ...c, applis: JSON.parse(c.applis) })))
+      if (ressource === "cles" && req.method === "POST" && !id) {
+        // Le nom part dans un en-tête HTTP : caractères latins seulement.
+        const nom = String(corps.nom ?? "").replace(/[^\x20-\x7e\u00a0-\u00ff]/g, "").trim().slice(0, 60)
+        const applis = Array.isArray(corps.applis) ? corps.applis.map(String).filter((a) => a === "*" || /^[a-z0-9-]{1,40}$/.test(a)) : []
+        if (!nom || !applis.length) return envoyerJson(res, 400, { erreur: "un nom et au moins une application" })
+        const cle = `usk_${randomBytes(30).toString("base64url")}`
+        const r = db.prepare("INSERT INTO cles (nom, empreinte, debut, applis, cree_par) VALUES (?, ?, ?, ?, ?)").run(nom, empreinteCle(cle), cle.slice(0, 10), JSON.stringify(applis), corps.par ?? null)
+        noter(corps.par ?? null, `clé d'API « ${nom} » créée (${applis.join(", ")})`, "api")
+        return envoyerJson(res, 201, { id: Number(r.lastInsertRowid), cle })
+      }
+      if (ressource === "cles" && id && req.method === "DELETE") {
+        db.prepare("UPDATE cles SET actif = 0 WHERE id = ?").run(Number(id))
+        noter(null, `clé d'API ${id} révoquée`, "api")
         return envoyerJson(res, 200, { ok: true })
       }
       if (ressource === "evenements") return envoyerJson(res, 200, db.prepare("SELECT * FROM evenements ORDER BY le DESC LIMIT 100").all())

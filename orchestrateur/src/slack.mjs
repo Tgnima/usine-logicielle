@@ -11,6 +11,7 @@ import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vu
 import { blocsResume, vueAccueil } from "./accueil.mjs"
 import { repondreDansLeFil } from "./conversation.mjs"
 import { ajouterEtape, texteSuivi } from "./suivi.mjs"
+import { ajouterDomaine, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { readFileSync } from "node:fs"
 import { blocsSante } from "./accueil.mjs"
 import { garderApercu, mettreAJourUsine, prolongerApercu, retirerApercu, supprimerProjet, decrireApercu } from "./cycle.mjs"
@@ -78,7 +79,7 @@ export async function demarrerSlack(ctx) {
       const nb = plan.lots.reduce((n, l) => n + l.taches.length, 0)
       const blocs = [
         { type: "header", text: { type: "plain_text", text: tronquer(`Plan : ${plan.nom}`, 150) } },
-        section(`${plan.resume}\n_${plan.lots.length} lots, ${nb} tâches. Chaque tâche est codée par un agent, testée par un vérificateur indépendant sur l'application en marche, et fusionnée seulement si tous ses critères passent._`),
+        section(`${plan.resume}\n_Brique : ${{ webapp: "application web", site: "site vitrine", api: "API", pwa: "application mobile (PWA)" }[plan.brique ?? "webapp"] ?? plan.brique} · ${plan.lots.length} lots, ${nb} tâches. Chaque tâche est codée par un agent, testée par un vérificateur indépendant sur l'application en marche, et fusionnée seulement si tous ses critères passent._`),
         ...plan.lots.slice(0, 8).map((l, i) => section(`*Lot ${i + 1} : ${l.nom}*\n_${l.objectif}_\n${l.taches.map((t) => `• *${t.cle}* ${t.titre}\n${t.criteres.map((c) => `      ◦ ${c}`).join("\n")}`).join("\n")}`)),
         ...(plan.hors_perimetre?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Hors périmètre :* ${plan.hors_perimetre.join(" · ")}`) }] }] : []),
         ...(plan.risques?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Risques :* ${plan.risques.join(" · ")}`) }] }] : []),
@@ -163,7 +164,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
     }
     if (mot === "tableau" || mot === "dashboard") {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Tableau de bord de l'usine* : coûts, budgets et évolution mensuelle."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
@@ -193,6 +194,17 @@ export async function demarrerSlack(ctx) {
       const p = obtenir(db, "projets", Number(arg))
       if (!["livre", "en_production"].includes(p?.statut)) return repondre(p ? `Le projet ${arg} est « ${p.statut} » : il n'est pas encore livré.` : `Pas de projet ${arg}.`)
       return ouvrirProduction(command.trigger_id, p.id)
+    }
+    if (mot === "domaine" && /^\d+$/.test(arg ?? "")) {
+      const [, , a3, a4] = texte.split(/\s+/)
+      const p = obtenir(db, "projets", Number(arg))
+      if (!p) return repondre(`Pas de projet ${arg}.`)
+      if (!a3) {
+        const lignes = listerDomaines(db, p.id)
+        return repondre(lignes.length ? `*Domaines de ${p.nom}*\n${lignes.join("\n")}` : `${p.nom} n'a pas de domaine personnalisé. Ajoute-en un : \`/usine domaine ${p.id} app.mon-entreprise.fr\``)
+      }
+      const r = a3 === "retirer" ? await retirerDomaine(ctx, p.id, a4, command.user_name) : await ajouterDomaine(ctx, p.id, a3, command.user_name)
+      return repondre(r.message)
     }
     if (mot === "corriger" && /^\d+$/.test(arg ?? "")) {
       const consigne = texte.replace(/^corriger\s+\d+\s*/, "")

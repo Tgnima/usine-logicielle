@@ -99,6 +99,25 @@ test("un formulaire envoyé depuis un autre site est refusé", async () => {
   assert.equal(c.status, 403)
 })
 
+test("une clé d'API ouvre ses applications, et elles seules, jusqu'à sa révocation", async () => {
+  const r = await api("cles", "POST", { nom: "intégration CRM", applis: ["prospecta"], par: "test" })
+  assert.equal(r.status, 201)
+  const { id, cle } = await r.json()
+  assert.match(cle, /^usk_/)
+  const avec = (hote, c = cle) => appel("/_portier/verifier", { hote, entetes: { authorization: `Bearer ${c}`, "x-forwarded-uri": "/api/contacts" } })
+  const ok = await avec(`prospecta.${BASE}`)
+  assert.equal(ok.status, 200)
+  assert.equal(ok.headers.get("x-usine-utilisateur"), "cle:intégration CRM")
+  assert.equal((await avec(`autre.${BASE}`)).status, 401)
+  assert.equal((await avec(`usine-tableau.${BASE}`)).status, 401)
+  assert.equal((await avec(`prospecta.${BASE}`, cle.slice(0, -2) + "zz")).status, 401)
+  // La liste ne montre jamais la clé elle-même.
+  const liste = await (await api("cles")).json()
+  assert.ok(!JSON.stringify(liste).includes(cle))
+  await api(`cles/${id}`, "DELETE")
+  assert.equal((await avec(`prospecta.${BASE}`)).status, 401)
+})
+
 test("cinq échecs bloquent les essais", async () => {
   let dernier
   for (let i = 0; i < 6; i++) dernier = await appel("/_portier/connexion", { hote: `x${i}.${BASE}`, methode: "POST", corps: form({ email: "bob@exemple.fr", mot_de_passe: "faux" }), entetes: formEntetes })

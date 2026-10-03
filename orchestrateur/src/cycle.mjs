@@ -72,6 +72,10 @@ export async function supprimerProjet(ctx, projetId, par) {
   if (projet.slug) {
     await supprimerEtat(config, `apercus/${projet.slug}.json`, `Projet ${projet.slug} supprimé (${par})`)
     await supprimerEtat(config, `production/${projet.slug}.json`, `Projet ${projet.slug} supprimé (${par})`)
+    await supprimerEtat(config, `domaines/${projet.slug}.json`, `Projet ${projet.slug} supprimé (${par})`)
+    try {
+      db.prepare("UPDATE domaines SET statut = 'retire', message = 'projet supprimé' WHERE projet_id = ? AND statut != 'retire'").run(projetId)
+    } catch {}
   }
   maj(db, "projets", projetId, { statut: "supprime", apercu_retire: 1 })
   noter(db, { projet: projetId, type: "cycle", message: `Projet supprimé par ${par}` })

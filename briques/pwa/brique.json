@@ -1,0 +1,7 @@
+{
+  "nom": "pwa",
+  "base": "webapp",
+  "description": "Application mobile installable (PWA) : pensée d'abord pour le téléphone, installable sur l'écran d'accueil, utilisable en mobilité, avec une API Express et une base SQLite. Pour une appli de terrain, de saisie rapide, de suivi au quotidien.",
+  "dependances": ["express", "nodemailer", "react", "react-dom"],
+  "dev": ["vite", "@vitejs/plugin-react", "tailwindcss", "@tailwindcss/vite"]
+}

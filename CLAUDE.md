@@ -19,7 +19,9 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |
 | `orchestrateur/src/relectures.mjs` | Les relectures entre agents (sécurité) avant le vérificateur |
 | `commun/serveur-travaux.mjs` | Le serveur de travaux de l'atelier et du vérificateur |
-| `briques/webapp/` | Le point de départ de chaque produit, et ses conventions (`AGENTS.md`) |
+| `briques/` | Les points de départ des produits (`webapp`, et ses surcouches `site`, `api`, `pwa`), assemblés par `assembler.mjs` ; la liste de l'analyste est `BRIQUES` (analyste.mjs) |
+| `orchestrateur/src/domaines.mjs` | Les domaines personnalisés : DNS vérifié, puis `domaines/<slug>.json` pour le déployeur |
+| `docs/INDUSTRIALISATION.md` | L'offre pour un hébergeur |
 | `usine.config.yml` | Le contrat (non suivi par Git, créé depuis l'exemple) |
 
 ## Règles pour modifier le code
@@ -28,6 +30,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
   (`blocSite()` dans le déployeur) ; tout nouveau secret va dans `SECRETS` (`secrets.sh`) et
   dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans l'environnement.
 
+- Une nouvelle brique : un dossier `briques/<nom>` avec `brique.json` (surcouche de `webapp` de préférence), son `AGENTS.brique.md`, et une entrée dans `BRIQUES` ; le test `briques.test.mjs` vérifie la concordance.
 - Node ES modules, sans framework. Dépendances : `@slack/bolt`, `yaml` et `nodemailer` (orchestrateur, pour les invitations) ; aucune ailleurs.
 - **Une décision de fusion ou de mise en production est prise par du code**, jamais par un modèle.
   Toute nouvelle règle de refus va dans `porte()`, avec son test dans `orchestrateur/test/`.

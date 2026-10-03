@@ -5,6 +5,9 @@
 // Slack ne laisse que 3 secondes pour ouvrir une fenêtre : elle s'ouvre donc tout
 // de suite (« Chargement… »), puis tout se passe dans cette même fenêtre (mise à
 // jour par son identifiant, sans délai), jamais par une fenêtre empilée.
+//
+// Les clés d'API servent aux programmes (une API fabriquée par l'usine, appelée
+// par un autre logiciel) : la clé n'est montrée qu'une fois, à sa création.
 import { portier } from "./portier.mjs"
 import { adressePortail } from "./config.mjs"
 import { courrielConfigure, envoyerInvitation } from "./courriel.mjs"
@@ -23,6 +26,7 @@ const chargement = () => vueSimple("Accès", [{ type: "section", text: md(":hour
 
 export async function vueAcces(ctx) {
   const utilisateurs = await portier("utilisateurs")
+  const cles = (await portier("cles").catch(() => [])).filter((c) => c.actif)
   const noms = Object.fromEntries(produits(ctx.db).map((p) => [p.slug, p.nom ?? p.slug]))
   const decrire = (u) => (u.role === "admin" ? "toutes les applications, tableau de bord et emails" : u.applis.includes("*") ? "toutes les applications" : u.applis.map((a) => noms[a] ?? a).join(", ") || "aucune application")
   return vueSimple("Accès", [
@@ -43,6 +47,14 @@ export async function vueAcces(ctx) {
         }))
       : [{ type: "section", text: md("_Personne pour l'instant. Commence par ton propre compte, en administrateur._") }]),
     { type: "actions", elements: [bouton("➕ Ajouter une personne", "acces_ajouter", "1", "primary")] },
+    { type: "divider" },
+    { type: "section", text: md("*Clés d'API* · pour qu'un programme appelle une application (en-tête `Authorization: Bearer <clé>`)") },
+    ...cles.map((c) => ({
+      type: "section",
+      text: md(`🔑 *${c.nom}* · \`${c.debut}…\` · ${c.applis.includes("*") ? "toutes les applications" : c.applis.map((a) => noms[a] ?? a).join(", ")}\n_créée le ${c.cree_le.slice(0, 10)}${c.cree_par ? ` par ${c.cree_par}` : ""} · ${c.utilisee_le ? `dernier usage ${c.utilisee_le.slice(0, 16)}` : "jamais utilisée"}_`),
+      accessory: { type: "overflow", action_id: "acces_cle_menu", options: [{ text: texte("Révoquer la clé"), value: `revoquer:${c.id}` }] },
+    })),
+    { type: "actions", elements: [bouton("🔑 Créer une clé d'API", "acces_cle_ajouter")] },
     ...(courrielConfigure() ? [] : [{ type: "context", elements: [md("⚠️ Aucun service d'envoi d'emails n'est configuré : les liens d'invitation s'afficheront ici, à transmettre toi-même.")] }]),
   ])
 }
@@ -63,6 +75,18 @@ export function vueAjout(ctx, u = null) {
         type: "input", block_id: "applis", optional: true, label: texte("Applications"), hint: texte("Pour un membre. Un administrateur a accès à tout."),
         element: { type: "multi_static_select", action_id: "v", placeholder: texte("Choisir…"), options, ...(choisies.length ? { initial_options: choisies } : {}) },
       },
+      { type: "actions", elements: [bouton("← Retour à la liste", "acces_liste")] },
+    ],
+  }
+}
+
+export function vueCle(ctx) {
+  const options = [{ text: texte("Toutes les applications"), value: "*" }, ...produits(ctx.db).map((p) => ({ text: texte(p.nom ?? p.slug), value: p.slug }))].slice(0, 100)
+  return {
+    type: "modal", callback_id: "modal_acces_cle", title: texte("Créer une clé d'API"), submit: texte("Créer la clé"), close: texte("Fermer"),
+    blocks: [
+      { type: "input", block_id: "nom", label: texte("Nom"), hint: texte("Qui s'en sert : « intégration CRM », « script de Paul »…"), element: { type: "plain_text_input", action_id: "v", max_length: 60 } },
+      { type: "input", block_id: "applis", label: texte("Applications"), element: { type: "multi_static_select", action_id: "v", placeholder: texte("Choisir…"), options } },
       { type: "actions", elements: [bouton("← Retour à la liste", "acces_liste")] },
     ],
   }
@@ -138,6 +162,41 @@ export function brancherAcces(app, ctx, { estAdmin }) {
       }
     } catch (e) {
       await maj(vueId, erreur(e))
+    }
+  })
+  app.action("acces_cle_ajouter", async ({ ack, body }) => {
+    await ack()
+    if (estAdmin(body.user.id)) await maj(body.view.id, vueCle(ctx))
+  })
+  app.action("acces_cle_menu", async ({ ack, body }) => {
+    await ack()
+    if (!estAdmin(body.user.id)) return
+    const [action, id] = body.actions[0].selected_option.value.split(":")
+    try {
+      if (action === "revoquer") {
+        await portier(`cles/${Number(id)}`, { methode: "DELETE" })
+        console.log(`Clé d'API ${id} révoquée (par ${body.user.name ?? body.user.id})`)
+      }
+      await liste(body.view.id)
+    } catch (e) {
+      await maj(body.view.id, erreur(e))
+    }
+  })
+  app.view("modal_acces_cle", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
+    const v = view.state.values
+    try {
+      const { cle } = await portier("cles", { methode: "POST", corps: { nom: v.nom.v.value, applis: (v.applis.v.selected_options ?? []).map((o) => o.value), par: body.user.name ?? body.user.id } })
+      await ack({
+        response_action: "update",
+        view: vueSimple("Clé d'API créée", [
+          { type: "section", text: md(":white_check_mark: Voici la clé. *Copie-la maintenant* : elle ne sera plus jamais affichée (seule son empreinte est gardée).") },
+          { type: "section", text: md(`\`${cle}\``) },
+          { type: "context", elements: [md("À utiliser dans l'en-tête `Authorization: Bearer <clé>`. Perdue ou exposée ? Révoque-la et crée-en une autre.")] },
+        ], { retour: true }),
+      })
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { nom: error.message.slice(0, 150) } }).catch(() => {})
     }
   })
   app.view("modal_acces_ajout", async ({ ack, view, body }) => {

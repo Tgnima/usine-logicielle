@@ -1,0 +1,18 @@
+{
+  "nom": "api",
+  "base": "webapp",
+  "description": "API seule, sans écrans : des points d'accès JSON documentés (docs/API.md, servi sur /api/docs), une base SQLite, appelés par d'autres logiciels avec une clé d'API. Pour un service d'intégration, un connecteur, un back-end mobile.",
+  "retirer": [
+    "client",
+    "vite.config.js"
+  ],
+  "scripts": {
+    "build": "node --check server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependances": [
+    "express",
+    "nodemailer"
+  ],
+  "dev": []
+}

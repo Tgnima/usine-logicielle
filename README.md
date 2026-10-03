@@ -53,6 +53,9 @@ Règle de l'usine : **toujours protéger les applications.**
   emails capturés, tableau de bord. Les comptes se donnent depuis Slack (`/usine acces`) par
   un lien d'invitation ; personne ne transmet de mot de passe. Une production n'est publique
   que sur choix explicite. Les liens des emails (suivi, désinscription) restent publics.
+- **Les programmes entrent avec une clé d'API** (`/usine acces`, « Créer une clé d'API ») :
+  `Authorization: Bearer usk_…`, valable pour les applications choisies, révocable ; seule
+  son empreinte est gardée.
 - **Les produits sont isolés** sur leur propre réseau : une application ne peut pas joindre
   les rouages de l'usine.
 - **Chaque produit embarque une sécurité de base** (fichier protégé `server/securite.js`) :
@@ -84,10 +87,19 @@ sur l'issue, débloque. Fermer l'issue vaut « réessayer ». Rappel après 24 h
 | `caddy` | HTTPS automatique, le portier devant chaque site | ports 80, 443 |
 | `mailpit` | Capture les emails des produits (démo) | — |
 
-Les produits partent tous d'une **brique** (`briques/webapp` : Node 24, Express 5, SQLite,
-React 19, Vite, Tailwind 4) et de ses conventions (`AGENTS.md`). En démo, ils se remplissent
-de données fictives, leur horloge est accélérée (un jour = une minute), et leurs emails
-sont capturés par Mailpit.
+Les produits partent d'une **brique**, choisie par l'analyste dans le plan, avec ses
+conventions (`AGENTS.md`) :
+
+| Brique | Pour | Contenu |
+|---|---|---|
+| `webapp` | outil métier, tableau de bord, SaaS | Node 24, Express 5, SQLite, React 19, Vite, Tailwind 4, kit de composants |
+| `site` | site vitrine | pages référencées (titre, description, plan du site), formulaire de contact |
+| `api` | intégration, connecteur | API JSON documentée (`docs/API.md`, `/api/docs`), sans écrans, appelée avec une clé d'API |
+| `pwa` | application mobile | installable (manifeste, service worker), pensée pour le téléphone, hors ligne prudent |
+
+`site`, `api` et `pwa` sont des surcouches de `webapp` (`brique.json`), assemblées par
+`briques/assembler.mjs`. En démo, les produits se remplissent de données fictives, leur
+horloge est accélérée (un jour = une minute), et leurs emails sont capturés par Mailpit.
 
 Adresses (DNS joker via sslip.io, rien à configurer) :
 aperçu `https://<produit>.apercu.<base>`, production `https://<produit>.<base>`,
@@ -129,6 +141,12 @@ Répondre dans le fil d'un projet vaut réponse à l'usine (correction, décisio
 `/usine acces` (comptes), `/usine couts [n°]`, `/usine tableau`, `/usine corriger <n°> …`,
 `/usine statut`, `/usine stop` (après la tâche en cours), `/usine reprendre`.
 
+**Un domaine à soi** : `/usine domaine <n°> app.mon-entreprise.fr` sur un produit en
+production. L'usine donne l'enregistrement DNS à créer (A vers le serveur), vérifie toutes
+les 2 minutes, ajoute l'adresse à Caddy (certificat HTTPS) dès que le DNS est bon, et
+prévient dans le fil. Toujours derrière la page de connexion. `/usine domaine <n°>` les
+liste, `/usine domaine <n°> retirer <adresse>` en retire un.
+
 Sans Slack, la CLI fait la même chose :
 
 ```bash
@@ -157,6 +175,11 @@ docker compose exec orchestrateur node src/cli.mjs production 1
   « Mettre à jour l'usine » apparaît dans l'onglet Accueil. L'usine termine sa tâche en
   cours, se reconstruit, redémarre et reprend seule (`cli.mjs mettre-a-jour` fait de même).
 
+## Le proposer à d'autres
+
+`docs/INDUSTRIALISATION.md` : l'offre pour un hébergeur (clients visés, garanties,
+architecture, dimensionnement, installation, exploitation, sécurité, ce qui reste à faire).
+
 ## Le contrat
 
 `usine.config.yml` (créé depuis `usine.config.example.yml`, non suivi par Git) fixe les
@@ -167,7 +190,8 @@ Il est laissé au soin de la personne qui configure l'usine.
 ## Obstacles connus
 
 - **DNS** : pas d'API DNS publique documentée chez l'hébergeur ; la démo utilise un DNS
-  joker (sslip.io) et les domaines de production se branchent à la main.
+  joker (sslip.io), et un domaine personnalisé demande un enregistrement créé par son
+  propriétaire (`/usine domaine`, qui vérifie ensuite tout seul).
 - **Petit serveur partagé** : un seul atelier, une tâche à la fois ; la construction des
   images et Chromium sont les pics de mémoire.
 - **Limites d'usage des abonnements** (Claude, ChatGPT) : tester le parcours complet avant

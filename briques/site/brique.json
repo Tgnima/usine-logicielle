@@ -1,0 +1,7 @@
+{
+  "nom": "site",
+  "base": "webapp",
+  "description": "Site vitrine : quelques pages publiques soignées, pensées pour le référencement (titre et description par page, plan du site), avec un formulaire de contact. Pour présenter une activité, une offre, un événement.",
+  "dependances": ["express", "nodemailer", "react", "react-dom"],
+  "dev": ["vite", "@vitejs/plugin-react", "tailwindcss", "@tailwindcss/vite"]
+}
