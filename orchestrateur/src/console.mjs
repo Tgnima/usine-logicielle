@@ -25,7 +25,7 @@ import { repondreDansLeFil } from "./conversation.mjs"
 import { decrireApercu, garderApercu, mettreAJourUsine, prolongerApercu, retirerApercu, supprimerProjet } from "./cycle.mjs"
 import { etatUsine, lireSanteServeur, resumeEtat } from "./sante.mjs"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evolution, lireReglage, montant, reglagesCouts } from "./couts.mjs"
-import { ajouterDomaine, listerDomaines, retirerDomaine } from "./domaines.mjs"
+import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
 import { page as pageCouts } from "./tableau.mjs"
 
@@ -126,7 +126,7 @@ function capturesProjet(ctx, projetId) {
   return liste.sort((a, b) => Number(b.tache.slice(1)) - Number(a.tache.slice(1))).slice(0, 24)
 }
 
-function detailProjet(ctx, id) {
+async function detailProjet(ctx, id) {
   const { db, config } = ctx
   const p = obtenir(db, "projets", id)
   if (!p || p.statut === "supprime") throw erreur(404, "Projet introuvable.")
@@ -150,6 +150,7 @@ function detailProjet(ctx, id) {
     production_texte: p.production ? decrireChoix(JSON.parse(p.production)) : null,
     domaines: listerDomaines(db, id),
     domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id),
+    ip_serveur: (await ipServeur(config).catch(() => []))[0] ?? null,
     captures: capturesProjet(ctx, id),
     apercu_garde: !!p.apercu_garde,
     budget: (() => {
@@ -185,15 +186,17 @@ async function santeEtCouts(ctx) {
 
 // Les réglages : la forge du code (GitHub aujourd'hui, GitLab prévu), les budgets
 // (modifiables, comme dans Slack) et le contrat de l'usine (lecture).
+let compteGithub = { valeur: null, le: 0 }
 async function reglages(ctx) {
   const { config, db } = ctx
-  let compte = null
-  try {
+  let compte = Date.now() - compteGithub.le < 300_000 ? compteGithub.valeur : null
+  if (!compte) try {
     const r = await fetch("https://api.github.com/user", { headers: { authorization: `Bearer ${config.secrets.github}`, "user-agent": "usine-logicielle" }, signal: AbortSignal.timeout(8_000) })
     compte = r.ok ? { ok: true, login: (await r.json()).login } : { ok: false, detail: `réponse ${r.status}` }
   } catch (e) {
     compte = { ok: false, detail: "GitHub injoignable" }
   }
+  compteGithub = { valeur: compte, le: Date.now() }
   const rc = reglagesCouts(db, config)
   return {
     forge: {
@@ -255,9 +258,12 @@ function demandeProduction(corps) {
     if (!valeurs.includes(corps[k])) throw erreur(400, `${k} : valeur inconnue`)
     d[k] = corps[k]
   }
-  if (corps.destinataires_autorises !== undefined) d.destinataires_autorises = String(corps.destinataires_autorises).split(/[\s,;]+/).filter(Boolean).slice(0, 50)
+  if (corps.destinataires_autorises !== undefined) d.destinataires_autorises = String(corps.destinataires_autorises).split(/[\s,;]+/).filter((x) => /^[^\s@]*@[^\s@]+\.[^\s@]+$/.test(x)).slice(0, 50)
+  if (d.emails === "reels" && !d.destinataires_autorises?.length) throw erreur(400, "Emails réels : indique au moins un destinataire autorisé (adresse ou @domaine).")
   return d
 }
+
+const productionsEnCours = new Set()
 
 // Les routes : [méthode, motif, gestionnaire(ctx, params, corps, qui)].
 const ROUTES = [
@@ -298,8 +304,16 @@ const ROUTES = [
   ["POST", /^\/api\/projets\/(\d+)\/production$/, (ctx, [id], c, qui) => {
     if (c.confirme !== true) throw erreur(400, "La mise en production doit être confirmée.")
     const demande = demandeProduction(c)
+    const p = obtenir(ctx.db, "projets", Number(id))
+    if (!["livre", "en_production"].includes(p?.statut)) throw erreur(409, `Le projet est « ${p?.statut ?? "inconnu"} » : pas de mise en production possible maintenant.`)
+    if (demande.emails === "reels" && !process.env.SMTP_HOST) throw erreur(409, "Emails réels demandés, mais aucun service d'envoi n'est configuré sur le serveur.")
+    if (productionsEnCours.has(p.id)) throw erreur(409, "Une mise en production de ce projet est déjà en cours.")
+    productionsEnCours.add(p.id)
     // La mise en production prend plusieurs minutes : on répond tout de suite, le suivi arrive par le journal.
-    mettreEnProduction(ctx, Number(id), qui.email, demande).catch((e) => console.error("Production (console) :", e.message))
+    mettreEnProduction(ctx, p.id, qui.email, demande)
+      .then((r) => r?.ok === false && noter(ctx.db, { projet: p.id, type: "erreur", message: `Mise en production refusée : ${r.message}` }))
+      .catch((e) => console.error("Production (console) :", e.message))
+      .finally(() => productionsEnCours.delete(p.id))
     return { ok: true, message: "Mise en production lancée." }
   }],
   ["POST", /^\/api\/projets\/(\d+)\/domaines$/, (ctx, [id], c, qui) => ajouterDomaine(ctx, Number(id), String(c.hote ?? ""), qui.email)],
@@ -321,6 +335,9 @@ const ROUTES = [
     return { utilisateurs, cles: cles.filter((c) => c.actif), noms }
   }],
   ["POST", /^\/api\/acces\/utilisateurs$/, async (_ctx, _p, c, qui) => {
+    const email = String(c.email ?? "").trim().toLowerCase()
+    // Réinviter un compte existant changerait son rôle en silence : on renvoie son lien à la place.
+    if ((await portier("utilisateurs")).some((u) => u.email === email)) throw erreur(409, "Ce compte existe déjà : utilise « Renvoyer l'invitation » dans la liste.")
     const r = await portier("utilisateurs", { methode: "POST", corps: { email: c.email, nom: c.nom ?? null, role: c.role === "admin" ? "admin" : "membre", applis: Array.isArray(c.applis) ? c.applis : [], par: qui.email } })
     // Le lien d'invitation n'est montré qu'à l'administrateur qui invite, pour le transmettre si l'email n'arrive pas.
     const { courrielConfigure, envoyerInvitation } = await import("./courriel.mjs")
@@ -328,7 +345,22 @@ const ROUTES = [
     if (courrielConfigure()) envoye = await envoyerInvitation({ email: c.email, lien: r.lien, role: c.role, applis: c.applis ?? [], par: qui.email }).then(() => true).catch(() => false)
     return { ok: true, envoye, lien: envoye ? null : r.lien }
   }],
-  ["DELETE", /^\/api\/acces\/utilisateurs\/(\d+)$/, (_ctx, [id]) => portier(`utilisateurs/${Number(id)}`, { methode: "DELETE" })],
+  ["DELETE", /^\/api\/acces\/utilisateurs\/(\d+)$/, async (_ctx, [id], _c, qui) => {
+    const tous = await portier("utilisateurs")
+    const u = tous.find((x) => x.id === Number(id))
+    if (!u) throw erreur(404, "Compte introuvable.")
+    if (u.email === qui.email) throw erreur(409, "Tu ne peux pas retirer ton propre accès.")
+    if (u.role === "admin" && tous.filter((x) => x.role === "admin" && x.actif).length <= 1) throw erreur(409, "C'est le dernier administrateur : invites-en un autre d'abord.")
+    return portier(`utilisateurs/${u.id}`, { methode: "DELETE" })
+  }],
+  ["POST", /^\/api\/acces\/utilisateurs\/(\d+)\/invitation$/, async (_ctx, [id], _c, qui) => {
+    const u = (await portier("utilisateurs")).find((x) => x.id === Number(id))
+    if (!u) throw erreur(404, "Compte introuvable.")
+    const { lien } = await portier(`utilisateurs/${u.id}/invitation`, { methode: "POST" })
+    const { courrielConfigure, envoyerInvitation } = await import("./courriel.mjs")
+    const envoye = courrielConfigure() ? await envoyerInvitation({ email: u.email, lien, role: u.role, applis: u.applis, par: qui.email }).then(() => true).catch(() => false) : false
+    return { ok: true, envoye, lien: envoye ? null : lien }
+  }],
   ["POST", /^\/api\/acces\/cles$/, (_ctx, _p, c, qui) => portier("cles", { methode: "POST", corps: { nom: c.nom, applis: c.applis, par: qui.email } })],
   ["DELETE", /^\/api\/acces\/cles\/(\d+)$/, (_ctx, [id]) => portier(`cles/${Number(id)}`, { methode: "DELETE" })],
 ]
@@ -387,7 +419,11 @@ export async function traiter(ctx, req, res) {
         // Une action vient de la console elle-même, jamais d'un autre site.
         const hote = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "")
         const origine = String(req.headers.origin ?? "")
-        if (!origine || new URL(origine).host !== hote) throw erreur(403, "Origine refusée.")
+        let hoteOrigine = ""
+        try {
+          hoteOrigine = new URL(origine).host
+        } catch {}
+        if (!hoteOrigine || hoteOrigine !== hote) throw erreur(403, "Origine refusée.")
         corps = await lireJson(req)
         console.log(`Console : ${req.method} ${url.pathname} par ${qui.email}`)
       }
@@ -396,7 +432,7 @@ export async function traiter(ctx, req, res) {
       return envoyerJson(res, 200, r ?? { ok: true })
     }
     if (url.pathname === "/couts") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY" })
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...ENTETES })
       return res.end(await pageCouts(ctx))
     }
     if (req.method === "GET" && servirFichier(res, url.pathname)) return

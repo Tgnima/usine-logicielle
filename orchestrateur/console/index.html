@@ -27,13 +27,14 @@
     <div class="cote-bas" id="cote-bas"></div>
   </aside>
   <main class="principal" id="principal" tabindex="-1">
-    <div class="chargement">Chargement de la console…</div>
+    <div id="messages" aria-live="polite"></div>
+    <div id="vue" style="display:flex;flex-direction:column;gap:24px"><div class="chargement">Chargement de la console…</div></div>
   </main>
 </div>
 <dialog class="palette" id="palette" aria-label="Commandes">
   <label class="cache" for="palette-saisie">Rechercher une commande ou un projet</label>
-  <input id="palette-saisie" autocomplete="off" placeholder="Rechercher un projet, lancer une commande…">
-  <ul id="palette-liste" role="listbox"></ul>
+  <input id="palette-saisie" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-liste" aria-autocomplete="list" placeholder="Rechercher un projet, lancer une commande…">
+  <ul id="palette-liste" role="listbox" aria-label="Résultats"></ul>
 </dialog>
 <script type="module" src="/console.js"></script>
 </body>

@@ -37,7 +37,7 @@ export function hoteValide(hote, base) {
 const enCours = (db, projetId) => db.prepare("SELECT * FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(projetId)
 
 // L'adresse IP du serveur : celle du portail de l'usine (connexion.<base>), qui pointe forcément vers lui.
-async function ipServeur(config) {
+export async function ipServeur(config) {
   if (process.env.IP_PUBLIQUE) return [process.env.IP_PUBLIQUE]
   return resolve4(`connexion.${config.domaine.base}`).catch(() => [])
 }

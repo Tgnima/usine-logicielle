@@ -22,6 +22,7 @@
   }
 }
 * { box-sizing: border-box }
+[hidden] { display: none !important }
 html, body { margin: 0 }
 body { background: var(--fond); color: var(--encre); font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif }
 a { color: var(--accent) } a:hover { color: var(--accent-fort) }

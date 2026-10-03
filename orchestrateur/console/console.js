@@ -12,6 +12,8 @@ function html(chaines, ...valeurs) {
   return brut(chaines.reduce((s, c, i) => s + c + (i < valeurs.length ? valeur(valeurs[i]) : ""), ""))
 }
 const $ = (sel, racine = document) => racine.querySelector(sel)
+// Les messages de l'usine sont écrits pour Slack : on retire les codes d'émojis et les accents graves.
+const nettoyer = (t) => String(t ?? "").replace(/:[a-z0-9_+-]+:\s*/g, "").replace(/`/g, "").replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, "$2").replace(/\*([^*\n]+)\*/g, "$1")
 
 async function api(methode, chemin, corps) {
   const r = await fetch(`/api/${chemin}`, {
@@ -19,7 +21,11 @@ async function api(methode, chemin, corps) {
     headers: corps !== undefined ? { "content-type": "application/json" } : {},
     body: corps !== undefined ? JSON.stringify(corps) : undefined,
     credentials: "same-origin",
+    redirect: "manual",
+  }).catch(() => {
+    throw new Error("La console ne répond pas. Vérifie ta connexion, puis recharge la page.")
   })
+  if (r.type === "opaqueredirect" || r.status === 0) throw new Error("Ta session a expiré : recharge la page (Ctrl R) pour te reconnecter.")
   const json = await r.json().catch(() => ({}))
   if (r.status === 401 || r.status === 403) throw new Error(json.erreur ?? "Session expirée : recharge la page pour te reconnecter.")
   if (!r.ok) throw new Error(json.erreur ?? `Erreur ${r.status}`)
@@ -57,6 +63,9 @@ const etat = {
   brique: "webapp",
   message: null, // { type: "ok" | "erreur" | "info", texte }
   confirmer: null, // action en attente de confirmation
+  occupe: false, // une action est en cours : pas de double envoi, pas de rafraîchissement
+  numero: 0, // numéro de chargement : une réponse périmée est ignorée
+  detailsOuvert: false,
   cleCreee: null,
   invitation: null,
   planModifie: false,
@@ -88,9 +97,16 @@ function barreHaut() {
   </div>`
 }
 
-function messageGlobal() {
-  if (!etat.message) return ""
-  return html`<div class="message ${etat.message.type}" role="${etat.message.type === "erreur" ? "alert" : "status"}"><span style="flex:1">${etat.message.texte}</span><button type="button" class="btn btn-s btn-petit" data-action="fermer-message">Fermer</button></div>`
+const messageGlobal = () => ""
+let dernierMessage = ""
+function afficherMessages() {
+  const m = etat.message
+  const contenu = m ? html`<div class="message ${m.type}" style="margin-bottom:24px"><span style="flex:1">${nettoyer(m.texte)}</span><button type="button" class="btn btn-s btn-petit" data-action="fermer-message">Fermer</button></div>`[BRUT] : ""
+  if (contenu === dernierMessage) return
+  dernierMessage = contenu
+  const zone = $("#messages")
+  zone.setAttribute("role", m?.type === "erreur" ? "alert" : "status")
+  zone.innerHTML = contenu
 }
 
 function vueProjets() {
@@ -254,19 +270,21 @@ function blocFabrication(p) {
               ${enCours.approche || enCours.tentative ? html`<span style="font-size:13px;color:var(--signal);font-weight:600">${enCours.approche ? `approche ${enCours.approche + 1} · modèle renforcé` : `correction ${enCours.tentative}`}</span>` : ""}</div>
             ${etapesTache(enCours)}` : html`<div class="barre"><strong>${p.statut === "en_production" ? "En production" : p.statut === "livre" ? "Tous les lots sont livrés" : "Aucune tâche en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">l'usine passe à la suite</span>` : ""}</div>`}
           <div class="onglets" role="tablist" aria-label="Vues du projet">
-            ${[["journal", "Journal"], ["captures", `Captures${p.captures.length ? ` · ${p.captures.length}` : ""}`], ["discussion", "Discussion"]].map(([id, nom]) => html`<button type="button" role="tab" aria-selected="${String(etat.onglet === id)}" data-action="onglet" data-id="${id}">${nom}</button>`)}
+            ${[["journal", "Journal"], ["captures", `Captures${p.captures.length ? ` · ${p.captures.length}` : ""}`], ["discussion", "Discussion"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(etat.onglet === id)}" tabindex="${etat.onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
           </div>
+          <div role="tabpanel" id="panneau" aria-labelledby="onglet-${etat.onglet}">
           ${etat.onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
-            ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message}</div>`)}
+            ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
             ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
           </div>` : ""}
           ${etat.onglet === "captures" ? (p.captures.length ? html`<div class="captures">${p.captures.map((c) => html`<figure><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture ${c.fichier} de la tâche ${c.tache}" loading="lazy"></a><figcaption>${c.tache} · ${c.fichier}</figcaption></figure>`)}</div>` : html`<div class="vide">Les captures arrivent avec chaque tâche vérifiée (ordinateur et mobile).</div>`) : ""}
           ${etat.onglet === "discussion" ? html`<div class="pile" style="gap:12px">
-            ${discussion.slice(-20).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type} · ${heure(j.le)}</small>${j.message.length > 900 ? j.message.slice(0, 900) + "…" : j.message}</div>`)}
+            ${discussion.slice(-20).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type} · ${heure(j.le)}</small>${nettoyer(j.message.length > 900 ? j.message.slice(0, 900) + "…" : j.message)}</div>`)}
             <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
               <input id="message-libre" class="champ" placeholder="Une correction, une précision… (pendant la fabrication, elle part à la fin du lot)">
               <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
           </div>` : ""}
+          </div>
         </section>
       </div>
       <aside class="colonne-etroite" aria-label="Tâches et décisions">
@@ -303,11 +321,12 @@ function blocProduction(p) {
             <input id="destinataires" name="destinataires_autorises" class="champ" value="${(c.destinataires_autorises ?? []).join(", ")}"></fieldset>
           <fieldset><legend>Accès</legend><div class="grille">${radio("acces", "protege", "Protégé", "page de connexion de l'usine")}${radio("acces", "public", "Public", "ouvert à tous, sans connexion")}</div></fieldset>
           <fieldset><legend>Horloge</legend><div class="grille">${radio("horloge", "reelle", "Réelle")}${radio("horloge", "acceleree", "Accélérée", "un jour = une minute (démo)")}</div></fieldset>
-          ${etat.confirmer === "production" ? html`<div class="confirmer" role="alertdialog" aria-labelledby="conf-prod">
+          <div class="confirmer" role="alertdialog" aria-labelledby="conf-prod" id="conf-production" hidden>
             <strong id="conf-prod" style="font-size:16px">Mettre ${p.nom} en production ?</strong>
             <ul style="margin:0;padding-left:18px;font-size:14px;color:var(--texte)"><li>Dernière version vérifiée, avec les réglages ci-dessus.</li><li>Bascule sans coupure ; sauvegarde des données avant.</li><li>Ta validation est tracée dans le dépôt d'état.</li></ul>
-            <div class="rangee"><button type="submit" class="btn btn-p">Oui, mettre en production</button><button type="button" class="btn btn-s" data-action="annuler">Annuler</button></div>
-          </div>` : html`<div class="rangee"><button type="button" class="btn btn-p" data-action="confirmer" data-quoi="production">${p.statut === "en_production" ? "Appliquer en production" : "Mettre en production"}</button></div>`}
+            <div class="rangee"><button type="submit" class="btn btn-p">Oui, mettre en production</button><button type="button" class="btn btn-s" data-action="annuler" data-quoi="production">Annuler</button></div>
+          </div>
+          <div class="rangee" id="btn-production"><button type="button" class="btn btn-p" data-action="confirmer" data-quoi="production">${p.statut === "en_production" ? "Appliquer en production" : "Mettre en production"}</button></div>
         </form>
         <div class="pile" style="border-top:1px solid var(--trait-2);padding-top:16px">
           <label class="titre-champ" for="corrections">Demander des corrections</label>
@@ -322,7 +341,7 @@ function blocProduction(p) {
           ${p.domaines_liste.map((d) => html`<div class="pile" style="border:1px solid ${d.statut === "actif" ? "var(--trait)" : "var(--signal-trait)"};border-radius:10px;padding:12px;gap:8px">
             <div class="barre"><span class="mono" style="font-weight:500">${d.hote}</span>${d.statut === "actif" ? html`<span class="badge vert">actif</span>` : d.statut === "certificat" ? html`<span class="badge bleu">certificat en cours</span>` : html`<span class="badge orange">en attente du DNS</span>`}</div>
             ${d.statut === "attente_dns" ? html`<div style="font-size:13px">Crée cet enregistrement chez ton fournisseur de domaine :</div>
-              <div class="dns mono"><span>type</span><span>nom</span><span>valeur</span><span>A</span><span>${d.hote.split(".").length > 2 ? d.hote.split(".").slice(0, -2).join(".") : "@"}</span><span>IP du serveur</span></div>
+              <div class="dns mono"><span>type</span><span>nom</span><span>valeur</span><span>A</span><span>${d.hote.split(".").length > 2 ? d.hote.split(".").slice(0, -2).join(".") : "@"}</span><span>${p.ip_serveur ?? "IP du serveur"}</span></div>
               <div class="aide">${d.message ?? "vérifié toutes les 2 minutes"}</div>` : ""}
             <div><button type="button" class="btn btn-d btn-petit" data-action="retirer-domaine" data-hote="${d.hote}">Retirer</button></div>
           </div>`)}
@@ -359,12 +378,12 @@ function vueProjet() {
     ${enPlan ? blocPlan(p) : ""}
     ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
     ${blocProduction(p)}
-    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">La demande d'origine et la zone sensible</summary>
+    <details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine et la zone sensible</summary>
       <p style="white-space:pre-wrap;color:var(--texte)">${p.prompt}</p>
-      ${etat.confirmer === "supprimer" ? html`<div class="confirmer" role="alertdialog" aria-labelledby="conf-sup"><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
+      <div class="confirmer" role="alertdialog" aria-labelledby="conf-sup" id="conf-supprimer" hidden><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
         <div style="font-size:14px">L'aperçu et la production s'arrêtent et la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.</div>
-        <div class="rangee"><button type="button" class="btn btn-d" data-action="supprimer">Oui, supprimer le projet</button><button type="button" class="btn btn-s" data-action="annuler">Annuler</button></div></div>`
-      : html`<button type="button" class="btn btn-d btn-petit" data-action="confirmer" data-quoi="supprimer">Supprimer le projet</button>`}
+        <div class="rangee"><button type="button" class="btn btn-d" data-action="supprimer">Oui, supprimer le projet</button><button type="button" class="btn btn-s" data-action="annuler" data-quoi="supprimer">Annuler</button></div></div>
+      <div id="btn-supprimer"><button type="button" class="btn btn-d btn-petit" data-action="confirmer" data-quoi="supprimer">Supprimer le projet</button></div>
     </details>`
 }
 
@@ -419,7 +438,7 @@ function vueAcces() {
       <div class="tableau"><table style="min-width:640px"><thead><tr><th>Personne</th><th>Rôle</th><th>Applications</th><th>État</th><th><span class="cache">Actions</span></th></tr></thead>
         <tbody>${a.utilisateurs.map((u) => html`<tr><td><strong>${u.email}</strong>${u.nom ? html`<div class="sous">${u.nom}</div>` : ""}</td><td>${u.role === "admin" ? "Administrateur" : "Membre"}</td><td>${decrire(u)}</td>
           <td>${u.active ? html`<span class="badge vert">actif</span>` : html`<span class="badge orange">invitation en attente</span>`}</td>
-          <td style="text-align:right">${etat.confirmer === `retirer-${u.id}` ? html`<button type="button" class="btn btn-d btn-petit" data-action="retirer-personne" data-id="${u.id}">Confirmer le retrait</button> <button type="button" class="btn btn-s btn-petit" data-action="annuler">Annuler</button>` : html`<button type="button" class="btn btn-s btn-petit" data-action="confirmer" data-quoi="retirer-${u.id}">Retirer l'accès</button>`}</td></tr>`)}</tbody></table></div>
+          <td style="text-align:right;white-space:nowrap">${u.active ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="renvoyer" data-id="${u.id}">Renvoyer l'invitation</button> `}${etat.confirmer === `retirer-${u.id}` ? html`<button type="button" class="btn btn-d btn-petit" data-action="retirer-personne" data-id="${u.id}">Confirmer le retrait</button> <button type="button" class="btn btn-s btn-petit" data-action="annuler">Annuler</button>` : html`<button type="button" class="btn btn-s btn-petit" data-action="confirmer" data-quoi="retirer-${u.id}">Retirer l'accès</button>`}</td></tr>`)}</tbody></table></div>
       ${etat.invitation ? html`<div class="message info" style="margin:16px">${etat.invitation}</div>` : ""}
       <form class="pile" style="padding:16px;border-top:1px solid var(--trait-2)" data-form="inviter">
         <strong>Inviter une personne</strong>
@@ -516,7 +535,14 @@ function rendre() {
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
   const enBas = !j || j.scrollTop + j.clientHeight >= j.scrollHeight - 20
-  m.innerHTML = vue()[BRUT]
+  const a = document.activeElement
+  const cleFocus = a && m.contains(a) && a !== m ? ["action", "id", "quoi", "choix", "hote"].map((k) => a.dataset?.[k] ?? "").join("|") + "|" + (a.id ?? "") : null
+  $("#vue").innerHTML = vue()[BRUT]
+  afficherMessages()
+  if (cleFocus) {
+    const cible = [...m.querySelectorAll("button, a, input, select, textarea")].find((x) => ["action", "id", "quoi", "choix", "hote"].map((k) => x.dataset?.[k] ?? "").join("|") + "|" + (x.id ?? "") === cleFocus)
+    cible?.focus({ preventScroll: true })
+  }
   const j2 = $("#journal")
   if (j2 && enBas) j2.scrollTop = j2.scrollHeight
   for (const a of document.querySelectorAll(".nav a")) {
@@ -536,9 +562,16 @@ function rendre() {
 async function charger({ silencieux = false } = {}) {
   try {
     const r = etat.route
+    const n = ++etat.numero
+    const frais = () => n === etat.numero
     // Chaque partie s'affiche dès qu'elle arrive : une page lente ne bloque pas le reste.
-    const taches = [api("GET", "resume").then((x) => { etat.resume = x; rendre() })]
-    if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => { etat.projet = x; rendre() }))
+    const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; rendre() } })]
+    if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => {
+      if (!frais()) return
+      if (etat.planModifie && etat.projet?.id === x.id) x.plan = etat.projet.plan
+      etat.projet = x
+      rendre()
+    }))
     if (r.vue === "sante") taches.push(api("GET", "sante").then((x) => { etat.sante = x; rendre() }))
     if (r.vue === "acces") taches.push(api("GET", "acces").then((x) => { etat.acces = x; rendre() }))
     if (r.vue === "reglages") taches.push(api("GET", "reglages").then((x) => { etat.reglages = x; rendre() }))
@@ -553,24 +586,43 @@ async function charger({ silencieux = false } = {}) {
 function enSaisie() {
   const a = document.activeElement
   if (a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && $("#principal").contains(a)) return true
-  if (etat.planModifie || etat.confirmer) return true
+  if (etat.planModifie || etat.confirmer || etat.occupe) return true
   return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio])")].some((x) => x.value && x.defaultValue !== x.value)
 }
 
+function bloquer(oui) {
+  for (const b of document.querySelectorAll("#vue button, #vue [type=submit]")) {
+    if (oui && !b.disabled) {
+      b.disabled = true
+      b.dataset.occupe = "1"
+    } else if (!oui && b.dataset.occupe) {
+      b.disabled = false
+      delete b.dataset.occupe
+    }
+  }
+}
+
 async function agir(fonction, { succes } = {}) {
+  if (etat.occupe) return null
+  etat.occupe = true
+  bloquer(true)
   try {
     const r = await fonction()
     etat.message = { type: "ok", texte: succes ?? r?.message ?? "C'est fait." }
+    etat.confirmer = null
+    etat.occupe = false
+    await charger({ silencieux: true })
     return r
   } catch (e) {
     etat.message = { type: "erreur", texte: e.message }
+    afficherMessages()
     return null
   } finally {
-    etat.confirmer = null
-    await charger({ silencieux: true })
-    $("#principal").focus({ preventScroll: true })
+    etat.occupe = false
+    bloquer(false)
   }
 }
+const confirmer = (texte) => window.confirm(texte)
 
 // --- Plan modifiable --------------------------------------------------------------------
 function planDepuisFormulaire() {
@@ -593,9 +645,35 @@ const ACTIONS = {
   brique: (el) => { etat.brique = el.dataset.id; const t = $("#demande")?.value; rendre(); if (t) $("#demande").value = t },
   exemple: (el) => { $("#demande").value = el.dataset.texte; $("#demande").focus() },
   onglet: (el) => { etat.onglet = el.dataset.id; rendre() },
-  confirmer: (el) => { etat.confirmer = el.dataset.quoi; rendre() },
-  annuler: () => { etat.confirmer = null; rendre() },
-  usine: (el) => agir(() => api("POST", `usine/${el.dataset.quoi}`, {})),
+  confirmer: (el) => {
+    etat.confirmer = el.dataset.quoi
+    // Production et suppression : on montre la confirmation sans redessiner (les choix restent).
+    const bloc = $(`#conf-${el.dataset.quoi}`)
+    if (bloc) {
+      bloc.hidden = false
+      $(`#btn-${el.dataset.quoi}`).hidden = true
+      bloc.querySelector("button")?.focus()
+      return
+    }
+    rendre()
+  },
+  annuler: (el) => {
+    const quoi = el.dataset.quoi
+    etat.confirmer = null
+    if (quoi && $(`#conf-${quoi}`)) {
+      $(`#conf-${quoi}`).hidden = true
+      $(`#btn-${quoi}`).hidden = false
+      $(`#btn-${quoi} button`)?.focus()
+      return
+    }
+    rendre()
+  },
+  usine: (el) => {
+    const q = el.dataset.quoi
+    if (q === "mettre-a-jour" && !confirmer("Mettre à jour l'usine ? Elle finit sa tâche en cours, se reconstruit et redémarre (quelques minutes).")) return
+    if (q === "stop" && !confirmer("Arrêter l'usine après la tâche en cours ?")) return
+    return agir(() => api("POST", `usine/${q}`, {}))
+  },
   message: (el) => {
     const champ = $(`#${el.dataset.source}`)
     const texte = champ?.value.trim()
@@ -618,12 +696,27 @@ const ACTIONS = {
     champs[champs.length - 1]?.focus()
   },
   abandonner: () => agir(() => api("POST", `projets/${etat.projet.id}/abandonner`, {})),
-  supprimer: async () => { await agir(() => api("POST", `projets/${etat.projet.id}/supprimer`, { confirme: true })); location.hash = "#/" },
-  "retirer-domaine": (el) => agir(() => api("DELETE", `projets/${etat.projet.id}/domaines/${encodeURIComponent(el.dataset.hote)}`, {})),
-  apercu: (el) => agir(() => api("POST", `projets/${etat.projet.id}/apercu/${el.dataset.quoi}`, {})),
+  supprimer: async () => {
+    const r = await agir(() => api("POST", `projets/${etat.projet.id}/supprimer`, { confirme: true }))
+    if (r?.ok) location.hash = "#/"
+  },
+  "retirer-domaine": (el) => confirmer(`Retirer le domaine ${el.dataset.hote} ? Il ne servira plus le produit.`) && agir(() => api("DELETE", `projets/${etat.projet.id}/domaines/${encodeURIComponent(el.dataset.hote)}`, {})),
+  apercu: (el) => (el.dataset.quoi !== "retirer" || confirmer("Retirer l'aperçu maintenant ? Le prochain lot livré le remettra en ligne.")) && agir(() => api("POST", `projets/${etat.projet.id}/apercu/${el.dataset.quoi}`, {})),
+  renvoyer: async (el) => {
+    const r = await agir(() => api("POST", `acces/utilisateurs/${el.dataset.id}/invitation`, {}), { succes: "Nouveau lien d'invitation créé." })
+    if (r) { etat.invitation = r.envoye ? "Invitation renvoyée par email (lien valable 72 h)." : `L'email n'est pas parti : transmets ce lien toi-même (personnel, 72 h) : ${r.lien}`; rendre() }
+  },
   "retirer-personne": (el) => agir(() => api("DELETE", `acces/utilisateurs/${el.dataset.id}`, {}), { succes: "Accès retiré." }),
-  revoquer: (el) => agir(() => api("DELETE", `acces/cles/${el.dataset.id}`, {}), { succes: "Clé révoquée." }),
-  "copier-cle": async () => { await navigator.clipboard?.writeText(etat.cleCreee).catch(() => {}); etat.message = { type: "ok", texte: "Clé copiée dans le presse-papiers." }; rendre() },
+  revoquer: (el) => confirmer("Révoquer cette clé ? Les programmes qui l'utilisent seront refusés aussitôt.") && agir(() => api("DELETE", `acces/cles/${el.dataset.id}`, {}), { succes: "Clé révoquée." }),
+  "copier-cle": async () => {
+    try {
+      await navigator.clipboard.writeText(etat.cleCreee)
+      etat.message = { type: "ok", texte: "Clé copiée dans le presse-papiers." }
+    } catch {
+      etat.message = { type: "erreur", texte: "Copie impossible ici : sélectionne la clé et copie-la à la main." }
+    }
+    afficherMessages()
+  },
   "fermer-cle": () => { etat.cleCreee = null; rendre() },
 }
 
@@ -639,7 +732,7 @@ document.addEventListener("click", (e) => {
 })
 
 document.addEventListener("input", (e) => {
-  if (e.target.closest("[data-form=plan]") && !etat.planModifie) {
+  if (e.target.closest("[data-form=plan]") && e.target.matches("[data-lot]") && !etat.planModifie) {
     etat.planModifie = true
     // Activer « Enregistrer » sans tout redessiner.
     const b = $("[data-form=plan] button[type=submit]")
@@ -687,6 +780,19 @@ document.addEventListener("submit", async (e) => {
   }
 })
 
+document.addEventListener("keydown", (e) => {
+  const onglet = e.target.closest?.("[role=tab]")
+  if (!onglet || !["ArrowLeft", "ArrowRight"].includes(e.key)) return
+  const tous = [...document.querySelectorAll("[role=tab]")]
+  const i = (tous.indexOf(onglet) + (e.key === "ArrowRight" ? 1 : -1) + tous.length) % tous.length
+  etat.onglet = tous[i].dataset.id
+  rendre()
+  $(`#onglet-${etat.onglet}`)?.focus()
+})
+document.addEventListener("toggle", (e) => {
+  if (e.target.id === "zone-sensible") etat.detailsOuvert = e.target.open
+}, true)
+
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------
 let choixPalette = 0
 function entreesPalette(filtre) {
@@ -698,16 +804,17 @@ function entreesPalette(filtre) {
     { texte: "Santé et coûts", aide: "page", aller: "#/sante" },
     { texte: "Accès et clés d'API", aide: "page", aller: "#/acces" },
     { texte: "Réglages : dépôt de code, budgets, contrat", aide: "page", aller: "#/reglages" },
-    { texte: "Arrêter l'usine après la tâche en cours", aide: "commande", faire: () => agir(() => api("POST", "usine/stop", {})) },
+    { texte: "Arrêter l'usine après la tâche en cours", aide: "commande", faire: () => confirmer("Arrêter l'usine après la tâche en cours ?") && agir(() => api("POST", "usine/stop", {})) },
     { texte: "Reprendre l'usine", aide: "commande", faire: () => agir(() => api("POST", "usine/reprendre", {})) },
-    { texte: "Mettre à jour l'usine", aide: "commande", faire: () => agir(() => api("POST", "usine/mettre-a-jour", {})) },
+    { texte: "Mettre à jour l'usine", aide: "commande", faire: () => confirmer("Mettre à jour l'usine ? Elle finit sa tâche en cours, se reconstruit et redémarre.") && agir(() => api("POST", "usine/mettre-a-jour", {})) },
   ]
   return [...commandes, ...projets].filter((x) => !f || x.texte.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").includes(f)).slice(0, 12)
 }
 function dessinerPalette() {
   const liste = entreesPalette($("#palette-saisie").value)
   choixPalette = Math.min(choixPalette, Math.max(0, liste.length - 1))
-  $("#palette-liste").innerHTML = liste.map((x, i) => html`<li><button type="button" role="option" aria-selected="${String(i === choixPalette)}" data-i="${i}">${x.texte}<small>${x.aide}</small></button></li>`[BRUT]).join("") || `<li class="vide">Rien ne correspond.</li>`
+  $("#palette-liste").innerHTML = liste.map((x, i) => html`<li role="option" id="palette-${i}" aria-selected="${String(i === choixPalette)}"><button type="button" tabindex="-1" aria-selected="${String(i === choixPalette)}" data-i="${i}">${x.texte}<small>${x.aide}</small></button></li>`[BRUT]).join("") || `<li class="vide" role="option" aria-disabled="true">Rien ne correspond.</li>`
+  $("#palette-saisie").setAttribute("aria-activedescendant", liste.length ? `palette-${choixPalette}` : "")
   return liste
 }
 function executerPalette(i) {
