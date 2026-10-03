@@ -44,6 +44,8 @@ test/                  les tests
 7. **Interface soignée** : Tailwind, mise en page claire et aérée, responsive, textes en français. C'est une démo : elle doit être belle.
 8. **Mode démo** (`DEMO=1`) : si la base est vide au démarrage, remplis-la avec des données fictives mais réalistes (aucune vraie personne). Utilise `maintenant()` pour tout ce qui dépend du temps.
 9. **Le démarrage se branche dans `server/demarrage.js`** (`auDemarrage()`) : le remplissage démo et les tâches de fond (minuteurs) y sont appelés. Jamais dans `server/index.js`, qui est protégé.
+10. **Jamais d'authentification dans le produit.** L'usine protège déjà toute l'application par sa page de connexion (le portier) : ne code ni mot de passe, ni comptes, ni session, ni « mode public ».
+11. **Les pages ouvertes SANS connexion** (lien dans un email envoyé à un prospect, formulaire public, pixel de suivi) : place-les sous `/public/…` ou `/api/public/…`, ou déclare leur chemin précis dans `usine.json` (`"chemins_publics": ["/api/t/*", "/merci"]`). Un chemin trop large (`/`, `/api/*`) est refusé par l'usine. Ces pages n'exposent jamais les données d'autres personnes : elles s'appuient sur un jeton aléatoire non devinable.
 
 ## Variables d'environnement
 

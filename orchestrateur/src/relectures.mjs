@@ -17,7 +17,8 @@ const GRILLE_SECURITE = `Grille (une application web Node/Express + React, publi
 7. Données personnelles : emails, contenus ou jetons écrits dans les journaux (console.log) ou renvoyés à qui ne doit pas les voir.
 8. Validation : entrée de route non validée (type, longueur, valeurs permises) pouvant casser le serveur ou la base.
 9. Déni de service : boucle, export ou traitement sans borne déclenché par une simple requête.
-10. Contournement : modification de server/securite.js, server/email.js, server/index.js ou des tests de sécurité.`
+10. Contournement : modification de server/securite.js, server/email.js, server/index.js ou des tests de sécurité.
+11. Authentification maison (mot de passe, comptes, sessions codés dans le produit : l'usine protège déjà l'accès) ou chemin public trop large dans usine.json (« /api/* », « / »…) : GRAVE.`
 
 function consigneSecurite(projet, tache, diff) {
   return `Tu es relecteur sécurité dans une usine logicielle. Tu relis un changement AVANT qu'il soit testé et fusionné. Tu ne le modifies pas.

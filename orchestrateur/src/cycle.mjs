@@ -143,6 +143,18 @@ async function finMiseAJour(ctx) {
   // Le marqueur est posé avant la demande : on n'annonce la fin que si la version a changé.
   const s = lireSanteServeur(ctx.config)
   const version = s?.mise_a_jour?.version
+  const derniere = s?.mise_a_jour?.derniere
+  // Le déployeur a constaté la fin de CETTE mise à jour (lancée après notre demande).
+  if (derniere?.terminee_le && new Date(derniere.terminee_le) > new Date(m.le)) {
+    rmSync(marqueur(ctx), { force: true })
+    reprendre(ctx)
+    if (derniere.reussie) {
+      await ctx.notifier.alerte(`:white_check_mark: *Usine mise à jour* (version ${version}), elle reprend.\n${(m.commits ?? []).slice(0, 10).map((c) => `• ${c.replace(/^\w+ /, "")}`).join("\n")}`)
+    } else {
+      await ctx.notifier.alerte(`:x: *La mise à jour de l'usine a échoué* : rien n'a été redémarré, l'usine reprend dans sa version actuelle (${version}).\n\`\`\`${String(derniere.journal ?? "").slice(-1200)}\`\`\``)
+    }
+    return
+  }
   if (!version || version === m.version_avant) {
     // Rien n'a changé au bout de 2 heures : la mise à jour a échoué, l'usine reprend telle quelle.
     if (Date.now() - new Date(m.le).getTime() > 2 * 3600_000) {
@@ -174,5 +186,5 @@ export function demarrerCycle(ctx) {
   // La fin d'une mise à jour : le déployeur met à jour la version quelques secondes après le redémarrage.
   const fin = () => finMiseAJour(ctx).catch((e) => console.error("Fin de mise à jour :", e.message))
   setTimeout(fin, 60_000)
-  setInterval(fin, 5 * 60_000)
+  setInterval(fin, 60_000)
 }

@@ -10,7 +10,7 @@ const SYSTEME = "Tu es l'analyste d'une usine logicielle. Tu transformes une dem
 const brique = `Brique « webapp » (la seule disponible) : Node 24, Express 5, SQLite (node:sqlite), React 19 + Vite + Tailwind 4.
 Une fonctionnalité = une action serveur (logique métier testée avec node:test) + une route /api + un écran React.
 Aides fournies : maintenant() (horloge accélérée en démo), generer() (appel d'un modèle de langage via Vercel AI Gateway, texte de secours sans clé), envoyer() (email, capturé par Mailpit en démo).
-Le produit tourne derrière une adresse web publique ; aucune authentification n'est fournie.`
+Le produit est publié derrière la page de connexion de l'usine (le portier) : l'accès est déjà protégé, le produit ne code JAMAIS d'authentification. Les pages qui doivent s'ouvrir sans connexion (liens d'emails envoyés à des prospects, formulaires publics) vont sous /public/ ou /api/public/, ou sont déclarées dans usine.json (chemins_publics).`
 
 function consigne(config, projet, { retours, planPrecedent, reponses } = {}) {
   const demo = config.demo?.actif
@@ -152,7 +152,8 @@ Réglages actuels de sa production (choisis par l'exploitant au moment de valide
 <reglages>
 ${contexte.reglages ? JSON.stringify(contexte.reglages, null, 1) : "(pas encore en production)"}
 </reglages>
-Signification : donnees demo|vide ; emails captures (Mailpit, rien ne sort) | reels (service SMTP du serveur) ;
+Signification : acces protege = l'application est derrière la page de connexion de l'usine ; les liens qu'un destinataire d'email ouvre sans compte doivent être déclarés publics dans usine.json (chemins_publics) ou placés sous /public/ ou /api/public/. Ne propose JAMAIS de rendre la production publique pour cela, ni de coder une authentification dans le produit.
+donnees demo|vide ; emails captures (Mailpit, rien ne sort) | reels (service SMTP du serveur) ;
 destinataires_autorises : seuls ces destinataires reçoivent quand emails = reels, les autres sont bloqués par envoyer() ;
 horloge acceleree|reelle. Le service SMTP est configuré sur le serveur de l'usine, pas dans le produit.
 ${journal("production", contexte.journaux?.production)}${journal("apercu", contexte.journaux?.apercu)}

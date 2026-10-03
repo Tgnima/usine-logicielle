@@ -18,6 +18,7 @@
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { CHEMINS_PUBLICS, cheminsDeclares } from "./chemins.mjs"
 
 const env = process.env
 // Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
@@ -32,9 +33,6 @@ const DEPOT_ETAT = env.DEPOT_ETAT // proprietaire/usine-etat
 const JETON = secret("deploy_token") || secret("github_token")
 const BASE = env.DOMAINE_BASE ?? ""
 const PORTIER = "portier:8080"
-// Les chemins d'une application joignables sans connexion : santé, pages publiques,
-// suivi des emails et désinscription (un destinataire n'a pas de compte).
-const CHEMINS_PUBLICS = ["/api/health", "/public/*", "/t/*", "/desinscription/*"]
 const ETAT = env.ETAT_DIR ?? "/etat"
 const CADDY = env.CADDY_DIR ?? "/caddy"
 const SRV = env.SRV_DIR ?? "/srv"
@@ -172,7 +170,11 @@ async function construire(s) {
   await ok("git", ["clean", "-q", "-fdx"], { cwd: dossier })
   const image = `usine-produit-${s.produit}:${s.sha.slice(0, 12)}`
   await ok("docker", ["build", "-q", "-t", image, "."], { cwd: dossier, minutes: 20 })
-  return image
+  // Les chemins que le produit déclare publics (usine.json), à cette version précise.
+  const fichier = join(dossier, "usine.json")
+  const { chemins, refuses } = cheminsDeclares(existsSync(fichier) ? readFileSync(fichier, "utf8") : "")
+  if (refuses.length) log(`${s.produit} : chemins publics refusés (trop larges ou invalides) : ${refuses.join(", ")}`)
+  return { image, publics: chemins }
 }
 
 async function demarrer(nom, image, volume, s) {
@@ -181,18 +183,18 @@ async function demarrer(nom, image, volume, s) {
 }
 
 async function deployerApercu(s) {
-  const image = await construire(s)
+  const { image, publics } = await construire(s)
   const nom = `usine-apercu-${s.produit}`
   await demarrer(nom, image, `usine-apercu-${s.produit}-data`, s)
   if (!(await sante(nom))) {
     const journal = (await lancer("docker", ["logs", "--tail", "40", nom])).sortie
     throw new Error(`l'aperçu ne répond pas à /api/health :\n${journal}`)
   }
-  return { conteneur: nom }
+  return { conteneur: nom, publics }
 }
 
 async function deployerProduction(s, precedent) {
-  const image = await construire(s)
+  const { image, publics } = await construire(s)
   // Une base par mode : passer de la démo à la vraie utilisation ne mélange rien (l'autre base est gardée).
   const volume = `usine-prod-${s.produit}${s.donnees === "vide" ? "-reel" : ""}-data`
   // Sauvegarde du volume avant toute bascule (s'il existe déjà).
@@ -209,7 +211,7 @@ async function deployerProduction(s, precedent) {
     await lancer("docker", ["rm", "-f", nom])
     throw new Error(`la nouvelle version (${couleur}) ne répond pas ; l'ancienne reste en ligne :\n${journal}`)
   }
-  return { conteneur: nom, couleur, ancien: precedent?.conteneur && precedent.conteneur !== nom ? precedent.conteneur : null }
+  return { conteneur: nom, couleur, publics, ancien: precedent?.conteneur && precedent.conteneur !== nom ? precedent.conteneur : null }
 }
 
 // --- Caddy ----------------------------------------------------------------------
@@ -244,7 +246,7 @@ async function regenererCaddy(statut) {
   for (const s of Object.values(statut)) {
     if (!s.conteneur || !s.hote) continue
     // Un aperçu est toujours protégé ; une production l'est sauf choix explicite « public ».
-    blocs.push(blocSite(s.hote, `${s.conteneur}:3000`, { protege: s.acces !== "public" || s.hote.includes(".apercu.") }))
+    blocs.push(blocSite(s.hote, `${s.conteneur}:3000`, { protege: s.acces !== "public" || s.hote.includes(".apercu."), publics: [...CHEMINS_PUBLICS, ...(s.chemins_publics ?? [])] }))
     if (s.hote_mails) mails.add(s.hote_mails)
   }
   // Les adresses de l'usine elle-même : réservées aux administrateurs (le portier le vérifie).
@@ -278,7 +280,7 @@ async function tour() {
     ecrireStatut(statut)
     try {
       const r = s.environnement === "apercu" ? await deployerApercu(s) : await deployerProduction(s, actuel?.conteneur ? actuel : null)
-      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", conteneur: r.conteneur, couleur: r.couleur ?? null, le: horodatage() }
+      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", chemins_publics: r.publics ?? [], conteneur: r.conteneur, couleur: r.couleur ?? null, le: horodatage() }
       ecrireStatut(statut)
       await regenererCaddy(statut)
       if (r.ancien) {
@@ -451,18 +453,39 @@ async function appliquerMiseAJour(demande) {
   await ecrireSante()
   const gidDocker = (await lancer("stat", ["-c", "%g", "/var/run/docker.sock"])).sortie.trim()
   await lancer("docker", ["rm", "-f", "usine-mise-a-jour"])
+  // Toute erreur arrête la mise à jour avant le redémarrage : l'usine continue alors dans sa
+  // version actuelle. La construction est réessayée (le réseau de l'hébergeur a des coupures).
   const script = [
-    "set -e",
+    "set -eo pipefail",
     `git -c safe.directory=${USINE_DIR} reset -q --hard refs/remotes/github/main`,
-    "docker compose build --pull 2>&1 | tail -5",
-    "docker compose up -d --remove-orphans 2>&1 | tail -10",
-  ].join(" && ")
+    "for essai in 1 2 3; do if docker compose build --pull > /tmp/construction.log 2>&1; then break; fi; tail -3 /tmp/construction.log; [ $essai = 3 ] && exit 1; sleep 30; done",
+    "grep -E 'Built|ERROR' /tmp/construction.log | tail -10 || true",
+    "docker compose up -d --remove-orphans",
+  ].join("\n")
   const r = await lancer("docker", ["run", "-d", "--name", "usine-mise-a-jour", "--user", `1000:${gidDocker}`, "-e", "HOME=/tmp",
     "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", `${USINE_DIR}:${USINE_DIR}`, "-w", USINE_DIR,
-    "--entrypoint", "sh", "usine-logicielle-deployeur", "-c", script])
+    "--entrypoint", "bash", "usine-logicielle-deployeur", "-c", script])
   if (r.code !== 0) log(`Mise à jour : lancement impossible : ${r.sortie.slice(-300)}`)
-  // Le déployeur sera lui-même recréé ; la suite (statut) est écrite au redémarrage.
+  // Le déployeur peut être recréé pendant la mise à jour : la demande est notée sur le volume,
+  // et la fin est constatée par suivreMiseAJour() (ici, ou au redémarrage).
   writeFileSync(join(ETAT, "mise-a-jour.json"), JSON.stringify({ demande_le: demande.demande_le, par: demande.par, lancee_le: horodatage() }))
+}
+
+// La fin de la mise à jour : le conteneur d'aide s'est arrêté ? On note le résultat
+// (réussite ou échec, avec la cause) et la nouvelle version, tout de suite.
+async function suivreMiseAJour() {
+  if (!miseAJour.en_cours) return
+  const etat = (await lancer("docker", ["inspect", "-f", "{{.State.Status}} {{.State.ExitCode}}", "usine-mise-a-jour"])).sortie.trim()
+  const [statut, code] = etat.split(" ")
+  if (statut !== "exited") return
+  const journal = (await lancer("docker", ["logs", "--tail", "15", "usine-mise-a-jour"])).sortie
+  await verifierMiseAJour().catch(() => {})
+  let demande = {}
+  try {
+    demande = JSON.parse(readFileSync(join(ETAT, "mise-a-jour.json"), "utf8"))
+  } catch {}
+  miseAJour = { ...miseAJour, en_cours: null, derniere: { ...demande, terminee_le: horodatage(), code: Number(code), reussie: code === "0", journal: code === "0" ? "" : journal.slice(-1500), version: miseAJour.version } }
+  log(code === "0" ? `Mise à jour terminée (version ${miseAJour.version}).` : `Mise à jour en échec (code ${code}).`)
 }
 
 // Les journaux récents de chaque produit en ligne, sur le volume partagé : quand
@@ -497,17 +520,20 @@ mkdirSync(join(SRV, "produits"), { recursive: true })
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
 log(`Déployeur prêt : tire ${DEPOT_ETAT} toutes les 20 s.`)
 // Une mise à jour vient d'être appliquée : on note sa fin (l'orchestrateur l'annonce).
+let derniereDemande = null
 try {
   const m = JSON.parse(readFileSync(join(ETAT, "mise-a-jour.json"), "utf8"))
-  miseAJour = { ...miseAJour, derniere: { ...m, terminee_le: horodatage() }, en_cours: null }
+  derniereDemande = m.demande_le
+  // Le conteneur d'aide existe encore : la mise à jour est peut-être en cours, on la suit.
+  if ((await lancer("docker", ["inspect", "usine-mise-a-jour"])).code === 0) miseAJour = { ...miseAJour, en_cours: m.demande_le }
 } catch {}
-let derniereDemande = miseAJour.derniere?.demande_le ?? null
 for (let n = 0; ; n++) {
   await tour().catch((e) => log(`Tour en échec : ${e.message.split("\n")[0]}`))
   if (n % 3 === 0) await publierJournaux().catch((e) => log(`Journaux : ${e.message}`))
   if (n % 9 === 0) await mesurerPlace().catch((e) => log(`Place : ${e.message}`))
   if (n % 30 === 0) await verifierMiseAJour().catch((e) => log(`Vérification de mise à jour : ${e.message}`))
   if (n % 1080 === 540) await entretenir().catch((e) => log(`Entretien : ${e.message}`))
+  await suivreMiseAJour().catch((e) => log(`Suivi de la mise à jour : ${e.message}`))
   await ecrireSante().catch((e) => log(`Santé : ${e.message}`))
   if (demandeMiseAJour?.demande_le && demandeMiseAJour.demande_le !== derniereDemande) {
     derniereDemande = demandeMiseAJour.demande_le
