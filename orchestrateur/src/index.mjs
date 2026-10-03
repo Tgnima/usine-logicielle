@@ -17,7 +17,7 @@ import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
 import { demarrerTableau } from "./tableau.mjs"
 import { demarrerSynchronisationPortier } from "./portier.mjs"
-import { demarrerCycle, ouvrirCycle } from "./cycle.mjs"
+import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
 
 const config = chargerConfig()
@@ -67,6 +67,7 @@ const routes = {
   "POST /production": (c, id) => livraison.mettreEnProduction(ctx, id, c.par ?? "cli", c.choix ?? null),
   "POST /relancer": (_c, id) => (actions.lancerAnalyse(ctx, id), { ok: true }),
   "POST /abandonner": (c, id) => actions.abandonnerPlan(ctx, id, c.par ?? "cli"),
+  "POST /mettre-a-jour": (c) => mettreAJourUsine(ctx, c.par ?? "cli"),
   "POST /stop": (c) => actions.arreter(ctx, c.par ?? "cli"),
   "POST /reprendre": () => actions.reprendre(ctx),
   "GET /journal": (_c, id) => db.prepare("SELECT le, type, message FROM journal WHERE projet_id = ? ORDER BY id DESC LIMIT 60").all(id).reverse(),

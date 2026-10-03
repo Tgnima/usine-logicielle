@@ -63,11 +63,11 @@ const envGit = {
 }
 
 // Une commande, sans shell (les valeurs ne sont jamais interprétées).
-function lancer(cmd, args, { cwd, git = false, minutes = 15 } = {}) {
+function lancer(cmd, args, { cwd, git = false, minutes = 15, max = 20_000 } = {}) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { cwd, env: git ? envGit : env })
     let sortie = ""
-    const garder = (d) => (sortie = (sortie + d).slice(-20_000))
+    const garder = (d) => (sortie = (sortie + d).slice(-max))
     p.stdout.on("data", garder)
     p.stderr.on("data", garder)
     const minuterie = setTimeout(() => p.kill("SIGKILL"), minutes * 60_000)
@@ -355,7 +355,7 @@ let miseAJour = { disponible: 0, commits: [], version: null, verifie_le: null, e
 
 async function mesurerPlace() {
   // La place de chaque produit : ses images et ses volumes (docker system df -v).
-  const r = await lancer("docker", ["system", "df", "-v", "--format", "{{json .}}"], { minutes: 3 })
+  const r = await lancer("docker", ["system", "df", "-v", "--format", "{{json .}}"], { minutes: 3, max: 20_000_000 })
   if (r.code !== 0) return
   let d
   try {

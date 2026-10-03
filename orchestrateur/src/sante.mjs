@@ -159,7 +159,12 @@ export function surveillerSante(ctx) {
   }
   setTimeout(() => tour().catch((e) => console.error("Santé :", e.message)), 20_000)
   setInterval(() => tour().catch((e) => console.error("Santé :", e.message)), 60_000)
-  const connexionsTour = () => verifierConnexions(ctx).catch((e) => console.error("Connexions :", e.message))
+  // Les connexions : un contrôle toutes les 6 h ; tant qu'un serveur est occupé, on réessaie toutes les 15 min.
+  const recent = (x) => x && Date.now() - new Date(x.le).getTime() < 6 * 3600_000
+  const connexionsTour = () => {
+    if (recent(connexions.claude) && recent(connexions.codex)) return
+    verifierConnexions(ctx).catch((e) => console.error("Connexions :", e.message))
+  }
   setTimeout(connexionsTour, 90_000)
-  setInterval(connexionsTour, 6 * 3600_000)
+  setInterval(connexionsTour, 15 * 60_000)
 }

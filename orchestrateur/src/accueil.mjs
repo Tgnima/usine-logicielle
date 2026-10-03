@@ -153,7 +153,7 @@ export async function blocsSante(ctx, { avecTableaux = true, complet = false } =
   const affiches = complet ? composants : composants.filter((x) => x.etat !== "ok" || ["disque", "mémoire", "applications"].includes(x.nom))
   const blocs = [
     titre(`🩺 Santé de l'usine · ${etat === "ok" ? "tout va bien" : etat === "alerte" ? "à surveiller" : "panne"}`),
-    ...rendre(avecTableaux, ["", "Composant", "État"], affiches.map((x) => [PICTO[x.etat], x.nom, x.detail]), []),
+    ...rendre(avecTableaux, ["État", "Composant", "Détail"], affiches.map((x) => [PICTO[x.etat], x.nom, x.detail]), []),
   ]
   const m = serveur?.mise_a_jour
   const elements = [bouton("🩺 Santé détaillée", "sante_voir", "1")]
