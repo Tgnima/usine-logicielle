@@ -135,8 +135,11 @@ async function fabriquer(ctx, projet, tache) {
   const agent = await executer(atelier, jeton, [
     `cd /travail/${nomDepot}/depot`,
     ecrireFichier("/tmp/sorties/tache/consigne.md", consigne(ctx, projet, tache)),
-    `claude -p "$(cat /tmp/sorties/tache/consigne.md)" --output-format json --model ${q(tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele)} --dangerously-skip-permissions --max-turns 150 > /tmp/sorties/tache/agent.json 2> /tmp/sorties/tache/agent.err`,
+    ": > /tmp/sorties/tache/agent.jsonl",
+    `claude -p "$(cat /tmp/sorties/tache/consigne.md)" --model ${q(tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele)} --dangerously-skip-permissions --max-turns 150 --output-format stream-json --verbose > /tmp/sorties/tache/agent.jsonl 2> /tmp/sorties/tache/agent.err`,
     "echo \"@@ AGENT_CODE $?\"",
+    // Le dernier évènement (« result ») a la forme de l'ancienne sortie JSON : coûts et résumé.
+    "grep '\"type\":\"result\"' /tmp/sorties/tache/agent.jsonl | tail -1 > /tmp/sorties/tache/agent.json",
   ].join("\n"), { minutes, surAvancement: () => {} })
   let resume = ""
   try {

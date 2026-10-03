@@ -73,7 +73,7 @@ export function blocsResume(ctx) {
   if (!(budget > 0)) conseils.push("fixe un budget mensuel pour recevoir des alertes")
   if (b.projets.some((p) => p.api_inconnu)) conseils.push("ajoute le prix de Codex pour inclure le vérificateur")
   if (conseils.length) blocs.push(contexte(`⚙️ Dans *Réglages* : ${conseils.join(" · ")}.`))
-  blocs.push({ type: "actions", elements: [bouton("⚙️ Réglages des coûts et budgets", "couts_reglages", "1"), lien("📈 Courbes sur le tableau de bord web", adresseTableau(config), "lien_tableau")] })
+  blocs.push({ type: "actions", elements: [bouton("⚙️ Réglages des coûts et budgets", "couts_reglages", "1"), lien("🖥️ Ouvrir la console", adresseTableau(config), "lien_tableau")] })
   return blocs
 }
 
@@ -206,7 +206,7 @@ export async function vueAccueil(ctx, { tableaux = true, onglet = "sante" } = {}
   else contenu = blocsProjets(ctx, config, tableaux)
   const pied = [
     separateur,
-    { type: "actions", elements: [bouton("👥 Accès aux applications", "acces_ouvrir", "1"), lien("📈 Tableau de bord web", adresseTableau(config), "lien_tableau_pied")] },
+    { type: "actions", elements: [bouton("👥 Accès aux applications", "acces_ouvrir", "1"), lien("🖥️ Console de l'usine", adresseTableau(config), "lien_tableau_pied")] },
     contexte("Commandes : `/usine <demande>` · `/usine corriger <n°> …` · `/usine couts <n°>` · `/usine sante` · `/usine supprimer <n°>` · `/usine acces` · `/usine tableau` · `/usine statut`"),
   ]
   return { type: "home", blocks: [...entete, ...contenu.slice(0, 100 - entete.length - pied.length), ...pied] }

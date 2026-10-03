@@ -15,7 +15,9 @@ export const duree = (s) => {
 const NOMS_MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 export const nomMois = (m) => `${NOMS_MOIS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`
 
-export const adresseTableau = (config) => `${config.domaine?.https === false ? "http" : "https"}://usine-tableau.${config.domaine?.base}`
+export const adresseTableau = (config) => `${config.domaine?.https === false ? "http" : "https"}://console.${config.domaine?.base}`
+// Un projet dans la console.
+export const adresseConsole = (config, projetId) => `${adresseTableau(config)}/#/projets/${projetId}`
 
 // Le tableau de bord des coûts, pour l'onglet Accueil.
 export function blocsTableauCouts(ctx) {

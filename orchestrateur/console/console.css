@@ -187,3 +187,10 @@ dialog.palette::backdrop { background: rgba(15, 18, 22, .45) }
 .graph i { flex: 1; border-radius: 4px 4px 0 0; background: var(--accent); min-height: 2px }
 .graph i.reel { background: var(--ok-point) }
 .graph-legende { display: flex; justify-content: space-between; font-size: 12px; color: var(--doux) }
+
+/* Le direct : ce que fait l'agent, ligne par ligne */
+.direct { background: var(--code); color: var(--code-texte); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.65; height: 420px; overflow: auto }
+.direct div { white-space: pre-wrap; word-break: break-word; padding: 1px 0 }
+.direct span { display: inline-block; width: 1.2em; color: var(--code-doux) }
+.direct .d-pensee { color: #ffffff } .direct .d-commande { color: #9fb4ff } .direct .d-ecriture { color: #f5d38a }
+.direct .d-erreur { color: #f19a91 } .direct .d-fin { color: #7fd39b } .direct .d-lecture, .direct .d-plan { color: var(--code-texte) }

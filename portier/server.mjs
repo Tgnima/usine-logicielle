@@ -91,7 +91,7 @@ function lireSession(req, hote) {
 // L'application derrière une adresse : <slug>.apercu.<base>, <slug>.<base>, ou une adresse de l'usine.
 function application(hote) {
   if (hote === `mails.apercu.${BASE}`) return { slug: "mails", admin: true, nom: "Emails capturés" }
-  if (hote === `usine-tableau.${BASE}`) return { slug: "tableau", admin: true, nom: "Tableau de bord de l'usine" }
+  if (hote === `usine-tableau.${BASE}` || hote === `console.${BASE}`) return { slug: "tableau", admin: true, nom: "Console de l'usine" }
   if (hote === `connexion.${BASE}`) return { slug: "portail", admin: false, nom: "Mes applications" }
   const m = hote.match(new RegExp(`^([a-z0-9-]+)(\\.apercu)?\\.${BASE.replace(/[.]/g, "\\.")}$`))
   const slug = m?.[1] ?? db.prepare("SELECT slug FROM applis WHERE liens LIKE ?").get(`%://${hote}"%`)?.slug ?? null
@@ -195,7 +195,7 @@ ${erreur ? `<div class="erreur" role="alert">${echapper(erreur)}</div>` : ""}
 function portail(u) {
   const applis = db.prepare("SELECT * FROM applis ORDER BY nom").all().filter((a) => autorise(u, { slug: a.slug, admin: false }))
   const liens = applis.flatMap((a) => JSON.parse(a.liens).map((l) => ({ nom: a.nom, ...l })))
-  const admin = u.role === "admin" ? [{ nom: "Tableau de bord de l'usine", libelle: "coûts, budgets", url: `https://usine-tableau.${BASE}` }, { nom: "Emails capturés", libelle: "démo", url: `https://mails.apercu.${BASE}` }] : []
+  const admin = u.role === "admin" ? [{ nom: "Console de l'usine", libelle: "projets, décisions, santé, coûts", url: `https://console.${BASE}` }, { nom: "Emails capturés", libelle: "démo", url: `https://mails.apercu.${BASE}` }] : []
   return page("Mes applications", `
 <h1>Mes applications</h1><p class="sous">Connecté en tant que ${echapper(u.email)}</p>
 <ul>${[...liens, ...admin].map((l) => `<li><a href="${echapper(l.url)}">${echapper(l.nom)}<br><small>${echapper(l.libelle ?? "")}</small></a></li>`).join("") || "<li><small>Aucune application pour l'instant.</small></li>"}</ul>

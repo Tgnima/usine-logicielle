@@ -59,7 +59,7 @@ const etat = {
   sante: null,
   acces: null,
   reglages: null,
-  onglet: "journal",
+  onglet: null, // null : « En direct » si une tâche tourne, sinon le journal
   brique: "webapp",
   message: null, // { type: "ok" | "erreur" | "info", texte }
   confirmer: null, // action en attente de confirmation
@@ -241,9 +241,16 @@ function blocPlan(p) {
     </div>`
 }
 
+function ongletActif(p) {
+  const enCours = p.taches.some((t) => ["en_cours", "verification"].includes(t.statut))
+  const o = etat.onglet ?? (enCours ? "direct" : "journal")
+  return o === "direct" && !enCours ? "journal" : o
+}
+
 function blocFabrication(p) {
   const plan = p.plan ?? { lots: [] }
   const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
+  const onglet = ongletActif(p)
   const lotCourant = enCours?.lot ?? Math.min(plan.lots.length, p.lot_livre + 1)
   const lotsAbandonnes = new Set(plan.lots.map((_, i) => i + 1).filter((n) => {
     const ts = p.taches.filter((t) => t.lot === n)
@@ -270,15 +277,17 @@ function blocFabrication(p) {
               ${enCours.approche || enCours.tentative ? html`<span style="font-size:13px;color:var(--signal);font-weight:600">${enCours.approche ? `approche ${enCours.approche + 1} · modèle renforcé` : `correction ${enCours.tentative}`}</span>` : ""}</div>
             ${etapesTache(enCours)}` : html`<div class="barre"><strong>${p.statut === "en_production" ? "En production" : p.statut === "livre" ? "Tous les lots sont livrés" : "Aucune tâche en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">l'usine passe à la suite</span>` : ""}</div>`}
           <div class="onglets" role="tablist" aria-label="Vues du projet">
-            ${[["journal", "Journal"], ["captures", `Captures${p.captures.length ? ` · ${p.captures.length}` : ""}`], ["discussion", "Discussion"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(etat.onglet === id)}" tabindex="${etat.onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
+            ${[...(enCours ? [["direct", "● En direct"]] : []), ["journal", "Journal"], ["captures", `Captures${p.captures.length ? ` · ${p.captures.length}` : ""}`], ["discussion", "Discussion"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(onglet === id)}" tabindex="${onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
           </div>
-          <div role="tabpanel" id="panneau" aria-labelledby="onglet-${etat.onglet}">
-          ${etat.onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
+          <div role="tabpanel" id="panneau" aria-labelledby="onglet-${onglet}">
+          ${onglet === "direct" ? html`<div class="direct mono" role="log" aria-live="off" id="direct">${dessinerDirect()}</div>
+            <div class="aide">${enCours.statut === "verification" ? "Le vérificateur reconstruit l'application et teste les critères." : "L'agent code dans son atelier."} Mis à jour toutes les 3 secondes ; les secrets sont masqués.</div>` : ""}
+          ${onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
             ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
             ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
           </div>` : ""}
-          ${etat.onglet === "captures" ? (p.captures.length ? html`<div class="captures">${p.captures.map((c) => html`<figure><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture ${c.fichier} de la tâche ${c.tache}" loading="lazy"></a><figcaption>${c.tache} · ${c.fichier}</figcaption></figure>`)}</div>` : html`<div class="vide">Les captures arrivent avec chaque tâche vérifiée (ordinateur et mobile).</div>`) : ""}
-          ${etat.onglet === "discussion" ? html`<div class="pile" style="gap:12px">
+          ${onglet === "captures" ? (p.captures.length ? html`<div class="captures">${p.captures.map((c) => html`<figure><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture ${c.fichier} de la tâche ${c.tache}" loading="lazy"></a><figcaption>${c.tache} · ${c.fichier}</figcaption></figure>`)}</div>` : html`<div class="vide">Les captures arrivent avec chaque tâche vérifiée (ordinateur et mobile).</div>`) : ""}
+          ${onglet === "discussion" ? html`<div class="pile" style="gap:12px">
             ${discussion.slice(-20).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type} · ${heure(j.le)}</small>${nettoyer(j.message.length > 900 ? j.message.slice(0, 900) + "…" : j.message)}</div>`)}
             <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
               <input id="message-libre" class="champ" placeholder="Une correction, une précision… (pendant la fabrication, elle part à la fin du lot)">
@@ -528,6 +537,29 @@ function vueReglages() {
     </section>`
 }
 
+const PICTOS_DIRECT = { lecture: "◇", ecriture: "✎", commande: "›", pensee: "…", plan: "☰", erreur: "✕", fin: "✓", info: "•", outil: "·" }
+function dessinerDirect() {
+  const d = etat.direct
+  if (!d || d.projet !== etat.route.id) return html`<div class="aide">Connexion au direct…</div>`
+  if (!d.lignes.length) return html`<div>${d.source === "verificateur" ? "Le vérificateur prépare l'application…" : "L'agent lit la tâche et prépare son travail…"}</div>`
+  return html`${d.lignes.map((l) => html`<div class="d-${l.type}"><span aria-hidden="true">${PICTOS_DIRECT[l.type] ?? "·"}</span> ${l.texte}</div>`)}`
+}
+async function suivreDirect() {
+  if (etat.route.vue !== "projet" || !$("#direct") || document.hidden) return
+  try {
+    const d = await api("GET", `projets/${etat.route.id}/direct`)
+    etat.direct = { ...d, projet: etat.route.id }
+  } catch {
+    return
+  }
+  const zone = $("#direct")
+  if (!zone) return
+  const enBas = zone.scrollTop + zone.clientHeight >= zone.scrollHeight - 30
+  zone.innerHTML = dessinerDirect()[BRUT]
+  if (enBas) zone.scrollTop = zone.scrollHeight
+}
+setInterval(suivreDirect, 3000)
+
 // --- Rendu et chargement ------------------------------------------------------------------
 function rendre() {
   const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages }[etat.route.vue]
@@ -545,6 +577,11 @@ function rendre() {
   }
   const j2 = $("#journal")
   if (j2 && enBas) j2.scrollTop = j2.scrollHeight
+  const d2 = $("#direct")
+  if (d2) {
+    d2.scrollTop = d2.scrollHeight
+    if (!etat.direct || etat.direct.projet !== etat.route.id) suivreDirect()
+  }
   for (const a of document.querySelectorAll(".nav a")) {
     const actif = a.dataset.nav === (etat.route.vue === "projet" ? "projets" : etat.route.vue)
     if (actif) a.setAttribute("aria-current", "page")
@@ -854,7 +891,8 @@ window.addEventListener("hashchange", () => {
   etat.planModifie = false
   etat.cleCreee = null
   etat.invitation = null
-  if (etat.route.vue !== "projet") etat.onglet = "journal"
+  if (etat.route.vue !== "projet") etat.onglet = null
+  etat.direct = null
   rendre()
   charger()
   window.scrollTo(0, 0)

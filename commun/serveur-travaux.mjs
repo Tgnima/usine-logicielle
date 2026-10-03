@@ -7,7 +7,8 @@
 //
 //   POST /travaux          { script, env?, minutes? }  -> 202 { id }   (409 si occupé)
 //   GET  /travaux/:id      -> { etat: en_cours|fini, code, journal, marqueurs }
-//   GET  /fichier?chemin=  -> contenu d'un fichier de /travail ou /tmp/sorties (&base64=1 : binaire, une capture)
+//   GET  /fichier?chemin=  -> contenu d'un fichier de /travail ou /tmp/sorties (&base64=1 : binaire, une capture ;
+//                             &fin=N : les N derniers octets, pour suivre un journal en direct)
 //   GET  /sante            -> { ok, occupe }
 //
 // Le script arrive par l'entrée standard de bash, jamais dans un fichier ni sur
@@ -16,7 +17,7 @@
 import { createServer } from "node:http"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs"
 import { resolve } from "node:path"
 
 const PORT = Number(process.env.PORT || 8080)
@@ -109,6 +110,20 @@ createServer(async (req, res) => {
     const chemin = resolve(url.searchParams.get("chemin") ?? "")
     if (!RACINES.some((r) => chemin === r || chemin.startsWith(`${r}/`))) return envoyer(res, 403, { erreur: "chemin interdit" })
     if (!existsSync(chemin)) return envoyer(res, 404, { erreur: "fichier absent" })
+    const fin = Number(url.searchParams.get("fin") ?? 0)
+    if (fin > 0) {
+      const fd = openSync(chemin, "r")
+      try {
+        const taille = fstatSync(fd).size
+        const n = Math.min(taille, Math.min(fin, 500_000))
+        const tampon = Buffer.alloc(n)
+        readSync(fd, tampon, 0, n, taille - n)
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "x-taille": String(taille) })
+        return res.end(tampon)
+      } finally {
+        closeSync(fd)
+      }
+    }
     if (url.searchParams.get("base64") === "1") {
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
       return res.end(readFileSync(chemin).toString("base64"))

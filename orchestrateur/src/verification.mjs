@@ -105,6 +105,8 @@ export async function verifier(ctx, projet, tache, sha) {
     "set -o pipefail",
     "cd /travail/verif/depot",
     ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache)),
+    // Les journaux suivis en direct par la console repartent de zéro.
+    "rm -f /tmp/sorties/verif/design.log; : > /tmp/sorties/verif/codex.log",
     "npm ci --no-audit --no-fund > /tmp/sorties/verif/npm.log 2>&1 && echo '@@ INSTALL_OK'",
     // Failles graves (high, critical) des dépendances de production : la PR, puis main pour comparer.
     `AUDIT='const j=JSON.parse(require("fs").readFileSync(0,"utf8")||"{}");const v=(j.metadata||{}).vulnerabilities;console.log(v?(v.high||0)+(v.critical||0):"?")'`,

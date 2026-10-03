@@ -269,6 +269,8 @@ async function regenererCaddy(statut) {
   // Les adresses de l'usine elle-même : réservées aux administrateurs (le portier le vérifie).
   for (const h of mails) blocs.push(blocSite(h, "mailpit:8025", { publics: [] }))
   if (env.TABLEAU_HOTE && /^[a-z0-9.-]+$/.test(env.TABLEAU_HOTE)) blocs.push(blocSite(env.TABLEAU_HOTE, "orchestrateur:8091", { publics: [] }))
+  // La console de l'usine (administrateurs ; le portier le vérifie).
+  if (/^[a-z0-9.-]+$/.test(BASE) && env.TABLEAU_HOTE !== `console.${BASE}`) blocs.push(blocSite(`console.${BASE}`, "orchestrateur:8091", { publics: [] }))
   // Le portail : connexion, invitations, et la liste « Mes applications ».
   if (/^[a-z0-9.-]+$/.test(BASE)) blocs.push(`${HTTPS ? "" : "http://"}connexion.${BASE} {\n\theader -Server\n\thandle /_portier/api/* {\n\t\trespond 404\n\t}\n\treverse_proxy ${PORTIER}\n}`)
   const global = env.CADDY_EMAIL ? `{\n\temail ${env.CADDY_EMAIL}\n}\n\n` : ""

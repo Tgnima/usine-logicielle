@@ -27,6 +27,7 @@ import { etatUsine, lireSanteServeur, resumeEtat } from "./sante.mjs"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evolution, lireReglage, montant, reglagesCouts } from "./couts.mjs"
 import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
+import { direct } from "./direct.mjs"
 import { page as pageCouts } from "./tableau.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -271,6 +272,8 @@ const ROUTES = [
   ["GET", /^\/api\/resume$/, (ctx) => resume(ctx)],
   ["GET", /^\/api\/sante$/, (ctx) => santeEtCouts(ctx)],
   ["GET", /^\/api\/projets\/(\d+)$/, (ctx, [id]) => detailProjet(ctx, Number(id))],
+  // Le direct : ce que fait l'agent (ou le vérificateur) sur la tâche en cours du projet.
+  ["GET", /^\/api\/projets\/(\d+)\/direct$/, (ctx, [id]) => direct(ctx, ctx.db.prepare("SELECT * FROM taches WHERE projet_id = ? AND statut IN ('en_cours', 'verification') ORDER BY id LIMIT 1").get(Number(id)))],
 
   ["POST", /^\/api\/projets$/, async (ctx, _p, c, qui) => {
     const prompt = String(c.prompt ?? "").trim()

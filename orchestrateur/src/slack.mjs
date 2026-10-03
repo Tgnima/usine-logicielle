@@ -7,7 +7,7 @@ import { obtenir } from "./db.mjs"
 import * as actions from "./pipeline.mjs"
 import { resoudre } from "./escalade.mjs"
 import { aiguiller } from "./aiguillage.mjs"
-import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
+import { adresseConsole, adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
 import { blocsResume, vueAccueil } from "./accueil.mjs"
 import { repondreDansLeFil } from "./conversation.mjs"
 import { ajouterEtape, texteSuivi } from "./suivi.mjs"
@@ -68,12 +68,15 @@ export async function demarrerSlack(ctx) {
     return r.ts
   }
 
+  // Le lien « Ouvrir dans la console » d'un projet (action_id unique par message).
+  const versConsole = (projet, suffixe) => lien("Ouvrir dans la console", adresseConsole(config, projet.id), `lien_console_${suffixe}`)
+
   const notifier = {
     // boutons (facultatif) : [{ texte, action, valeur }]
     etape: (projet, texte, boutons) => poster(projet, boutons?.length ? { text: texte, blocks: [section(texte), { type: "actions", elements: boutons.map((b) => bouton(b.texte, b.action, b.valeur)) }] } : { text: texte }),
     questions: (projet, questions) => poster(projet, {
       text: "L'analyste a besoin de précisions",
-      blocks: [section(`:question: *L'analyste a besoin de précisions avant de planifier :*\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`), { type: "actions", elements: [bouton("Répondre", "questions_repondre", projet.id, "primary")] }],
+      blocks: [section(`:question: *L'analyste a besoin de précisions avant de planifier :*\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`), { type: "actions", elements: [bouton("Répondre", "questions_repondre", projet.id, "primary"), versConsole(projet, "questions")] }],
     }),
     plan: (projet, plan) => {
       const nb = plan.lots.reduce((n, l) => n + l.taches.length, 0)
@@ -83,7 +86,7 @@ export async function demarrerSlack(ctx) {
         ...plan.lots.slice(0, 8).map((l, i) => section(`*Lot ${i + 1} : ${l.nom}*\n_${l.objectif}_\n${l.taches.map((t) => `• *${t.cle}* ${t.titre}\n${t.criteres.map((c) => `      ◦ ${c}`).join("\n")}`).join("\n")}`)),
         ...(plan.hors_perimetre?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Hors périmètre :* ${plan.hors_perimetre.join(" · ")}`) }] }] : []),
         ...(plan.risques?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Risques :* ${plan.risques.join(" · ")}`) }] }] : []),
-        { type: "actions", elements: [bouton("Valider et fabriquer", "plan_valider", projet.id, "primary"), bouton("Corriger le plan", "plan_corriger", projet.id), bouton("Abandonner", "plan_abandonner", projet.id, "danger")] },
+        { type: "actions", elements: [bouton("Valider et fabriquer", "plan_valider", projet.id, "primary"), bouton("Corriger le plan", "plan_corriger", projet.id), bouton("Abandonner", "plan_abandonner", projet.id, "danger"), versConsole(projet, "plan")] },
       ]
       return poster(projet, { text: `Plan à valider : ${plan.nom}`, blocks: blocs })
     },
@@ -93,7 +96,7 @@ export async function demarrerSlack(ctx) {
         section(`:rotating_light: *Décision requise : ${e.sujet}*\n${e.raison}.${e.issue ? `\n<${e.issue}|Issue GitHub assignée>` : ""}`),
         section(`\`\`\`${tronquer(e.details, 1800)}\`\`\``),
         section(e.options.map((o) => `*${o.cle}* · ${o.libelle} : ${o.detail}`).join("\n")),
-        { type: "actions", elements: [...e.options.map((o) => bouton(`${o.cle} · ${o.libelle}`, `esc_${o.cle}`, `${e.id}:${o.cle}`, o.cle === "A" ? "primary" : o.cle === "C" ? "danger" : undefined)), ...(e.options.some((o) => o.cle === "A") ? [bouton("A avec une consigne…", "esc_consigne", e.id)] : [])] },
+        { type: "actions", elements: [...e.options.map((o) => bouton(`${o.cle} · ${o.libelle}`, `esc_${o.cle}`, `${e.id}:${o.cle}`, o.cle === "A" ? "primary" : o.cle === "C" ? "danger" : undefined)), ...(e.options.some((o) => o.cle === "A") ? [bouton("A avec une consigne…", "esc_consigne", e.id)] : []), versConsole(projet, "escalade")] },
       ],
     }),
     // Le message de suivi : un seul par projet, mis à jour à chaque étape.
@@ -103,16 +106,18 @@ export async function demarrerSlack(ctx) {
       const canal = p.canal || config.slack.canal
       if (!canal) return
       const texte = texteSuivi(db, p.id)
+      const blocs = [section(texte), { type: "actions", elements: [lien("Suivre en direct dans la console", adresseConsole(config, p.id), "lien_console_suivi")] }]
       if (p.suivi_ts) {
-        const r = await app.client.chat.update({ channel: canal, ts: p.suivi_ts, text: texte, blocks: [section(texte)] }).catch((e) => e)
+        const r = await app.client.chat.update({ channel: canal, ts: p.suivi_ts, text: texte, blocks: blocs }).catch((e) => e)
         if (!(r instanceof Error)) return
       }
-      const ts = await poster(p, { text: texte, blocks: [section(texte)] })
+      const ts = await poster(p, { text: texte, blocks: blocs })
       if (ts) db.prepare("UPDATE projets SET suivi_ts = ? WHERE id = ?").run(ts, p.id)
     },
     // Un lot livré : un vrai message, avec les captures d'écran du lot (portée files:write).
-    lotLivre: async (projet, { texte, captures = [] }) => {
+    lotLivre: async (projet, { texte: brut, captures = [] }) => {
       const p = obtenir(db, "projets", projet.id)
+      const texte = `${brut}\n<${adresseConsole(config, p.id)}|Ouvrir dans la console>`
       const canal = p.canal || config.slack.canal
       if (!canal) return
       if (captures.length) {
@@ -144,7 +149,7 @@ export async function demarrerSlack(ctx) {
         section(r.lots.map((l, i) => `*Lot ${i + 1} : ${l.nom}*\n${l.taches.map((t) => `${t.statut === "fusionnee" ? ":white_check_mark:" : ":heavy_minus_sign:"} ${t.cle} ${t.titre}${t.pr ? ` <${r.depot}/pull/${t.pr}|#${t.pr}>` : ""}${t.statut === "abandonnee" ? " _(abandonnée)_" : ""}`).join("\n")}`).join("\n")),
         ...(ligneCoutProjet(ctx, projet.id) ? [{ type: "context", elements: [{ type: "mrkdwn", text: `:moneybag: ${ligneCoutProjet(ctx, projet.id)} · \`/usine couts ${projet.id}\` pour le détail` }] }] : []),
         { type: "context", elements: [{ type: "mrkdwn", text: `${r.tests} tests automatisés · ${r.refus} refus du vérificateur corrigés en autonomie · ${r.escalades} escalade(s) · ${r.decisions} décision(s) humaine(s)${r.duree_min ? ` · ${Math.floor(r.duree_min / 60)} h ${r.duree_min % 60} min de fabrication` : ""}` }] },
-        { type: "actions", elements: [bouton("Valider : mettre en production", "livraison_valider", projet.id, "primary"), bouton("Corriger", "livraison_corriger", projet.id), lien("Tableau de bord", adresseTableau(config), "lien_tableau_rapport")] },
+        { type: "actions", elements: [bouton("Valider : mettre en production", "livraison_valider", projet.id, "primary"), bouton("Corriger", "livraison_corriger", projet.id), versConsole(projet, "rapport")] },
       ],
     }),
   }
@@ -167,7 +172,7 @@ export async function demarrerSlack(ctx) {
       return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
     }
     if (mot === "tableau" || mot === "dashboard") {
-      return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Tableau de bord de l'usine* : coûts, budgets et évolution mensuelle."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
+      return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Console de l'usine* : projets en direct, décisions, production, santé, coûts et accès."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
     }
     if (mot === "couts" || mot === "coûts") {
       return respond({ response_type: "ephemeral", text: "Coûts de l'usine", blocks: /^\d+$/.test(arg ?? "") ? blocsCoutProjet(ctx, Number(arg)) : blocsResume(ctx) })

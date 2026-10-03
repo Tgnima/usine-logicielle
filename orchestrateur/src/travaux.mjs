@@ -40,8 +40,9 @@ export async function lireFichierBinaire(serveur, jeton, chemin) {
   return statut === 200 ? Buffer.from(String(corps), "base64") : null
 }
 
-export async function lireFichier(serveur, jeton, chemin) {
-  const { statut, corps } = await appel(serveur, jeton, `/fichier?chemin=${encodeURIComponent(chemin)}`)
+// fin : seulement les derniers octets (un journal suivi en direct).
+export async function lireFichier(serveur, jeton, chemin, { fin = 0 } = {}) {
+  const { statut, corps } = await appel(serveur, jeton, `/fichier?chemin=${encodeURIComponent(chemin)}${fin ? `&fin=${Number(fin)}` : ""}`)
   return statut === 200 ? corps : null
 }
 
