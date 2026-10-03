@@ -6,6 +6,7 @@ import { App } from "@slack/bolt"
 import { obtenir } from "./db.mjs"
 import * as actions from "./pipeline.mjs"
 import { resoudre } from "./escalade.mjs"
+import { aiguiller } from "./aiguillage.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
 import { adresses } from "./config.mjs"
 
@@ -15,7 +16,7 @@ const bouton = (texte, action_id, value, style) => ({ type: "button", text: { ty
 const STATUTS = {
   analyse: ":brain: analyse", questions: ":question: questions", plan_a_valider: ":clipboard: plan à valider", creation: ":building_construction: création",
   fabrication: ":hammer_and_wrench: fabrication", bloque: ":octagonal_sign: bloqué", livre: ":package: livré", corrections: ":memo: corrections",
-  mise_en_production: ":rocket: mise en production", en_production: ":large_green_circle: en production", echec: ":x: échec", arrete: ":black_square_for_stop: arrêté",
+  mise_en_production: ":rocket: mise en production", abandonne: ":wastebasket: abandonné", en_production: ":large_green_circle: en production", echec: ":x: échec", arrete: ":black_square_for_stop: arrêté",
 }
 
 // --- Le notificateur console (sans Slack) ------------------------------------
@@ -65,7 +66,7 @@ export async function demarrerSlack(ctx) {
         ...plan.lots.slice(0, 8).map((l, i) => section(`*Lot ${i + 1} : ${l.nom}*\n_${l.objectif}_\n${l.taches.map((t) => `• *${t.cle}* ${t.titre}\n${t.criteres.map((c) => `      ◦ ${c}`).join("\n")}`).join("\n")}`)),
         ...(plan.hors_perimetre?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Hors périmètre :* ${plan.hors_perimetre.join(" · ")}`) }] }] : []),
         ...(plan.risques?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Risques :* ${plan.risques.join(" · ")}`) }] }] : []),
-        { type: "actions", elements: [bouton("Valider et fabriquer", "plan_valider", projet.id, "primary"), bouton("Corriger le plan", "plan_corriger", projet.id)] },
+        { type: "actions", elements: [bouton("Valider et fabriquer", "plan_valider", projet.id, "primary"), bouton("Corriger le plan", "plan_corriger", projet.id), bouton("Abandonner", "plan_abandonner", projet.id, "danger")] },
       ]
       return poster(projet, { text: `Plan à valider : ${plan.nom}`, blocks: blocs })
     },
@@ -110,7 +111,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
     }
     if (mot === "statut") {
       const lignes = actions.statut(ctx).map((p) => `*${p.id}. ${p.nom}* · ${STATUTS[p.statut] ?? p.statut} · ${p.fusionnees}/${p.taches} tâches${p.en_cours ? ` · en cours : ${p.en_cours}` : ""}${p.escalades.length ? ` · :rotating_light: ${p.escalades.length} décision(s) attendue(s)` : ""}${p.apercu && p.lot_livre ? ` · ${p.apercu}` : ""}`)
@@ -128,9 +129,71 @@ export async function demarrerSlack(ctx) {
       if (!["livre", "en_production"].includes(p?.statut)) return repondre(p ? `Le projet ${arg} est « ${p.statut} » : il n'est pas encore livré.` : `Pas de projet ${arg}.`)
       return ouvrirProduction(command.trigger_id, p.id)
     }
+    if (mot === "corriger" && /^\d+$/.test(arg ?? "")) {
+      const consigne = texte.replace(/^corriger\s+\d+\s*/, "")
+      if (!consigne) return repondre("Écris le problème après le numéro : `/usine corriger 2 les emails ne partent pas`.")
+      demanderCorrections(ctx, Number(arg), consigne, command.user_name).then((r) => !r.ok && repondre(r.message)).catch((e) => console.error(e))
+      return repondre("Demande transmise : l'analyste enquête, la réponse arrive dans le fil du produit.")
+    }
     const canal = config.slack.canal || command.channel_id
-    const r = await app.client.chat.postMessage({ channel: canal, text: `:factory: *Nouvelle demande* de <@${command.user_id}> :\n>${texte.replace(/\n/g, "\n>")}` })
-    await actions.nouveauProjet(ctx, { prompt: texte, demandeur: command.user_id, canal, fil: r.ts })
+    // Nouveau produit, ou correction d'un produit livré ? On ne lance rien sur une supposition.
+    const a = await aiguiller(db, texte)
+    if (a.type === "nouveau") return lancerNouveau(texte, command.user_id, canal)
+    const id = String(++compteurAttentes)
+    attentes.set(id, { texte, user: command.user_id, canal })
+    const candidats = a.type === "correction" ? [obtenir(db, "projets", a.projetId)] : a.candidats.slice(0, 4)
+    return respond({
+      response_type: "ephemeral",
+      text: "Cette demande concerne-t-elle un produit existant ?",
+      blocks: [
+        section(a.type === "correction" ? `:thinking_face: Ta demande semble concerner *${candidats[0].nom}*. Je la traite comme une correction de ce produit ?` : ":thinking_face: Ta demande concerne-t-elle un produit déjà livré, ou un nouveau produit ?"),
+        { type: "actions", elements: [
+          ...candidats.map((p, i) => bouton(`Corriger « ${p.nom} »`, `aig_corriger_${i}`, `${id}:${p.id}`, i === 0 ? "primary" : undefined)),
+          bouton("Nouveau produit", "aig_nouveau", id),
+          bouton("Annuler", "aig_annuler", id),
+        ] },
+      ],
+    })
+  })
+
+  // L'aiguillage : les demandes en attente de la réponse de la personne.
+  const attentes = new Map() // id -> { texte, user, canal }
+  let compteurAttentes = 0
+  async function lancerNouveau(texte, user, canal) {
+    const r = await app.client.chat.postMessage({ channel: canal, text: `:factory: *Nouvelle demande* de <@${user}> :\n>${texte.replace(/\n/g, "\n>")}` })
+    await actions.nouveauProjet(ctx, { prompt: texte, demandeur: user, canal, fil: r.ts })
+  }
+  for (let i = 0; i < 4; i++) {
+    app.action(`aig_corriger_${i}`, async (args) => {
+      if (!(await garde(args))) return
+      const [id, projetId] = args.body.actions[0].value.split(":")
+      const d = attentes.get(id)
+      attentes.delete(id)
+      if (!d) return args.respond({ replace_original: true, text: "Cette demande a expiré : relance la commande." })
+      const p = obtenir(db, "projets", Number(projetId))
+      await args.respond({ replace_original: true, text: `:mag: Correction de *${p.nom}* : l'analyste enquête, la réponse arrive dans le fil du produit.` })
+      demanderCorrections(ctx, p.id, d.texte, args.body.user.name ?? args.body.user.id).catch((e) => console.error(e))
+    })
+  }
+  app.action("aig_nouveau", async (args) => {
+    if (!(await garde(args))) return
+    const id = args.body.actions[0].value
+    const d = attentes.get(id)
+    attentes.delete(id)
+    if (!d) return args.respond({ replace_original: true, text: "Cette demande a expiré : relance la commande." })
+    await args.respond({ replace_original: true, text: ":factory: Nouveau produit : l'analyste prépare le plan." })
+    await lancerNouveau(d.texte, d.user, d.canal)
+  })
+  app.action("aig_annuler", async (args) => {
+    await args.ack()
+    attentes.delete(args.body.actions[0].value)
+    await args.respond({ replace_original: true, text: "Demande annulée." })
+  })
+  app.action("plan_abandonner", async (args) => {
+    if (!(await garde(args))) return
+    const r = actions.abandonnerPlan(ctx, Number(args.body.actions[0].value), args.body.user.name ?? args.body.user.id)
+    if (r.ok) await retirerBoutons(args.body, `:wastebasket: Plan abandonné par <@${args.body.user.id}>`)
+    else await args.respond({ response_type: "ephemeral", replace_original: false, text: r.message })
   })
 
   // Les boutons.

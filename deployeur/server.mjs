@@ -234,10 +234,25 @@ async function tour() {
   await regenererCaddy(statut)
 }
 
+// Les journaux récents de chaque produit en ligne, sur le volume partagé : quand
+// une correction est demandée, l'analyste enquête sur ce qui s'est vraiment passé.
+async function publierJournaux() {
+  const dossier = join(ETAT, "journaux")
+  mkdirSync(dossier, { recursive: true })
+  for (const [cle, s] of Object.entries(lireStatut())) {
+    if (!s.conteneur) continue
+    const r = await lancer("docker", ["logs", "--tail", "200", "--timestamps", s.conteneur])
+    if (r.code !== 0) continue
+    const texte = r.sortie.split("\n").filter((l) => !/ExperimentalWarning|trace-warnings/.test(l)).join("\n")
+    writeFileSync(join(dossier, `${cle.replace("/", "-")}.log`), texte)
+  }
+}
+
 mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
 log(`Déployeur prêt : tire ${DEPOT_ETAT} toutes les 20 s.`)
-for (;;) {
+for (let n = 0; ; n++) {
   await tour().catch((e) => log(`Tour en échec : ${e.message.split("\n")[0]}`))
+  if (n % 3 === 0) await publierJournaux().catch((e) => log(`Journaux : ${e.message}`))
   await pause(20_000)
 }

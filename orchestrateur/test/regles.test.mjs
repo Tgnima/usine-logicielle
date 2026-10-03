@@ -105,3 +105,15 @@ test("choixProduction : défauts du contrat, choix de la personne, valeurs incon
   assert.deepEqual(c, { donnees: "vide", emails: "reels", horloge: "acceleree", destinataires_autorises: ["moi@exemple.fr", "@equipe.fr"] })
   assert.equal(choixProduction(config, { emails: "n'importe quoi", donnees: "?" }).emails, "captures")
 })
+
+test("aiguiller : sans produit livré, nouveau ; un produit cité par son nom, correction ; sinon on demande", async () => {
+  const { aiguiller } = await import("../src/aiguillage.mjs")
+  const cle = process.env.AI_GATEWAY_API_KEY
+  delete process.env.AI_GATEWAY_API_KEY
+  const db = ouvrirDb(":memory:")
+  assert.deepEqual(await aiguiller(db, "Une app de réservation"), { type: "nouveau" })
+  db.prepare("INSERT INTO projets (prompt, nom, slug, statut) VALUES ('app SDR', 'Prospecta', 'prospecta', 'en_production')").run()
+  assert.deepEqual(await aiguiller(db, "Dans Prospecta les mails ne partent pas"), { type: "correction", projetId: 1 })
+  assert.equal((await aiguiller(db, "l'ancienne production ne marche pas")).type, "incertain")
+  if (cle) process.env.AI_GATEWAY_API_KEY = cle
+})

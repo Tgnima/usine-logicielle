@@ -82,6 +82,15 @@ export async function validerPlan(ctx, projetId, par) {
   return { ok: true, message: "Plan validé." }
 }
 
+// Un plan qui ne correspond pas à la demande : on l'abandonne, rien n'a encore été créé.
+export function abandonnerPlan(ctx, projetId, par) {
+  const projet = obtenir(ctx.db, "projets", projetId)
+  if (!["plan_a_valider", "questions", "echec"].includes(projet?.statut)) return { ok: false, message: "Seul un plan pas encore validé peut être abandonné." }
+  maj(ctx.db, "projets", projetId, { statut: "abandonne" })
+  noter(ctx.db, { projet: projetId, type: "abandon", message: `Plan abandonné par ${par}` })
+  return { ok: true, message: "Plan abandonné." }
+}
+
 export function arreter(ctx, par) {
   writeFileSync(join(ctx.config.dataDir, "STOP"), `${par} ${new Date().toISOString()}\n`)
   return { ok: true, message: "Usine à l'arrêt après la tâche en cours. `/usine reprendre` pour repartir." }

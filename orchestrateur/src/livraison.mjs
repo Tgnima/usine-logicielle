@@ -191,7 +191,7 @@ export async function mettreEnProduction(ctx, projetId, par, demande = null) {
     return { ok: false, message: s.message ?? "santé KO" }
   }
   maj(db, "projets", projetId, { statut: "en_production" })
-  await ctx.notifier.etape(projet, `:tada: *${projet.nom}* est en production : ${a.production}\nRéglages : ${decrireChoix(choix)}.\nTrace : https://github.com/${config.github.proprietaire}/${config.github.depot_etat}/pull/${pr}`, [{ texte: "Changer les réglages de production", action: "production_reglages", valeur: projet.id }])
+  await ctx.notifier.etape(projet, `:tada: *${projet.nom}* est en production : ${a.production}\nRéglages : ${decrireChoix(choix)}.\nTrace : https://github.com/${config.github.proprietaire}/${config.github.depot_etat}/pull/${pr}`, [{ texte: "Changer les réglages de production", action: "production_reglages", valeur: projet.id }, { texte: "Demander des corrections", action: "livraison_corriger", valeur: projet.id }])
   return { ok: true, message: a.production }
 }
 
@@ -200,17 +200,39 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (!["livre", "en_production"].includes(projet.statut)) return { ok: false, message: `Le projet est « ${projet.statut} ».` }
+  const avant = projet.statut
   maj(db, "projets", projetId, { statut: "corrections" })
-  await ctx.notifier.etape(projet, `:memo: Corrections demandées par ${par} :\n>${retours.replace(/\n/g, "\n>")}\nL'analyste prépare un lot de corrections…`)
+  await ctx.notifier.etape(projet, `:mag: Demande de ${par} :\n>${retours.replace(/\n/g, "\n>")}\nL'analyste enquête (journaux et réglages du produit en ligne)…`)
   try {
-    const lot = await analyserCorrections(config, projet, lirePlan(projet), retours)
+    const contexte = {
+      reglages: projet.production ? JSON.parse(projet.production) : null,
+      journaux: { production: lireJournal(config, `production-${projet.slug}`), apercu: lireJournal(config, `apercu-${projet.slug}`) },
+    }
+    const r = await analyserCorrections(config, projet, lirePlan(projet), retours, contexte)
     db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Corrections après livraison", retours, par)
-    const numero = await ajouterLot(ctx, projetId, lot)
-    await ctx.notifier.etape(obtenir(db, "projets", projetId), `:hammer_and_wrench: Lot ${numero} « ${lot.nom} » : ${lot.taches.map((t) => `${t.cle} ${t.titre}`).join(" · ")}. La fabrication reprend ; un nouveau rapport suivra.`)
-    return { ok: true, message: lot.nom }
+    noter(db, { projet: projetId, type: "diagnostic", message: `${r.diagnostic}${r.reglage ? `\nRéglage : ${r.reglage}` : ""}` })
+    const boutonReglages = [{ texte: "Changer les réglages de production", action: "production_reglages", valeur: projetId }]
+    const diag = `:stethoscope: *Diagnostic* : ${r.diagnostic}${r.reglage ? `\n:gear: *Réglage à changer* : ${r.reglage}` : ""}`
+    if (!r.lot) {
+      maj(db, "projets", projetId, { statut: avant })
+      await ctx.notifier.etape(projet, `${diag}\nAucun code à modifier.`, projet.production ? boutonReglages : undefined)
+      return { ok: true, message: r.diagnostic }
+    }
+    const numero = await ajouterLot(ctx, projetId, r.lot)
+    await ctx.notifier.etape(obtenir(db, "projets", projetId), `${diag}\n:hammer_and_wrench: Lot ${numero} « ${r.lot.nom} » : ${r.lot.taches.map((t) => `${t.cle} ${t.titre}`).join(" · ")}. La fabrication reprend ; un nouveau rapport suivra.`, r.reglage && projet.production ? boutonReglages : undefined)
+    return { ok: true, message: r.lot.nom }
   } catch (error) {
-    maj(db, "projets", projetId, { statut: "livre" })
-    await ctx.notifier.etape(projet, `:x: L'analyste n'a pas pu préparer les corrections : ${error.message.slice(0, 500)}`)
+    maj(db, "projets", projetId, { statut: avant })
+    await ctx.notifier.etape(projet, `:x: L'analyste n'a pas pu traiter la demande : ${error.message.slice(0, 500)}`)
     return { ok: false, message: error.message }
+  }
+}
+
+// Les dernières lignes du journal d'un produit, publiées par le déployeur.
+function lireJournal(config, nom, lignes = 120) {
+  try {
+    return readFileSync(join(config.etatDir, "journaux", `${nom}.log`), "utf8").split("\n").slice(-lignes).join("\n").slice(-15_000)
+  } catch {
+    return ""
   }
 }

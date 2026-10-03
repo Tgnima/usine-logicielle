@@ -12,6 +12,7 @@ const AIDE = `Usage : node src/cli.mjs <commande>
   production <n°> [--donnees demo|vide] [--emails captures|reels] [--horloge acceleree|reelle] [--autorises "a@b.fr,@domaine.fr"]
                                  met en production (après livraison)
   journal <n°>                   les derniers événements
+  abandonner <n°>                abandonne un plan pas encore validé
   relancer <n°> · stop · reprendre`
 
 const [commande, a, b, c] = process.argv.slice(2)
@@ -38,6 +39,7 @@ const table = {
   },
   journal: async () => (await appel("GET", `/journal/${a}`)).map((l) => `${l.le}  ${l.type.padEnd(12)} ${l.message.split("\n")[0]}`).join("\n"),
   relancer: () => appel("POST", `/relancer/${a}`, {}),
+  abandonner: () => appel("POST", `/abandonner/${a}`, {}),
   stop: () => appel("POST", "/stop", {}),
   reprendre: () => appel("POST", "/reprendre", {}),
 }
