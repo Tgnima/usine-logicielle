@@ -191,7 +191,7 @@ export async function mettreEnProduction(ctx, projetId, par, demande = null) {
     return { ok: false, message: s.message ?? "santé KO" }
   }
   maj(db, "projets", projetId, { statut: "en_production" })
-  await ctx.notifier.etape(projet, `:tada: *${projet.nom}* est en production : ${a.production}\nTrace : https://github.com/${config.github.proprietaire}/${config.github.depot_etat}/pull/${pr}`)
+  await ctx.notifier.etape(projet, `:tada: *${projet.nom}* est en production : ${a.production}\nRéglages : ${decrireChoix(choix)}.\nTrace : https://github.com/${config.github.proprietaire}/${config.github.depot_etat}/pull/${pr}`, [{ texte: "Changer les réglages de production", action: "production_reglages", valeur: projet.id }])
   return { ok: true, message: a.production }
 }
 

@@ -51,7 +51,8 @@ export async function demarrerSlack(ctx) {
   }
 
   const notifier = {
-    etape: (projet, texte) => poster(projet, { text: texte }),
+    // boutons (facultatif) : [{ texte, action, valeur }]
+    etape: (projet, texte, boutons) => poster(projet, boutons?.length ? { text: texte, blocks: [section(texte), { type: "actions", elements: boutons.map((b) => bouton(b.texte, b.action, b.valeur)) }] } : { text: texte }),
     questions: (projet, questions) => poster(projet, {
       text: "L'analyste a besoin de précisions",
       blocks: [section(`:question: *L'analyste a besoin de précisions avant de planifier :*\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`), { type: "actions", elements: [bouton("Répondre", "questions_repondre", projet.id, "primary")] }],
@@ -109,7 +110,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>`")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
     }
     if (mot === "statut") {
       const lignes = actions.statut(ctx).map((p) => `*${p.id}. ${p.nom}* · ${STATUTS[p.statut] ?? p.statut} · ${p.fusionnees}/${p.taches} tâches${p.en_cours ? ` · en cours : ${p.en_cours}` : ""}${p.escalades.length ? ` · :rotating_light: ${p.escalades.length} décision(s) attendue(s)` : ""}${p.apercu && p.lot_livre ? ` · ${p.apercu}` : ""}`)
@@ -123,8 +124,9 @@ export async function demarrerSlack(ctx) {
       return repondre("Analyse relancée.")
     }
     if (mot === "production" && /^\d+$/.test(arg ?? "")) {
-      mettreEnProduction(ctx, Number(arg), command.user_name).catch((e) => console.error(e))
-      return repondre("Mise en production lancée.")
+      const p = obtenir(db, "projets", Number(arg))
+      if (!["livre", "en_production"].includes(p?.statut)) return repondre(p ? `Le projet ${arg} est « ${p.statut} » : il n'est pas encore livré.` : `Pas de projet ${arg}.`)
+      return ouvrirProduction(command.trigger_id, p.id)
     }
     const canal = config.slack.canal || command.channel_id
     const r = await app.client.chat.postMessage({ channel: canal, text: `:factory: *Nouvelle demande* de <@${command.user_id}> :\n>${texte.replace(/\n/g, "\n>")}` })
@@ -194,9 +196,8 @@ export async function demarrerSlack(ctx) {
   })
   // Valider : une fenêtre pour choisir comment ce produit tourne en production.
   // Les choix sont pré-remplis (ceux du produit, sinon ceux du contrat).
-  app.action("livraison_valider", async (args) => {
-    if (!(await garde(args))) return
-    const projet = obtenir(db, "projets", Number(args.body.actions[0].value))
+  async function ouvrirProduction(trigger_id, projetId) {
+    const projet = obtenir(db, "projets", projetId)
     const c = choixProduction(config, projet.production ? JSON.parse(projet.production) : null)
     const radio = (bloc, label, options, valeur, aide) => ({
       type: "input", block_id: bloc, label: { type: "plain_text", text: label }, ...(aide ? { hint: { type: "plain_text", text: aide } } : {}),
@@ -207,7 +208,7 @@ export async function demarrerSlack(ctx) {
       },
     })
     await app.client.views.open({
-      trigger_id: args.body.trigger_id,
+      trigger_id,
       view: {
         type: "modal", callback_id: "modal_production", private_metadata: String(projet.id),
         title: { type: "plain_text", text: "Mettre en production" }, submit: { type: "plain_text", text: "Mettre en production" }, close: { type: "plain_text", text: "Annuler" },
@@ -222,7 +223,14 @@ export async function demarrerSlack(ctx) {
         ],
       },
     })
-  })
+  }
+  // Le bouton du rapport final, et celui du message « en production ».
+  for (const id of ["livraison_valider", "production_reglages"]) {
+    app.action(id, async (args) => {
+      if (!(await garde(args))) return
+      await ouvrirProduction(args.body.trigger_id, Number(args.body.actions[0].value))
+    })
+  }
   app.view("modal_production", async ({ ack, view, body }) => {
     const v = view.state.values
     const demande = {
