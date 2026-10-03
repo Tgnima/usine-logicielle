@@ -2,6 +2,8 @@
 // d'un produit déjà livré ? Un petit modèle (via Vercel AI Gateway) tranche ;
 // sans clé ou en cas de doute, on demande à la personne. Jamais de décision
 // coûteuse (un nouveau projet) sur une supposition.
+import { enregistrer, prixApi } from "./couts.mjs"
+
 const PASSERELLE = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const MODELE = "anthropic/claude-haiku-4.5"
 
@@ -9,7 +11,7 @@ const MODELE = "anthropic/claude-haiku-4.5"
 export const produitsCorrigeables = (db) => db.prepare("SELECT id, nom, slug, prompt, statut FROM projets WHERE statut IN ('livre', 'en_production') ORDER BY id DESC").all()
 
 // Renvoie { type: "nouveau" } | { type: "correction", projetId } | { type: "incertain", candidats }.
-export async function aiguiller(db, texte) {
+export async function aiguiller(db, texte, config = {}) {
   const produits = produitsCorrigeables(db)
   if (produits.length === 0) return { type: "nouveau" }
   // Le nom ou l'adresse d'un produit cité tel quel : c'est une correction.
@@ -33,6 +35,9 @@ export async function aiguiller(db, texte) {
       signal: AbortSignal.timeout(20_000),
     })
     const json = await res.json()
+    // Le suivi des coûts : l'aiguillage est un frais général de l'usine (sans projet).
+    const u = { entree: json.usage?.prompt_tokens ?? 0, sortie: json.usage?.completion_tokens ?? 0, cache_lecture: 0, cache_ecriture: 0 }
+    if (u.entree || u.sortie) enregistrer(db, { role: "aiguillage", moteur: "passerelle", usages: [{ modele: MODELE, ...u, cout_api_usd: prixApi(config, MODELE, u) }] })
     const contenu = String(json.choices?.[0]?.message?.content ?? "")
     const r = JSON.parse(contenu.slice(contenu.indexOf("{"), contenu.lastIndexOf("}") + 1))
     if (r.type === "nouveau") return { type: "nouveau" }

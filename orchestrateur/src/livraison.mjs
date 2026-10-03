@@ -13,6 +13,7 @@ import { ecrireEtat, shaPrincipal } from "./github.mjs"
 import { analyserCorrections } from "./analyste.mjs"
 import { ajouterLot } from "./creation.mjs"
 import { escalader } from "./escalade.mjs"
+import { enregistrer } from "./couts.mjs"
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
@@ -207,6 +208,7 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
     const contexte = {
       reglages: projet.production ? JSON.parse(projet.production) : null,
       journaux: { production: lireJournal(config, `production-${projet.slug}`), apercu: lireJournal(config, `apercu-${projet.slug}`) },
+      mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),
     }
     const r = await analyserCorrections(config, projet, lirePlan(projet), retours, contexte)
     db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Corrections après livraison", retours, par)

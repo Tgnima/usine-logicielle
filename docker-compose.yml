@@ -71,6 +71,7 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_SECURE: ${SMTP_SECURE:-}
       EMAIL_EXPEDITEUR: ${EMAIL_EXPEDITEUR:-}
+      TABLEAU_HOTE: ${TABLEAU_HOTE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./caddy:/caddy

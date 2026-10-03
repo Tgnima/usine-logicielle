@@ -3,6 +3,7 @@
 // lots, tâches, critères d'acceptation testables, dépendances. Le plan est
 // VÉRIFIÉ par le code avant d'être présenté à l'humain.
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
+import { usagesClaude } from "./couts.mjs"
 
 const SYSTEME = "Tu es l'analyste d'une usine logicielle. Tu transformes une demande en plan de fabrication précis, réaliste et testable. Tu réponds uniquement par un objet JSON valide, sans texte autour."
 
@@ -92,7 +93,8 @@ export function extraireJson(texte) {
 
 // Lance l'analyste dans l'atelier (Claude Code, sans aucun outil : il raisonne
 // seulement). Deux essais si le JSON est invalide ; valider() renvoie les problèmes.
-async function interroger(config, texteBase, valider) {
+// mesurer(usages, duree_s) reçoit la consommation de chaque essai (suivi des coûts).
+async function interroger(config, texteBase, valider, mesurer = () => {}) {
   const modele = config.modeles.analyste.modele
   let problemes = []
   for (let essai = 1; essai <= 2; essai++) {
@@ -112,6 +114,7 @@ async function interroger(config, texteBase, valider) {
     } catch {
       throw new Error(`L'analyste a échoué : ${String(brut ?? "").slice(0, 300)} ${r.journal.slice(-500)}`)
     }
+    mesurer(usagesClaude(sortie), r.duree_s ?? 0)
     if (sortie.is_error) throw new Error(`Claude Code : ${String(sortie.result).slice(0, 500)}`)
     try {
       const objet = extraireJson(String(sortie.result ?? ""))
@@ -125,7 +128,7 @@ async function interroger(config, texteBase, valider) {
 }
 
 export async function analyser(config, projet, options = {}) {
-  const { objet, tokens } = await interroger(config, consigne(config, projet, options), verifierPlan)
+  const { objet, tokens } = await interroger(config, consigne(config, projet, options), verifierPlan, options.mesurer)
   return { plan: objet, tokens }
 }
 
@@ -173,7 +176,7 @@ ne casse rien de ce qui marche ; reste dans la brique ; ne refais pas un autre p
     if (r.lot === null || r.lot === undefined) return r.reglage?.trim() ? [] : ["ni réglage ni lot : propose l'un ou l'autre"]
     return verifierPlan({ ...plan, lots: [...plan.lots, r.lot] })
   }
-  const { objet } = await interroger(config, texte, valider)
+  const { objet } = await interroger(config, texte, valider, contexte.mesurer)
   return { diagnostic: objet.diagnostic.trim(), reglage: String(objet.reglage ?? "").trim(), lot: objet.lot ?? null }
 }
 

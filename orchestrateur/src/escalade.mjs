@@ -4,6 +4,7 @@
 // message Slack porte les mêmes options en boutons. Les deux débloquent :
 // un clic, ou un commentaire « A », « B », « C » (ou une consigne libre) sur l'issue.
 import { maj, noter, obtenir } from "./db.mjs"
+import { reglagesCouts } from "./couts.mjs"
 import { MARQUE, ajouterEtiquettes, commenter, commentaires, creerIssue, fermerIssue, fusionnerPR, lireIssue, lirePR, retirerEtiquette } from "./github.mjs"
 
 const RAISONS = {
@@ -12,12 +13,17 @@ const RAISONS = {
   infrastructure: "une erreur d'infrastructure a interrompu la fabrication",
   budget: "la durée maximale prévue par le contrat pour ce projet est atteinte",
   livraison: "le déploiement de l'aperçu a échoué",
+  cout: "le budget du projet (en équivalent API) est atteint",
 }
 
 // Les options proposées selon la raison. A, B, C : toujours le même sens.
 export function options(raison, aUnePR) {
   if (raison === "budget") return [
     { cle: "A", libelle: "Continuer", detail: "prolonger la durée du projet d'autant" },
+    { cle: "C", libelle: "Arrêter", detail: "arrêter la fabrication ; ce qui est fusionné reste" },
+  ]
+  if (raison === "cout") return [
+    { cle: "A", libelle: "Continuer", detail: "relever le budget du projet de 50 % et reprendre" },
     { cle: "C", libelle: "Arrêter", detail: "arrêter la fabrication ; ce qui est fusionné reste" },
   ]
   if (raison === "livraison") return [
@@ -90,7 +96,11 @@ export async function resoudre(ctx, escaladeId, { choix, texte = "", par = "?" }
   db.prepare("INSERT INTO decisions (projet_id, tache_id, question, reponse, par) VALUES (?, ?, ?, ?, ?)").run(projet.id, esc.tache_id, question, reponse, par)
   noter(db, { projet: projet.id, tache: esc.tache_id, type: "decision", message: `${question} → ${reponse} (par ${par})` })
 
-  if (esc.raison === "budget") {
+  if (esc.raison === "cout") {
+    const base = Number(reglagesCouts(db, config).budget?.par_projet ?? 0)
+    if (choix === "A") maj(db, "projets", projet.id, { statut: "fabrication", budget_supplement: Number(projet.budget_supplement ?? 0) + base * 0.5 })
+    else maj(db, "projets", projet.id, { statut: "arrete" })
+  } else if (esc.raison === "budget") {
     if (choix === "A") maj(db, "projets", projet.id, { statut: "fabrication", debut_fabrication: new Date().toISOString() })
     else maj(db, "projets", projet.id, { statut: "arrete" })
   } else if (esc.raison === "livraison") {

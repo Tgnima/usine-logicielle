@@ -34,6 +34,7 @@ poser() {
 [ -f caddy/Caddyfile ] || printf ':80 {\n\trespond "Usine logicielle" 200\n}\n' > caddy/Caddyfile
 
 if [ -z "$(valeur WORKER_TOKEN)" ]; then poser WORKER_TOKEN "$(openssl rand -hex 32)"; echo "• WORKER_TOKEN généré"; fi
+if [ -z "$(valeur TABLEAU_MOT_DE_PASSE)" ]; then poser TABLEAU_MOT_DE_PASSE "$(openssl rand -base64 18 | tr -d '/+=')"; echo "• Mot de passe du tableau de bord généré (grep TABLEAU_MOT_DE_PASSE .env)"; fi
 
 if [ -n "$SOURCE" ]; then
   if [ -z "$(valeur CLAUDE_CODE_OAUTH_TOKEN)" ] && [ -f "$SOURCE/.env" ]; then

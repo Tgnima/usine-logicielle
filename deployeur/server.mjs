@@ -192,6 +192,8 @@ async function regenererCaddy(statut) {
     if (s.hote_mails) mails.add(s.hote_mails)
   }
   for (const h of mails) blocs.push(`${site(h)} {\n\treverse_proxy mailpit:8025\n}`)
+  // Le tableau de bord des coûts de l'usine (protégé par mot de passe par l'orchestrateur).
+  if (env.TABLEAU_HOTE && /^[a-z0-9.-]+$/.test(env.TABLEAU_HOTE)) blocs.push(`${site(env.TABLEAU_HOTE)} {\n\treverse_proxy orchestrateur:8091\n}`)
   const global = env.CADDY_EMAIL ? `{\n\temail ${env.CADDY_EMAIL}\n}\n\n` : ""
   const contenu = `# Généré par le déployeur de l'usine logicielle : ne pas modifier à la main.\n${global}${blocs.length ? blocs.join("\n\n") : ":80 {\n\trespond \"Usine logicielle : aucun produit déployé pour l'instant.\" 200\n}"}\n`
   const fichier = join(CADDY, "Caddyfile")

@@ -6,6 +6,7 @@ import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { analyser } from "./analyste.mjs"
 import { creerProduit } from "./creation.mjs"
 import { adresses } from "./config.mjs"
+import { enregistrer } from "./couts.mjs"
 
 export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null }) {
   const id = Number(ctx.db.prepare("INSERT INTO projets (prompt, demandeur, canal, fil) VALUES (?, ?, ?, ?)").run(prompt, demandeur, canal, fil).lastInsertRowid)
@@ -21,14 +22,16 @@ export async function lancerAnalyse(ctx, projetId, options = {}) {
   const projet = obtenir(db, "projets", projetId)
   await ctx.notifier.etape(projet, ":brain: L'analyste étudie la demande et prépare le plan de fabrication…")
   try {
-    const { plan, tokens } = await analyser(ctx.config, projet, options)
+    const mesurer = (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s })
+    const { plan, tokens } = await analyser(ctx.config, projet, { ...options, mesurer })
     noter(db, { projet: projetId, type: "analyse", message: `Plan reçu (${tokens} jetons) : ${plan.lots?.length ?? 0} lot(s), ${plan.questions?.length ?? 0} question(s)` })
     if (plan.questions?.length && !plan.lots?.length) {
       maj(db, "projets", projetId, { statut: "questions", plan: JSON.stringify(plan) })
       return ctx.notifier.questions(obtenir(db, "projets", projetId), plan.questions)
     }
     // Un slug déjà pris par un autre projet reçoit un suffixe.
-    const pris = db.prepare("SELECT 1 FROM projets WHERE slug = ? AND id != ?").get(plan.slug, projetId)
+    // (Certains noms sont réservés aux adresses de l'usine elle-même.)
+    const pris = ["mails", "usine-tableau"].includes(plan.slug) || db.prepare("SELECT 1 FROM projets WHERE slug = ? AND id != ?").get(plan.slug, projetId)
     if (pris) plan.slug = `${plan.slug.slice(0, 17)}-${projetId}`
     maj(db, "projets", projetId, { statut: "plan_a_valider", plan: JSON.stringify(plan), nom: plan.nom, slug: plan.slug })
     return ctx.notifier.plan(obtenir(db, "projets", projetId), plan)

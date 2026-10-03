@@ -7,6 +7,9 @@ import { obtenir } from "./db.mjs"
 import * as actions from "./pipeline.mjs"
 import { resoudre } from "./escalade.mjs"
 import { aiguiller } from "./aiguillage.mjs"
+import { blocsCoutProjet, blocsTableauCouts, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
+import { ecrireReglage, lireReglage } from "./couts.mjs"
+import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
 import { adresses } from "./config.mjs"
 
@@ -28,6 +31,7 @@ export function notificateurConsole() {
     plan: async (projet, plan) => dire(projet, `Plan à valider : ${plan.nom} (${plan.lots.length} lots, ${plan.lots.reduce((n, l) => n + l.taches.length, 0)} tâches)\n→ node src/cli.mjs plan ${projet.id} · valider ${projet.id} · corriger ${projet.id} "…"`),
     escalade: async (projet, e) => dire(projet, `ESCALADE ${e.id} : ${e.sujet} — ${e.raison}\n${e.options.map((o) => `${o.cle} · ${o.libelle}`).join("  ")}\n→ node src/cli.mjs decider ${e.id} A "consigne"   (ou ${e.issue})`),
     escaladeResolue: async (projet, _e, texte) => dire(projet, texte),
+    alerte: async (texte) => console.log(`\n[usine] ${texte}\n`),
     rapportFinal: async (projet, r) => dire(projet, `LIVRÉ : ${r.apercu} · ${r.tests} tests · ${r.refus} refus · ${r.escalades} escalade(s)\n→ node src/cli.mjs production ${projet.id}  ou  corriger ${projet.id} "…"`),
   }
 }
@@ -79,6 +83,12 @@ export async function demarrerSlack(ctx) {
         { type: "actions", elements: [...e.options.map((o) => bouton(`${o.cle} · ${o.libelle}`, `esc_${o.cle}`, `${e.id}:${o.cle}`, o.cle === "A" ? "primary" : o.cle === "C" ? "danger" : undefined)), ...(e.options.some((o) => o.cle === "A") ? [bouton("A avec une consigne…", "esc_consigne", e.id)] : [])] },
       ],
     }),
+    // Une alerte de l'usine (budget mensuel…) : dans le canal, hors du fil d'un projet.
+    alerte: async (texte, boutons) => {
+      const canal = config.slack.canal || db.prepare("SELECT canal FROM projets WHERE canal IS NOT NULL ORDER BY id DESC LIMIT 1").get()?.canal
+      if (!canal) return console.log(`[alerte sans canal] ${texte}`)
+      await app.client.chat.postMessage({ channel: canal, text: texte, ...(boutons?.length ? { blocks: [section(texte), { type: "actions", elements: boutons.map((b) => bouton(b.texte, b.action, b.valeur, b.style)) }] } : {}) })
+    },
     escaladeResolue: async (projet, esc, texte) => {
       const canal = projet.canal || config.slack.canal
       if (esc.message_ts && canal) await app.client.chat.update({ channel: canal, ts: esc.message_ts, text: texte, blocks: [section(texte)] }).catch(() => {})
@@ -90,6 +100,7 @@ export async function demarrerSlack(ctx) {
         { type: "header", text: { type: "plain_text", text: tronquer(`Livré : ${r.nom}`, 150) } },
         section(`${r.resume}\n\n:globe_with_meridians: *Essayer :* ${r.apercu}${r.mails ? `\n:email: *Emails envoyés (capturés) :* ${r.mails}` : ""}\n:octocat: *Code :* <${r.depot}|${r.depot.replace("https://github.com/", "")}> (${r.sha.slice(0, 7)})`),
         section(r.lots.map((l, i) => `*Lot ${i + 1} : ${l.nom}*\n${l.taches.map((t) => `${t.statut === "fusionnee" ? ":white_check_mark:" : ":heavy_minus_sign:"} ${t.cle} ${t.titre}${t.pr ? ` <${r.depot}/pull/${t.pr}|#${t.pr}>` : ""}${t.statut === "abandonnee" ? " _(abandonnée)_" : ""}`).join("\n")}`).join("\n")),
+        ...(ligneCoutProjet(ctx, projet.id) ? [{ type: "context", elements: [{ type: "mrkdwn", text: `:moneybag: ${ligneCoutProjet(ctx, projet.id)} · \`/usine couts ${projet.id}\` pour le détail` }] }] : []),
         { type: "context", elements: [{ type: "mrkdwn", text: `${r.tests} tests automatisés · ${r.refus} refus du vérificateur corrigés en autonomie · ${r.escalades} escalade(s) · ${r.decisions} décision(s) humaine(s)${r.duree_min ? ` · ${Math.floor(r.duree_min / 60)} h ${r.duree_min % 60} min de fabrication` : ""}` }] },
         { type: "actions", elements: [bouton("Valider : mettre en production", "livraison_valider", projet.id, "primary"), bouton("Corriger", "livraison_corriger", projet.id)] },
       ],
@@ -111,7 +122,10 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)")
+    }
+    if (mot === "couts" || mot === "coûts") {
+      return respond({ response_type: "ephemeral", text: "Coûts de l'usine", blocks: /^\d+$/.test(arg ?? "") ? blocsCoutProjet(ctx, Number(arg)) : blocsTableauCouts(ctx) })
     }
     if (mot === "statut") {
       const lignes = actions.statut(ctx).map((p) => `*${p.id}. ${p.nom}* · ${STATUTS[p.statut] ?? p.statut} · ${p.fusionnees}/${p.taches} tâches${p.en_cours ? ` · en cours : ${p.en_cours}` : ""}${p.escalades.length ? ` · :rotating_light: ${p.escalades.length} décision(s) attendue(s)` : ""}${p.apercu && p.lot_livre ? ` · ${p.apercu}` : ""}`)
@@ -137,7 +151,7 @@ export async function demarrerSlack(ctx) {
     }
     const canal = config.slack.canal || command.channel_id
     // Nouveau produit, ou correction d'un produit livré ? On ne lance rien sur une supposition.
-    const a = await aiguiller(db, texte)
+    const a = await aiguiller(db, texte, config)
     if (a.type === "nouveau") return lancerNouveau(texte, command.user_id, canal)
     const id = String(++compteurAttentes)
     attentes.set(id, { texte, user: command.user_id, canal })
@@ -321,22 +335,52 @@ export async function demarrerSlack(ctx) {
     demanderCorrections(ctx, Number(view.private_metadata), lire(view), body.user.name ?? body.user.id).catch((e) => console.error(e))
   })
 
+  // Les coûts : le budget mensuel épuisé, et la fenêtre des réglages.
+  app.action("budget_mensuel_relever", async (args) => {
+    if (!(await garde(args))) return
+    const r = releverBudgetMensuel(ctx, args.body.actions[0].value, args.body.user.name ?? args.body.user.id)
+    await retirerBoutons(args.body, `:white_check_mark: ${r.message} L'usine reprend.`)
+  })
+  app.action("budget_mensuel_garder", async (args) => {
+    if (!(await garde(args))) return
+    await retirerBoutons(args.body, `:octagonal_sign: Arrêt maintenu par <@${args.body.user.id}> jusqu'au mois prochain (ou jusqu'à ce que le budget soit relevé dans les réglages).`)
+  })
+  app.action("lien_tableau", async ({ ack }) => ack())
+  app.action("couts_reglages", async (args) => {
+    if (!(await garde(args))) return
+    await app.client.views.open({ trigger_id: args.body.trigger_id, view: vueReglagesCouts(ctx) })
+  })
+  app.view("modal_couts", async ({ ack, view, body }) => {
+    await ack()
+    const reglages = lireReglagesCouts(ctx, view)
+    ecrireReglage(db, "couts", JSON.stringify(reglages))
+    // Un prix de Codex saisi s'applique aussi aux consommations déjà enregistrées.
+    const p = reglages.couts.prix_api[lireReglage(db, "modele_codex", "codex")]
+    if (p) db.prepare("UPDATE consommations SET cout_api_usd = (entree * ? + sortie * ? + cache_lecture * ? + cache_ecriture * ?) / 1e6 WHERE moteur = 'codex'").run(p.entree, p.sortie, p.entree * 0.1, p.entree * 1.25)
+    console.log(`Réglages des coûts modifiés par ${body.user.name ?? body.user.id}`)
+    await publierAccueil(body.user.id)
+  })
+
   // L'onglet Accueil : l'état de l'usine d'un coup d'œil.
-  app.event("app_home_opened", async ({ event }) => {
+  app.event("app_home_opened", async ({ event }) => publierAccueil(event.user))
+  async function publierAccueil(user) {
     const projets = actions.statut(ctx)
     await app.client.views.publish({
-      user_id: event.user,
+      user_id: user,
       view: {
         type: "home",
         blocks: [
           { type: "header", text: { type: "plain_text", text: "Usine logicielle" } },
           section("Du prompt au produit en ligne. `/usine <ce que tu veux construire>` dans un canal où je suis invité."),
           { type: "divider" },
+          ...blocsTableauCouts(ctx),
+          { type: "divider" },
+          { type: "header", text: { type: "plain_text", text: "Projets" } },
           ...(projets.length ? projets.slice(0, 15).map((p) => section(`*${p.id}. ${p.nom}* · ${STATUTS[p.statut] ?? p.statut}\n${p.fusionnees}/${p.taches} tâches fusionnées${p.abandonnees ? `, ${p.abandonnees} abandonnée(s)` : ""}${p.en_cours ? `\nEn cours : ${p.en_cours}` : ""}${p.escalades.length ? `\n:rotating_light: ${p.escalades.length} décision(s) attendue(s)` : ""}${p.depot ? `\n<https://github.com/${p.depot}|${p.depot}>` : ""}${p.apercu && p.lot_livre ? ` · ${p.apercu}` : ""}`)) : [section("_Aucun projet pour l'instant._")]),
         ],
       },
     }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
-  })
+  }
 
   await app.start()
   console.log("Slack connecté (Socket Mode).")

@@ -61,3 +61,26 @@ production:
   # Avec emails: reels, seuls ces destinataires reçoivent (adresses ou « @domaine »).
   # Vide = tout le monde : à éviter tant qu'on teste avec des contacts de test.
   destinataires_autorises: []
+
+# Ce que coûte l'usine. Ces montants se règlent aussi depuis Slack (onglet Accueil,
+# « Réglages des coûts ») : ce qui est réglé dans Slack l'emporte sur ce fichier.
+couts:
+  devise: EUR                      # EUR | USD : la devise d'affichage, et celle des montants ci-dessous
+  taux_usd: 0.86                   # 1 $ = 0,86 € : pour convertir les équivalents API (donnés en dollars)
+  # Les frais fixes mensuels, répartis entre les projets au prorata de leur usage.
+  abonnements:
+    - { nom: "Claude (Pro/Max)", mensuel: 0, moteurs: [claude-code] }   # à renseigner
+    - { nom: "ChatGPT (Codex)",  mensuel: 0, moteurs: [codex] }         # à renseigner
+  serveur_mensuel: 0               # le VPS, à renseigner
+  # Équivalent API des moteurs qui ne donnent pas leur prix ($ par million de jetons).
+  # Claude Code donne le sien : rien à mettre pour les modèles Claude.
+  prix_api:
+    anthropic/claude-haiku-4.5: { entree: 1, sortie: 5 }               # l'aiguillage, via la passerelle
+    # gpt-6.1-sol: { entree: 0, sortie: 0 }                            # le modèle de Codex, si tu veux son équivalent API
+
+# Les budgets, en équivalent API (c'est lui qui mesure l'usage réel des abonnements).
+# 0 = pas de budget. Alertes Slack aux seuils ; à 100 % : escalade (Continuer / Arrêter).
+budget:
+  mensuel: 0                       # pour toute l'usine, par mois civil
+  par_projet: 0                    # pour un projet, de l'analyse aux corrections
+  alertes: [50, 80, 100]

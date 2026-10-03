@@ -8,6 +8,7 @@
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS } from "./creation.mjs"
 import { extraireJson } from "./analyste.mjs"
+import { ecrireReglage, enregistrer, usagesCodex } from "./couts.mjs"
 
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
@@ -74,12 +75,20 @@ export async function verifier(ctx, projet, tache, sha) {
     "(npm start > /tmp/sorties/verif/app.log 2>&1 &)",
     "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-    "  codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt \"$(cat /tmp/sorties/verif/consigne.md)\" > /tmp/sorties/verif/codex.log 2>&1",
+    "  codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt \"$(cat /tmp/sorties/verif/consigne.md)\" > /tmp/sorties/verif/codex.log 2>&1",
     "  echo \"@@ CODEX_CODE $?\"",
+    // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
+    "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     "else tail -30 /tmp/sorties/verif/app.log; fi",
   ].join("\n"), { minutes: 30 })
 
   const m = r.marqueurs
+  // La consommation de Codex, même quand il refuse ou échoue.
+  if ("CODEX_CODE" in m) {
+    const journalCodex = await lireFichier(serveur, jeton, "/tmp/sorties/verif/codex.log")
+    if (m.CODEX_MODELE) ecrireReglage(ctx.db, "modele_codex", m.CODEX_MODELE)
+    enregistrer(ctx.db, { projet: projet.id, tache: tache.id, role: "verificateur", moteur: "codex", usages: usagesCodex(journalCodex, m.CODEX_MODELE, config), duree_s: r.duree_s ?? 0 })
+  }
   let verdict = null
   if ("APP_STARTED" in m) {
     const texte = await lireFichier(serveur, jeton, "/tmp/sorties/verif/verdict.txt")

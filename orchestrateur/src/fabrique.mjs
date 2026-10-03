@@ -16,6 +16,8 @@ import { COMPTER_TESTS } from "./creation.mjs"
 import { pathspec, verifier } from "./verification.mjs"
 import { escalader } from "./escalade.mjs"
 import { apresFusion } from "./livraison.mjs"
+import { enregistrer, usagesClaude } from "./couts.mjs"
+import { verifierBudgets } from "./budgets.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -36,6 +38,8 @@ let occupe = false
 export function demarrerFabrique(ctx) {
   const tick = async () => {
     if (occupe || arretGeneral(ctx.config)) return
+    // Les budgets d'abord : alertes, escalades, et arrêt si le budget mensuel est épuisé.
+    if (await verifierBudgets(ctx).catch((e) => (console.error("Budgets :", e), false))) return
     const projets = ctx.db.prepare("SELECT * FROM projets WHERE statut = 'fabrication' ORDER BY id").all()
     for (const projet of projets) {
       // Le budget de durée du contrat : au-delà, l'humain décide de continuer ou non.
@@ -133,6 +137,7 @@ async function fabriquer(ctx, projet, tache) {
   let resume = ""
   try {
     const sortie = JSON.parse(await lireFichier(atelier, jeton, "/tmp/sorties/tache/agent.json"))
+    enregistrer(db, { projet: projet.id, tache: tache.id, role: "agent", moteur: "claude-code", usages: usagesClaude(sortie), duree_s: agent.duree_s ?? 0 })
     resume = String(sortie.result ?? "").trim().slice(0, 1500)
     if (sortie.is_error) resume = `(l'agent signale une erreur) ${resume}`
   } catch {

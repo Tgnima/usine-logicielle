@@ -14,10 +14,13 @@ import * as livraison from "./livraison.mjs"
 import * as actions from "./pipeline.mjs"
 import { demarrerSlack, notificateurConsole } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
+import { ouvrirCouts } from "./couts.mjs"
+import { demarrerTableau } from "./tableau.mjs"
 
 const config = chargerConfig()
 mkdirSync(config.dataDir, { recursive: true })
 const db = ouvrirDb(join(config.dataDir, "usine.db"))
+ouvrirCouts(db)
 const ctx = { config, db, notifier: notificateurConsole(), livraison }
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
@@ -35,6 +38,7 @@ for (const [nom, url] of [["atelier", config.atelier.url], ["vérificateur", con
 actions.reprise(ctx)
 demarrerFabrique(ctx)
 surveillerEscalades(ctx)
+demarrerTableau(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).
 // Elle n'écoute que dans le conteneur.
