@@ -209,15 +209,18 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
       reglages: projet.production ? JSON.parse(projet.production) : null,
       journaux: { production: lireJournal(config, `production-${projet.slug}`), apercu: lireJournal(config, `apercu-${projet.slug}`) },
       mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),
+      echanges: echangesRecents(db, projetId),
     }
-    const r = await analyserCorrections(config, projet, lirePlan(projet), retours, contexte)
+    // La demande est gardée même si l'analyse échoue : une reformulation la retrouvera.
     db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Corrections après livraison", retours, par)
+    const r = await analyserCorrections(config, projet, lirePlan(projet), retours, contexte)
     noter(db, { projet: projetId, type: "diagnostic", message: `${r.diagnostic}${r.reglage ? `\nRéglage : ${r.reglage}` : ""}` })
     const boutonReglages = [{ texte: "Changer les réglages de production", action: "production_reglages", valeur: projetId }]
+    const boutonRepondre = { texte: "Répondre à l'analyste", action: "livraison_corriger", valeur: projetId }
     const diag = `:stethoscope: *Diagnostic* : ${r.diagnostic}${r.reglage ? `\n:gear: *Réglage à changer* : ${r.reglage}` : ""}`
     if (!r.lot) {
       maj(db, "projets", projetId, { statut: avant })
-      await ctx.notifier.etape(projet, `${diag}\nAucun code à modifier.`, projet.production ? boutonReglages : undefined)
+      await ctx.notifier.etape(projet, `${diag}\nAucun code à modifier. _Tu peux répondre directement dans ce fil._`, [...(projet.production ? boutonReglages : []), boutonRepondre])
       return { ok: true, message: r.diagnostic }
     }
     const numero = await ajouterLot(ctx, projetId, r.lot)
@@ -225,9 +228,15 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
     return { ok: true, message: r.lot.nom }
   } catch (error) {
     maj(db, "projets", projetId, { statut: avant })
-    await ctx.notifier.etape(projet, `:x: L'analyste n'a pas pu traiter la demande : ${error.message.slice(0, 500)}`)
+    await ctx.notifier.etape(projet, `:x: L'analyste n'a pas pu traiter la demande : ${error.message.slice(0, 500)}\n_Tu peux reformuler en répondant dans ce fil._`, [{ texte: "Reformuler", action: "livraison_corriger", valeur: projetId }])
     return { ok: false, message: error.message }
   }
+}
+
+// Les derniers échanges avec l'analyste sur ce produit (demandes et diagnostics).
+function echangesRecents(db, projetId, n = 6) {
+  const lignes = db.prepare("SELECT le, type, message FROM journal WHERE projet_id = ? AND type IN ('diagnostic', 'corrections', 'remarque') UNION ALL SELECT le, 'demande', reponse FROM decisions WHERE projet_id = ? AND question IN ('Corrections après livraison', 'Remarque') ORDER BY le DESC LIMIT ?").all(projetId, projetId, n)
+  return lignes.reverse().map((l) => `[${l.le}] ${l.type} : ${l.message.slice(0, 1500)}`).join("\n")
 }
 
 // Les dernières lignes du journal d'un produit, publiées par le déployeur.

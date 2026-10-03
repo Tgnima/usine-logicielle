@@ -9,6 +9,7 @@ import { resoudre } from "./escalade.mjs"
 import { aiguiller } from "./aiguillage.mjs"
 import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
 import { blocsResume, vueAccueil } from "./accueil.mjs"
+import { repondreDansLeFil } from "./conversation.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
@@ -380,6 +381,25 @@ export async function demarrerSlack(ctx) {
       await app.client.views.publish({ user_id: user, view: vueAccueil(ctx, { tableaux: false }) }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
     }
   }
+
+  // Répondre dans le fil d'un projet : le message part au bon endroit (analyste,
+  // plan, décision, agents). Demande les événements message.channels / message.groups
+  // et les portées channels:history / groups:history (manifeste).
+  app.message(async ({ message }) => {
+    if (!message.thread_ts || message.thread_ts === message.ts || message.subtype || message.bot_id) return
+    const projet = db.prepare("SELECT id FROM projets WHERE fil = ? AND canal = ?").get(message.thread_ts, message.channel)
+    if (!projet) return
+    const repondre = (texte) => app.client.chat.postMessage({ channel: message.channel, thread_ts: message.thread_ts, text: texte }).catch(() => {})
+    if (!estAdmin(message.user)) return repondre(refus)
+    try {
+      const nom = (await app.client.users.info({ user: message.user }).catch(() => null))?.user?.name ?? message.user
+      const r = await repondreDansLeFil(ctx, projet.id, message.text ?? "", nom)
+      if (r) await repondre(r)
+    } catch (error) {
+      console.error("Réponse dans le fil :", error)
+      await repondre(`:x: Je n'ai pas pu traiter ce message : ${error.message.slice(0, 300)}`)
+    }
+  })
 
   // Le menu « Voir le détail d'un projet » : une fenêtre avec ce qu'il a coûté.
   app.action("projet_detail_choix", async ({ ack, body }) => {

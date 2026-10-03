@@ -46,7 +46,10 @@ export async function repondreQuestions(ctx, projetId, reponses, par) {
   const projet = obtenir(ctx.db, "projets", projetId)
   if (projet?.statut !== "questions") return { ok: false, message: "Ce projet n'attend pas de réponses." }
   const plan = lirePlan(projet)
-  const texte = plan.questions.map((q, i) => `${q}\n→ ${reponses[i] ?? reponses}`).join("\n")
+  // Une réponse par question (fenêtre Slack), ou un seul texte libre (réponse dans le fil).
+  const texte = Array.isArray(reponses)
+    ? plan.questions.map((q, i) => `${q}\n→ ${reponses[i] ?? ""}`).join("\n")
+    : `${plan.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n→ ${reponses}`
   ctx.db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Questions de l'analyste", texte, par)
   lancerAnalyse(ctx, projetId, { reponses: texte }).catch((e) => console.error(e))
   return { ok: true, message: "Réponses transmises à l'analyste." }
