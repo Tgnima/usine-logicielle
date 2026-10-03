@@ -34,6 +34,12 @@ export async function executer(serveur, jeton, script, { env = {}, minutes = 30,
   throw new Error(`${serveur} : le travail n'a pas fini à temps.`)
 }
 
+// Un fichier binaire (une capture d'écran), transmis en base64.
+export async function lireFichierBinaire(serveur, jeton, chemin) {
+  const { statut, corps } = await appel(serveur, jeton, `/fichier?chemin=${encodeURIComponent(chemin)}&base64=1`)
+  return statut === 200 ? Buffer.from(String(corps), "base64") : null
+}
+
 export async function lireFichier(serveur, jeton, chemin) {
   const { statut, corps } = await appel(serveur, jeton, `/fichier?chemin=${encodeURIComponent(chemin)}`)
   return statut === 200 ? corps : null

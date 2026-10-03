@@ -7,7 +7,7 @@
 //
 //   POST /travaux          { script, env?, minutes? }  -> 202 { id }   (409 si occupé)
 //   GET  /travaux/:id      -> { etat: en_cours|fini, code, journal, marqueurs }
-//   GET  /fichier?chemin=  -> contenu d'un fichier de /travail ou /tmp/sorties
+//   GET  /fichier?chemin=  -> contenu d'un fichier de /travail ou /tmp/sorties (&base64=1 : binaire, une capture)
 //   GET  /sante            -> { ok, occupe }
 //
 // Le script arrive par l'entrée standard de bash, jamais dans un fichier ni sur
@@ -109,6 +109,10 @@ createServer(async (req, res) => {
     const chemin = resolve(url.searchParams.get("chemin") ?? "")
     if (!RACINES.some((r) => chemin === r || chemin.startsWith(`${r}/`))) return envoyer(res, 403, { erreur: "chemin interdit" })
     if (!existsSync(chemin)) return envoyer(res, 404, { erreur: "fichier absent" })
+    if (url.searchParams.get("base64") === "1") {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
+      return res.end(readFileSync(chemin).toString("base64"))
+    }
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
     return res.end(readFileSync(chemin))
   }

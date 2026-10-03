@@ -28,6 +28,7 @@ oauth_config:
       - channels:history    # lire les réponses dans le fil d'un projet
       - groups:history      # (canaux privés aussi)
       - users:read          # le nom de qui répond
+      - files:write         # les captures d'écran d'un lot livré
 settings:
   event_subscriptions:
     bot_events:

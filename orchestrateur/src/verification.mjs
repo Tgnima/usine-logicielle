@@ -130,6 +130,7 @@ export async function verifier(ctx, projet, tache, sha) {
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     "else tail -30 /tmp/sorties/verif/app.log; fi",
     "echo \"@@ CAPTURES $(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | wc -l)\"",
+    "echo \"@@ CAPTURES_FICHIERS $(cd /tmp/sorties/verif/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
     "echo \"@@ E2E_NOUVEAUX $(cd /tmp/sorties/verif/e2e && ls *.cjs 2>/dev/null | tr '\\n' ' ')\"",
     ecrireFichier("/tmp/sorties/verif/consigne-design.md", consigneDesign(projet, tache)),
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
@@ -169,7 +170,7 @@ export async function verifier(ctx, projet, tache, sha) {
   const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal })
   const codexEnPanne = "APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0"
   const nouveauxTests = String(m.E2E_NOUVEAUX ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.cjs$/.test(f))
-  return { ok: raisons.length === 0, infra: codexEnPanne, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, captures: Number(m.CAPTURES ?? 0) }
+  return { ok: raisons.length === 0, infra: codexEnPanne, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
 }
 
 // La porte de fusion : des faits vérifiables, pas un avis. Chaque raison

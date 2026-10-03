@@ -22,6 +22,7 @@ export function ouvrirCycle(db) {
     if (!colonnes.has(nom)) db.exec(`ALTER TABLE projets ADD COLUMN ${nom} ${def}`)
   }
   if (!colonnes.has("finition_faite")) db.exec("ALTER TABLE projets ADD COLUMN finition_faite INTEGER NOT NULL DEFAULT 0")
+  if (!colonnes.has("suivi_ts")) db.exec("ALTER TABLE projets ADD COLUMN suivi_ts TEXT") // le message de suivi dans Slack
   const colonnesTaches = new Set(db.prepare("PRAGMA table_info(taches)").all().map((c) => c.name))
   if (!colonnesTaches.has("design")) db.exec("ALTER TABLE taches ADD COLUMN design TEXT") // note et remarques du relecteur design
 }

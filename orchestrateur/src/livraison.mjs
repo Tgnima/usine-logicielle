@@ -12,6 +12,7 @@ import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { ecrireEtat, ecrireFichierDepot, shaPrincipal } from "./github.mjs"
 import { analyserBrief, analyserCorrections } from "./analyste.mjs"
 import { designEnMarkdown } from "./design.mjs"
+import { capturesDuLot } from "./suivi.mjs"
 import { ajouterLot } from "./creation.mjs"
 import { escalader } from "./escalade.mjs"
 import { ecrireReglage, enregistrer, lireReglage } from "./couts.mjs"
@@ -119,7 +120,7 @@ async function livrerApercu(ctx, projetId, lot) {
   const sha = await shaPrincipal(config, nomDepot)
   const a = adresses(config, projet.slug)
   maj(db, "projets", projetId, { lot_livre: lot })
-  await ctx.notifier.etape(projet, `:package: Lot ${lot} terminé (${plan.lots[lot - 1]?.nom ?? ""}). Déploiement de l'aperçu…`)
+  await ctx.notifier.progres(projet, `📦 Lot ${lot} terminé (${plan.lots[lot - 1]?.nom ?? ""}) : déploiement de l'aperçu`)
   await ecrireEtat(config, `apercus/${projet.slug}.json`, etatSouhaite(config, projet, "apercu", sha, lot), { message: `Aperçu ${projet.slug} : lot ${lot} (${sha.slice(0, 7)})` })
   const s = await attendreDeploiement(config, `apercu/${projet.slug}`, sha)
   const enLigne = s.etat === "ok" && (await santePublique(a.apercu))
@@ -131,9 +132,12 @@ async function livrerApercu(ctx, projetId, lot) {
   noter(db, { projet: projetId, type: "livraison", message: `Aperçu du lot ${lot} en ligne (${sha.slice(0, 7)})` })
   // La durée de vie de l'aperçu repart (cycle.mjs la surveille).
   maj(db, "projets", projetId, { apercu_expire_le: new Date(Date.now() + Number(config.apercus?.duree_vie_jours ?? 7) * 86_400_000).toISOString(), apercu_rappel: 0, apercu_retire: 0 })
-  if (!(await finaliserSiFini(ctx, projetId))) {
-    await ctx.notifier.etape(projet, `:eyes: *Aperçu du lot ${lot}* en ligne : ${a.apercu}${(config.demo?.services ?? []).includes("mailpit") ? ` · emails capturés : ${a.mails}` : ""}\nLa fabrication continue avec le lot ${lot + 1}.`)
-  }
+  const dernier = lot >= Math.max(...taches(db, projetId).map((t) => t.lot))
+  await ctx.notifier.lotLivre(projet, {
+    texte: `:eyes: *Lot ${lot} livré : ${plan.lots[lot - 1]?.nom ?? ""}*\n${plan.lots[lot - 1]?.objectif ?? ""}\nAperçu : ${a.apercu}${(config.demo?.services ?? []).includes("mailpit") ? ` · emails capturés : ${a.mails}` : ""}${dernier ? "" : `\nLa fabrication continue avec le lot ${lot + 1}.`}`,
+    captures: capturesDuLot(ctx, projetId, lot),
+  }).catch((e) => console.error("Lot livré :", e.message))
+  await finaliserSiFini(ctx, projetId)
 }
 
 // Tout est livré : le rapport final, et la seconde validation humaine.

@@ -10,6 +10,8 @@ import { aiguiller } from "./aiguillage.mjs"
 import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
 import { blocsResume, vueAccueil } from "./accueil.mjs"
 import { repondreDansLeFil } from "./conversation.mjs"
+import { ajouterEtape, texteSuivi } from "./suivi.mjs"
+import { readFileSync } from "node:fs"
 import { blocsSante } from "./accueil.mjs"
 import { garderApercu, mettreAJourUsine, prolongerApercu, retirerApercu, supprimerProjet, decrireApercu } from "./cycle.mjs"
 import { brancherAcces } from "./slack-acces.mjs"
@@ -40,6 +42,8 @@ export function notificateurConsole() {
     escalade: async (projet, e) => dire(projet, `ESCALADE ${e.id} : ${e.sujet} — ${e.raison}\n${e.options.map((o) => `${o.cle} · ${o.libelle}`).join("  ")}\n→ node src/cli.mjs decider ${e.id} A "consigne"   (ou ${e.issue})`),
     escaladeResolue: async (projet, _e, texte) => dire(projet, texte),
     alerte: async (texte) => console.log(`\n[usine] ${texte}\n`),
+    progres: async (projet, ligne) => dire(projet, ligne),
+    lotLivre: async (projet, { texte, captures = [] }) => dire(projet, `${texte}${captures.length ? ` (${captures.length} capture(s))` : ""}`),
     rapportFinal: async (projet, r) => dire(projet, `LIVRÉ : ${r.apercu} · ${r.tests} tests · ${r.refus} refus · ${r.escalades} escalade(s)\n→ node src/cli.mjs production ${projet.id}  ou  corriger ${projet.id} "…"`),
   }
 }
@@ -91,6 +95,35 @@ export async function demarrerSlack(ctx) {
         { type: "actions", elements: [...e.options.map((o) => bouton(`${o.cle} · ${o.libelle}`, `esc_${o.cle}`, `${e.id}:${o.cle}`, o.cle === "A" ? "primary" : o.cle === "C" ? "danger" : undefined)), ...(e.options.some((o) => o.cle === "A") ? [bouton("A avec une consigne…", "esc_consigne", e.id)] : [])] },
       ],
     }),
+    // Le message de suivi : un seul par projet, mis à jour à chaque étape.
+    progres: async (projet, ligne) => {
+      ajouterEtape(db, projet.id, ligne)
+      const p = obtenir(db, "projets", projet.id)
+      const canal = p.canal || config.slack.canal
+      if (!canal) return
+      const texte = texteSuivi(db, p.id)
+      if (p.suivi_ts) {
+        const r = await app.client.chat.update({ channel: canal, ts: p.suivi_ts, text: texte, blocks: [section(texte)] }).catch((e) => e)
+        if (!(r instanceof Error)) return
+      }
+      const ts = await poster(p, { text: texte, blocks: [section(texte)] })
+      if (ts) db.prepare("UPDATE projets SET suivi_ts = ? WHERE id = ?").run(ts, p.id)
+    },
+    // Un lot livré : un vrai message, avec les captures d'écran du lot (portée files:write).
+    lotLivre: async (projet, { texte, captures = [] }) => {
+      const p = obtenir(db, "projets", projet.id)
+      const canal = p.canal || config.slack.canal
+      if (!canal) return
+      if (captures.length) {
+        try {
+          await app.client.files.uploadV2({ channel_id: canal, thread_ts: p.fil ?? undefined, initial_comment: texte, file_uploads: captures.map((c) => ({ file: readFileSync(c.chemin), filename: c.nom, title: c.nom.replace(/\.png$/, "") })) })
+          return
+        } catch (e) {
+          console.error("Captures dans Slack :", e.data?.error ?? e.message, e.data?.error === "missing_scope" ? "(ajoute la portée files:write au manifeste)" : "")
+        }
+      }
+      await poster(p, { text: texte })
+    },
     // Une alerte de l'usine (budget mensuel…) : dans le canal, hors du fil d'un projet.
     alerte: async (texte, boutons) => {
       const canal = config.slack.canal || db.prepare("SELECT canal FROM projets WHERE canal IS NOT NULL ORDER BY id DESC LIMIT 1").get()?.canal

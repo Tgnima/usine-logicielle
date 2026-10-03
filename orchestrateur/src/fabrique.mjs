@@ -18,6 +18,7 @@ import { escalader } from "./escalade.mjs"
 import { apresFusion } from "./livraison.mjs"
 import { enregistrer, usagesClaude } from "./couts.mjs"
 import { verifierBudgets } from "./budgets.mjs"
+import { garderCaptures } from "./suivi.mjs"
 import { decrireDefaut, relireSecurite } from "./relectures.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
@@ -114,7 +115,7 @@ async function fabriquer(ctx, projet, tache) {
   noter(db, { projet: projet.id, tache: tache.id, type: "fabrication", message: `${tache.cle} commence (${essai})` })
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:attente").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:en-cours"]).catch(() => {})
-  await ctx.notifier.etape(projet, `:hammer_and_wrench: *${tache.cle}* · ${tache.titre} : l'agent commence (${essai}).`)
+  await ctx.notifier.progres(projet, `🛠️ ${tache.cle} · ${tache.titre} : l'agent commence (${essai})`)
 
   // 1. Préparer l'espace de travail (seule étape, avec le push, qui voit le jeton).
   const prep = await executer(atelier, jeton, [
@@ -197,7 +198,7 @@ async function fabriquer(ctx, projet, tache) {
   maj(db, "taches", tache.id, { statut: "verification", pr: pr.number })
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:en-cours").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:verification"]).catch(() => {})
-  await ctx.notifier.etape(projet, `:mag: *${tache.cle}* : pull request <https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}> ouverte, le vérificateur la teste.`)
+  await ctx.notifier.progres(projet, `🔎 ${tache.cle} : PR <https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}> en relecture et en vérification`)
 
   // 5. La relecture sécurité (un autre agent, une grille) : un défaut grave renvoie la tâche.
   const rs = await relireSecurite(ctx, projet, tache, nomDepot).catch((e) => ({ graves: [], mineurs: [], resume: e.message, indisponible: true }))
@@ -220,6 +221,8 @@ async function fabriquer(ctx, projet, tache) {
     return refuser(ctx, projet, tache, v.raisons, { resume })
   }
 
+  if (v.captures?.length) await garderCaptures(ctx, projet.id, tache.cle, v.captures).catch((e) => console.error("Captures :", e.message))
+
   // 7. La fusion : décidée ici, par le code. Le sha garantit qu'on fusionne ce qui a été vérifié.
   const bilan = (v.verdict.criteres ?? []).map((c) => `- :white_check_mark: ${c.critere}${c.preuve ? ` — ${c.preuve}` : ""}`).join("\n")
   const designPR = v.design ? `\n\n### :art: Design : ${v.design.note ?? "?"}/10\n${v.design.resume ?? ""}${(v.design.mineurs ?? []).length ? `\n\nÀ polir (lot de finition) :\n${v.design.mineurs.map((d) => `- ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}`).join("\n")}` : ""}` : ""
@@ -239,7 +242,7 @@ async function fabriquer(ctx, projet, tache) {
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:verification").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:fusionnee"]).catch(() => {})
   noter(db, { projet: projet.id, tache: tache.id, type: "fusion", message: `${tache.cle} fusionnée (PR #${pr.number}, ${v.tests} tests)` })
-  await ctx.notifier.etape(projet, `:white_check_mark: *${tache.cle}* · ${tache.titre} : vérifiée et fusionnée (<https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}>, ${v.tests} tests${v.design?.note !== undefined && v.design?.note !== null ? `, design ${v.design.note}/10` : ""}). ${v.verdict.resume ?? ""}`)
+  await ctx.notifier.progres(projet, `✅ ${tache.cle} · ${tache.titre} : fusionnée (<https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}>, ${v.tests} tests${v.design?.note !== undefined && v.design?.note !== null ? `, design ${v.design.note}/10` : ""})`)
   await apresFusion(ctx, projet.id, tache.lot)
 }
 
@@ -252,11 +255,11 @@ async function refuser(ctx, projet, tache, raisons, { resume }) {
   noter(db, { projet: projet.id, tache: tache.id, type: "refus", message: `${tache.cle} refusée (${raisons.length} motif(s)) : ${raisons[0]}` })
   if (tentative <= (a.tentatives_par_tache ?? 2)) {
     maj(db, "taches", tache.id, { statut: "prete", tentative, retours: texte })
-    return ctx.notifier.etape(projet, `:repeat: *${tache.cle}* refusée : ${raisons[0].split("\n")[0].slice(0, 200)}. Correction ${tentative}/${a.tentatives_par_tache ?? 2}.`)
+    return ctx.notifier.progres(projet, `🔁 ${tache.cle} refusée (${raisons[0].split("\n")[0].slice(0, 120)}) : correction ${tentative}/${a.tentatives_par_tache ?? 2}`)
   }
   if (tache.approche < (a.changements_d_approche ?? 1)) {
     maj(db, "taches", tache.id, { statut: "prete", tentative: 0, approche: tache.approche + 1, retours: texte, branche: null })
-    return ctx.notifier.etape(projet, `:twisted_rightwards_arrows: *${tache.cle}* : les corrections ne suffisent pas, l'agent repart avec une autre approche.`)
+    return ctx.notifier.progres(projet, `🔀 ${tache.cle} : les corrections ne suffisent pas, autre approche (modèle renforcé)`)
   }
   maj(db, "taches", tache.id, { statut: "bloquee", retours: texte })
   return escalader(ctx, { projetId: projet.id, tacheId: tache.id, raison: "criteres", details: `${texte}\n\nDernier résumé de l'agent :\n${resume}` })
