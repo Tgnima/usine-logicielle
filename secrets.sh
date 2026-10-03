@@ -50,7 +50,8 @@ installer() {
   fi
   local publique
   publique=$(sudo_si_besoin age-keygen -y "$CLE")
-  printf 'creation_rules:\n  - path_regex: secrets\\.sops\\.env$\n    age: %s\n' "$publique" > .sops.yaml
+  # La règle vaut pour tout fichier : le chiffrement passe par un fichier temporaire en mémoire.
+  printf 'creation_rules:\n  - path_regex: .*\n    age: %s\n' "$publique" > .sops.yaml
   # Le service qui déchiffre les secrets au démarrage, avant Docker.
   sudo_si_besoin tee /etc/systemd/system/usine-secrets.service >/dev/null <<EOF
 [Unit]
