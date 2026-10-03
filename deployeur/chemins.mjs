@@ -8,7 +8,8 @@
 
 export const CHEMINS_PUBLICS = ["/api/health", "/public/*", "/api/public/*", "/t/*", "/desinscription/*"]
 
-const TROP_LARGES = new Set(["/", "/*", "/api", "/api/*", "/api/", "/assets/*", "/index.html"])
+// (« /assets/* » reste permis : ce sont les fichiers statiques de la page, sans aucune donnée.)
+const TROP_LARGES = new Set(["/", "/*", "/api", "/api/*", "/api/", "/index.html"])
 
 export function cheminsDeclares(contenu) {
   let j
