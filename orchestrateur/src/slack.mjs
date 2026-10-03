@@ -7,7 +7,8 @@ import { obtenir } from "./db.mjs"
 import * as actions from "./pipeline.mjs"
 import { resoudre } from "./escalade.mjs"
 import { aiguiller } from "./aiguillage.mjs"
-import { adresseTableau, blocsCoutProjet, blocsTableauCouts, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
+import { adresseTableau, blocsCoutProjet, ligneCoutProjet, lireReglagesCouts, vueReglagesCouts } from "./slack-couts.mjs"
+import { blocsResume, vueAccueil } from "./accueil.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
@@ -131,7 +132,7 @@ export async function demarrerSlack(ctx) {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Tableau de bord de l'usine* : coûts, budgets et évolution mensuelle."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
     }
     if (mot === "couts" || mot === "coûts") {
-      return respond({ response_type: "ephemeral", text: "Coûts de l'usine", blocks: /^\d+$/.test(arg ?? "") ? blocsCoutProjet(ctx, Number(arg)) : blocsTableauCouts(ctx) })
+      return respond({ response_type: "ephemeral", text: "Coûts de l'usine", blocks: /^\d+$/.test(arg ?? "") ? blocsCoutProjet(ctx, Number(arg)) : blocsResume(ctx) })
     }
     if (mot === "statut") {
       const lignes = actions.statut(ctx).map((p) => `*${p.id}. ${p.nom}* · ${STATUTS[p.statut] ?? p.statut} · ${p.fusionnees}/${p.taches} tâches${p.en_cours ? ` · en cours : ${p.en_cours}` : ""}${p.escalades.length ? ` · :rotating_light: ${p.escalades.length} décision(s) attendue(s)` : ""}${p.apercu && p.lot_livre ? ` · ${p.apercu}` : ""}`)
@@ -371,23 +372,24 @@ export async function demarrerSlack(ctx) {
   // L'onglet Accueil : l'état de l'usine d'un coup d'œil.
   app.event("app_home_opened", async ({ event }) => publierAccueil(event.user))
   async function publierAccueil(user) {
-    const projets = actions.statut(ctx)
-    await app.client.views.publish({
-      user_id: user,
-      view: {
-        type: "home",
-        blocks: [
-          { type: "header", text: { type: "plain_text", text: "Usine logicielle" } },
-          section("Du prompt au produit en ligne. `/usine <ce que tu veux construire>` dans un canal où je suis invité."),
-          { type: "divider" },
-          ...blocsTableauCouts(ctx),
-          { type: "divider" },
-          { type: "header", text: { type: "plain_text", text: "Projets" } },
-          ...(projets.length ? projets.slice(0, 15).map((p) => section(`*${p.id}. ${p.nom}* · ${STATUTS[p.statut] ?? p.statut}\n${p.fusionnees}/${p.taches} tâches fusionnées${p.abandonnees ? `, ${p.abandonnees} abandonnée(s)` : ""}${p.en_cours ? `\nEn cours : ${p.en_cours}` : ""}${p.escalades.length ? `\n:rotating_light: ${p.escalades.length} décision(s) attendue(s)` : ""}${p.depot ? `\n<https://github.com/${p.depot}|${p.depot}>` : ""}${p.apercu && p.lot_livre ? ` · ${p.apercu}` : ""}`)) : [section("_Aucun projet pour l'instant._")]),
-        ],
-      },
-    }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
+    // De vrais tableaux si Slack les accepte ; sinon la même chose en grilles.
+    try {
+      await app.client.views.publish({ user_id: user, view: vueAccueil(ctx) })
+    } catch (error) {
+      console.error("Accueil (tableaux refusés, repli en grilles) :", error.data?.error ?? error.message, JSON.stringify(error.data?.response_metadata?.messages ?? []))
+      await app.client.views.publish({ user_id: user, view: vueAccueil(ctx, { tableaux: false }) }).catch((e) => console.error("Accueil :", e.data?.error ?? e.message))
+    }
   }
+
+  // Le menu « Voir le détail d'un projet » : une fenêtre avec ce qu'il a coûté.
+  app.action("projet_detail_choix", async ({ ack, body }) => {
+    await ack()
+    const id = Number(body.actions[0].selected_option.value)
+    await app.client.views.open({
+      trigger_id: body.trigger_id,
+      view: { type: "modal", title: { type: "plain_text", text: "Détail du projet" }, close: { type: "plain_text", text: "Fermer" }, blocks: blocsCoutProjet(ctx, id) },
+    }).catch((e) => console.error("Détail :", e.data?.error ?? e.message))
+  })
 
   // Un signet « Tableau de bord » en haut de chaque canal de l'usine : on passe
   // de Slack à la page web en un clic. Demande les portées bookmarks:read/write
