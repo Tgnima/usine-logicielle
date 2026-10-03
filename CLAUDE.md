@@ -28,7 +28,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
   (`blocSite()` dans le déployeur) ; tout nouveau secret va dans `SECRETS` (`secrets.sh`) et
   dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans l'environnement.
 
-- Node ES modules, sans framework. Dépendances : `@slack/bolt` et `yaml` (orchestrateur) ; aucune ailleurs.
+- Node ES modules, sans framework. Dépendances : `@slack/bolt`, `yaml` et `nodemailer` (orchestrateur, pour les invitations) ; aucune ailleurs.
 - **Une décision de fusion ou de mise en production est prise par du code**, jamais par un modèle.
   Toute nouvelle règle de refus va dans `porte()`, avec son test dans `orchestrateur/test/`.
 - Les agents ne reçoivent jamais le jeton GitHub, ni Slack. Le jeton ne passe que par la variable

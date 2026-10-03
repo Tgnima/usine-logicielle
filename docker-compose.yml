@@ -29,7 +29,8 @@ services:
     env_file: .env
     environment:
       USINE_CONFIG: /app/usine.config.yml
-    secrets: [github_token, worker_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token]
+    # smtp_* : pour envoyer les invitations aux applications (le service d'envoi du serveur).
+    secrets: [github_token, worker_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token, smtp_user, smtp_pass]
     volumes:
       - ./usine.config.yml:/app/usine.config.yml:ro
       - orchestrateur-data:/app/data

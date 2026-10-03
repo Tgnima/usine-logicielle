@@ -3,13 +3,16 @@
   "private": true,
   "type": "module",
   "description": "Du prompt au produit en ligne : analyste, atelier, vérificateur, déployeur",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node src/index.mjs",
     "test": "node --test --test-reporter=spec test/*.test.mjs"
   },
   "dependencies": {
     "@slack/bolt": "^4.4.0",
+    "nodemailer": "^10.0.14",
     "yaml": "^2.8.0"
   }
 }
