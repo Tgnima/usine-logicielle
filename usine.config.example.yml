@@ -43,6 +43,7 @@ perimetre_protege:
   - Dockerfile
   - test/sante.test.js
   - server/index.js
+  - server/email.js                 # la barrière des destinataires
   - docs/PLAN.md
   - .usine/**
 
@@ -50,3 +51,13 @@ demo:
   actif: true
   vitesse_horloge: 1440            # un jour passe en une minute dans les produits
   services: [mailpit]              # Mailpit capture tous les emails des produits
+
+# La production, réglée par défaut ici. Au moment de valider (bouton Slack), la
+# personne peut changer chacun de ces choix pour ce produit.
+production:
+  donnees: demo                    # demo : remplie de données fictives au 1er démarrage | vide : base vide
+  emails: captures                 # captures : Mailpit, rien ne sort | reels : service d'envoi SMTP (.env)
+  horloge: acceleree               # acceleree : vitesse_horloge de la démo | reelle : le vrai temps
+  # Avec emails: reels, seuls ces destinataires reçoivent (adresses ou « @domaine »).
+  # Vide = tout le monde : à éviter tant qu'on teste avec des contacts de test.
+  destinataires_autorises: []

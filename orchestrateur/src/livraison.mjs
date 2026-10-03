@@ -47,9 +47,28 @@ async function santePublique(url) {
   return false
 }
 
-function etatSouhaite(config, projet, environnement, sha, lot) {
+// Les choix de production : le contrat donne les défauts, la personne qui valide
+// peut les changer, et ils restent ceux du produit jusqu'au prochain changement.
+export function choixProduction(config, ...sources) {
+  const c = Object.assign({ donnees: "demo", emails: "captures", horloge: "acceleree", destinataires_autorises: [] }, config.production ?? {}, ...sources.filter(Boolean))
+  const liste = Array.isArray(c.destinataires_autorises) ? c.destinataires_autorises : String(c.destinataires_autorises ?? "").split(/[,;\s]+/)
+  return {
+    donnees: c.donnees === "vide" ? "vide" : "demo",
+    emails: c.emails === "reels" ? "reels" : "captures",
+    horloge: c.horloge === "reelle" ? "reelle" : "acceleree",
+    destinataires_autorises: liste.map((x) => String(x).trim()).filter((x) => /^[^\s@]*@[^\s@]+$/.test(x)),
+  }
+}
+
+export const decrireChoix = (c) =>
+  `données ${c.donnees === "demo" ? "de démo" : "vides (vraie utilisation)"} · emails ${c.emails === "reels" ? `réels${c.destinataires_autorises.length ? ` vers ${c.destinataires_autorises.join(", ")} seulement` : " vers TOUS les destinataires"}` : "capturés par Mailpit"} · horloge ${c.horloge === "reelle" ? "réelle" : "accélérée"}`
+
+function etatSouhaite(config, projet, environnement, sha, lot, choix = null) {
   const a = adresses(config, projet.slug)
   const hote = (url) => new URL(url).host
+  // Un aperçu est toujours une vitrine de démo ; la production suit les choix.
+  const c = environnement === "production" ? choix : { donnees: config.demo?.actif ? "demo" : "vide", emails: "captures", horloge: "acceleree", destinataires_autorises: [] }
+  const mailpit = c.emails === "captures" && (config.demo?.services ?? []).includes("mailpit")
   return {
     produit: projet.slug,
     nom: projet.nom,
@@ -57,15 +76,18 @@ function etatSouhaite(config, projet, environnement, sha, lot) {
     sha,
     environnement,
     hote: hote(environnement === "production" ? a.production : a.apercu),
-    hote_mails: hote(a.mails),
+    hote_mails: mailpit ? hote(a.mails) : null,
     lot,
+    donnees: c.donnees,
+    emails: c.emails,
     env: {
-      DEMO: config.demo?.actif ? "1" : "0",
-      DEMO_VITESSE_HORLOGE: String(config.demo?.vitesse_horloge ?? 1),
+      DEMO: c.donnees === "demo" ? "1" : "0",
+      DEMO_VITESSE_HORLOGE: c.horloge === "reelle" ? "1" : String(config.demo?.vitesse_horloge ?? 1),
       PUBLIC_URL: environnement === "production" ? a.production : a.apercu,
       LLM_MODELE: config.modeles?.produit?.modele ?? "",
+      EMAIL_DESTINATAIRES_AUTORISES: c.emails === "reels" ? c.destinataires_autorises.join(",") : "",
     },
-    services: config.demo?.services ?? [],
+    services: mailpit ? ["mailpit"] : [],
     demande_le: new Date().toISOString(),
   }
 }
@@ -149,15 +171,17 @@ export function rapport(ctx, projetId, sha) {
 }
 
 // Seconde porte humaine : Valider. La production passe par une PR du dépôt d'état.
-export async function mettreEnProduction(ctx, projetId, par) {
+export async function mettreEnProduction(ctx, projetId, par, demande = null) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (!["livre", "en_production"].includes(projet.statut)) return { ok: false, message: `Le projet est « ${projet.statut} », pas encore livré.` }
+  if (demande?.emails === "reels" && !process.env.SMTP_HOST) return { ok: false, message: "Emails réels demandés, mais aucun service d'envoi n'est configuré (SMTP_HOST dans .env)." }
+  const choix = choixProduction(config, projet.production ? JSON.parse(projet.production) : null, demande)
   const sha = await shaPrincipal(config, projet.depot.split("/")[1])
   const a = adresses(config, projet.slug)
-  maj(db, "projets", projetId, { statut: "mise_en_production" })
-  await ctx.notifier.etape(projet, `:rocket: Validé par ${par}. Mise en production de ${sha.slice(0, 7)} (bascule blue/green, sauvegarde des données avant)…`)
-  const pr = await ecrireEtat(config, `production/${projet.slug}.json`, { ...etatSouhaite(config, projet, "production", sha, projet.lot_livre), valide_par: par }, { message: `Production ${projet.slug} : ${sha.slice(0, 7)}`, viaPR: true })
+  maj(db, "projets", projetId, { statut: "mise_en_production", production: JSON.stringify(choix) })
+  await ctx.notifier.etape(projet, `:rocket: Validé par ${par}. Mise en production de ${sha.slice(0, 7)} (bascule blue/green, sauvegarde des données avant).\nRéglages : ${decrireChoix(choix)}.`)
+  const pr = await ecrireEtat(config, `production/${projet.slug}.json`, { ...etatSouhaite(config, projet, "production", sha, projet.lot_livre, choix), valide_par: par }, { message: `Production ${projet.slug} : ${sha.slice(0, 7)}`, viaPR: true })
   const s = await attendreDeploiement(config, `production/${projet.slug}`, sha, 25)
   const enLigne = s.etat === "ok" && (await santePublique(a.production))
   noter(db, { projet: projetId, type: "production", message: enLigne ? `En production (${sha.slice(0, 7)}, ${s.couleur ?? ""}) validé par ${par}` : `Mise en production en échec : ${s.message ?? "santé KO"}` })

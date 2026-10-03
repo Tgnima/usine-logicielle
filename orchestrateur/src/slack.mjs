@@ -6,7 +6,8 @@ import { App } from "@slack/bolt"
 import { obtenir } from "./db.mjs"
 import * as actions from "./pipeline.mjs"
 import { resoudre } from "./escalade.mjs"
-import { demanderCorrections, mettreEnProduction } from "./livraison.mjs"
+import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
+import { adresses } from "./config.mjs"
 
 const tronquer = (t, n = 2900) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const section = (texte) => ({ type: "section", text: { type: "mrkdwn", text: tronquer(texte) } })
@@ -191,10 +192,54 @@ export async function demarrerSlack(ctx) {
     await ack()
     await resoudre(ctx, Number(view.private_metadata), { choix: "A", texte: lire(view), par: body.user.name ?? body.user.id })
   })
+  // Valider : une fenêtre pour choisir comment ce produit tourne en production.
+  // Les choix sont pré-remplis (ceux du produit, sinon ceux du contrat).
   app.action("livraison_valider", async (args) => {
     if (!(await garde(args))) return
-    await retirerBoutons(args.body, `:rocket: Mise en production demandée par <@${args.body.user.id}>`)
-    mettreEnProduction(ctx, Number(args.body.actions[0].value), args.body.user.name ?? args.body.user.id).catch((e) => console.error(e))
+    const projet = obtenir(db, "projets", Number(args.body.actions[0].value))
+    const c = choixProduction(config, projet.production ? JSON.parse(projet.production) : null)
+    const radio = (bloc, label, options, valeur, aide) => ({
+      type: "input", block_id: bloc, label: { type: "plain_text", text: label }, ...(aide ? { hint: { type: "plain_text", text: aide } } : {}),
+      element: {
+        type: "radio_buttons", action_id: "v",
+        options: options.map(([v, t]) => ({ value: v, text: { type: "plain_text", text: t } })),
+        initial_option: { value: valeur, text: { type: "plain_text", text: options.find(([v]) => v === valeur)[1] } },
+      },
+    })
+    await app.client.views.open({
+      trigger_id: args.body.trigger_id,
+      view: {
+        type: "modal", callback_id: "modal_production", private_metadata: String(projet.id),
+        title: { type: "plain_text", text: "Mettre en production" }, submit: { type: "plain_text", text: "Mettre en production" }, close: { type: "plain_text", text: "Annuler" },
+        blocks: [
+          section(`*${projet.nom}* → ${adresses(config, projet.slug).production}\nBascule sans coupure ; les données de production sont sauvegardées avant.`),
+          radio("donnees", "Données", [["demo", "Données de démo (remplies au premier démarrage)"], ["vide", "Base vide : vraie utilisation, avec tes contacts de test"]], c.donnees, "Changer ce choix démarre sur une autre base ; l'ancienne est gardée."),
+          radio("emails", "Emails", [["captures", "Capturés par Mailpit : rien ne sort"], ["reels", "Réellement envoyés (service d'envoi du .env)"]], c.emails),
+          { type: "input", block_id: "autorises", optional: true, label: { type: "plain_text", text: "Destinataires autorisés (emails réels)" },
+            hint: { type: "plain_text", text: "Adresses ou domaines séparés par des virgules (ex. moi@exemple.fr, @mon-equipe.fr). Vide = tout le monde." },
+            element: { type: "plain_text_input", action_id: "v", ...(c.destinataires_autorises.length ? { initial_value: c.destinataires_autorises.join(", ") } : {}) } },
+          radio("horloge", "Horloge", [["acceleree", "Accélérée (un jour = une minute)"], ["reelle", "Réelle"]], c.horloge),
+        ],
+      },
+    })
+  })
+  app.view("modal_production", async ({ ack, view, body }) => {
+    const v = view.state.values
+    const demande = {
+      donnees: v.donnees.v.selected_option.value,
+      emails: v.emails.v.selected_option.value,
+      horloge: v.horloge.v.selected_option.value,
+      destinataires_autorises: v.autorises.v.value ?? "",
+    }
+    if (demande.emails === "reels" && !process.env.SMTP_HOST) {
+      return ack({ response_action: "errors", errors: { emails: "Aucun service d'envoi configuré (SMTP_HOST dans .env) : choisis « Capturés » ou configure l'envoi." } })
+    }
+    const invalides = String(demande.destinataires_autorises).split(/[,;\s]+/).filter((x) => x && !/^[^\s@]*@[^\s@]+$/.test(x))
+    if (invalides.length) return ack({ response_action: "errors", errors: { autorises: `Non reconnu : ${invalides.join(", ")}` } })
+    await ack()
+    mettreEnProduction(ctx, Number(view.private_metadata), body.user.name ?? body.user.id, demande).then((r) => {
+      if (!r.ok) notifier.etape(obtenir(db, "projets", Number(view.private_metadata)), `:x: ${r.message}`)
+    }).catch((e) => console.error(e))
   })
   app.action("livraison_corriger", async (args) => {
     if (!(await garde(args))) return

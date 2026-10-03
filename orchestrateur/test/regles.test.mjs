@@ -96,3 +96,12 @@ test("liberer : une tâche part quand ses dépendances sont fusionnées ou aband
   const s = Object.fromEntries(taches(db, 1).map((t) => [t.cle, t.statut]))
   assert.deepEqual(s, { T1: "fusionnee", T2: "prete", T3: "attente", T4: "abandonnee" })
 })
+
+test("choixProduction : défauts du contrat, choix de la personne, valeurs inconnues ramenées au plus sûr", async () => {
+  const { choixProduction } = await import("../src/livraison.mjs")
+  const config = { production: { donnees: "demo", emails: "captures", horloge: "acceleree", destinataires_autorises: [] } }
+  assert.deepEqual(choixProduction(config), { donnees: "demo", emails: "captures", horloge: "acceleree", destinataires_autorises: [] })
+  const c = choixProduction(config, { emails: "reels" }, { donnees: "vide", destinataires_autorises: "moi@exemple.fr, @equipe.fr, pas-une-adresse" })
+  assert.deepEqual(c, { donnees: "vide", emails: "reels", horloge: "acceleree", destinataires_autorises: ["moi@exemple.fr", "@equipe.fr"] })
+  assert.equal(choixProduction(config, { emails: "n'importe quoi", donnees: "?" }).emails, "captures")
+})

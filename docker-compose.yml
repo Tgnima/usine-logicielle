@@ -65,6 +65,12 @@ services:
       HTTPS: ${HTTPS:-1}
       CADDY_EMAIL: ${CADDY_EMAIL:-}
       MEMOIRE_PRODUIT: ${MEMOIRE_PRODUIT:-384m}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      EMAIL_EXPEDITEUR: ${EMAIL_EXPEDITEUR:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./caddy:/caddy

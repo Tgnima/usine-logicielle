@@ -53,7 +53,7 @@ const routes = {
     return ["livre", "en_production"].includes(p?.statut) ? livraison.demanderCorrections(ctx, id, c.texte, c.par ?? "cli") : actions.corrigerPlan(ctx, id, c.texte, c.par ?? "cli")
   },
   "POST /decider": (c, id) => resoudre(ctx, id, { choix: c.choix, texte: c.texte ?? "", par: c.par ?? "cli" }),
-  "POST /production": (c, id) => livraison.mettreEnProduction(ctx, id, c.par ?? "cli"),
+  "POST /production": (c, id) => livraison.mettreEnProduction(ctx, id, c.par ?? "cli", c.choix ?? null),
   "POST /relancer": (_c, id) => (actions.lancerAnalyse(ctx, id), { ok: true }),
   "POST /stop": (c) => actions.arreter(ctx, c.par ?? "cli"),
   "POST /reprendre": () => actions.reprendre(ctx),

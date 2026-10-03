@@ -98,14 +98,19 @@ async function synchroniserEtat() {
 // Ce qui vient du dépôt d'état est contrôlé avant d'atteindre Docker.
 function valide(s) {
   return /^[a-z0-9-]{3,24}$/.test(s.produit ?? "") && /^[0-9a-f]{40}$/.test(s.sha ?? "") && /^[\w.-]+\/[\w.-]+$/.test(s.depot ?? "")
-    && ["apercu", "production"].includes(s.environnement) && /^[a-z0-9.-]+$/.test(s.hote ?? "") && (!s.hote_mails || /^[a-z0-9.-]+$/.test(s.hote_mails))
+    && ["apercu", "production"].includes(s.environnement) && [undefined, "demo", "vide"].includes(s.donnees) && [undefined, "captures", "reels"].includes(s.emails) && /^[a-z0-9.-]+$/.test(s.hote ?? "") && (!s.hote_mails || /^[a-z0-9.-]+$/.test(s.hote_mails))
 }
 
-const VARIABLES = ["DEMO", "DEMO_VITESSE_HORLOGE", "PUBLIC_URL", "LLM_MODELE"]
+const VARIABLES = ["DEMO", "DEMO_VITESSE_HORLOGE", "PUBLIC_URL", "LLM_MODELE", "EMAIL_DESTINATAIRES_AUTORISES"]
 function variables(s) {
   const v = { PORT: "3000", DATA_DIR: "/app/data" }
   for (const k of VARIABLES) if (s.env?.[k] !== undefined) v[k] = String(s.env[k])
   if ((s.services ?? []).includes("mailpit")) Object.assign(v, { SMTP_HOST: "mailpit", SMTP_PORT: "1025" })
+  // Emails réels : le service d'envoi vient du .env du serveur, jamais du dépôt d'état.
+  if (s.emails === "reels") {
+    if (!env.SMTP_HOST) throw new Error("emails réels demandés mais SMTP_HOST n'est pas configuré")
+    for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE", "EMAIL_EXPEDITEUR"]) if (env[k]) v[k] = env[k]
+  }
   if (env.AI_GATEWAY_API_KEY) v.AI_GATEWAY_API_KEY = env.AI_GATEWAY_API_KEY
   return Object.entries(v).flatMap(([k, val]) => ["-e", `${k}=${val}`])
 }
@@ -155,7 +160,8 @@ async function deployerApercu(s) {
 
 async function deployerProduction(s, precedent) {
   const image = await construire(s)
-  const volume = `usine-prod-${s.produit}-data`
+  // Une base par mode : passer de la démo à la vraie utilisation ne mélange rien (l'autre base est gardée).
+  const volume = `usine-prod-${s.produit}${s.donnees === "vide" ? "-reel" : ""}-data`
   // Sauvegarde du volume avant toute bascule (s'il existe déjà).
   if ((await lancer("docker", ["volume", "inspect", volume])).code === 0) {
     const archive = `${s.produit}-${horodatage().replace(/[:.]/g, "-")}.tgz`

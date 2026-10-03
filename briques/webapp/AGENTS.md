@@ -51,10 +51,11 @@ test/                  les tests
 | --- | --- |
 | `PORT`, `DATA_DIR` | Port du serveur, dossier de la base |
 | `DEMO`, `DEMO_VITESSE_HORLOGE` | Mode démo, vitesse de l'horloge (1440 = un jour par minute) |
-| `SMTP_HOST`, `SMTP_PORT`, `EMAIL_EXPEDITEUR` | Envoi d'emails (Mailpit en démo) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `EMAIL_EXPEDITEUR` | Envoi d'emails (Mailpit en démo), toujours par `envoyer()` |
+| `EMAIL_DESTINATAIRES_AUTORISES` | Liste des destinataires permis (contacts de test) ; `envoyer()` bloque les autres |
 | `AI_GATEWAY_API_KEY`, `LLM_MODELE` | Modèles via Vercel AI Gateway |
 | `PUBLIC_URL` | L'adresse publique du produit |
 
 ## Fichiers protégés
 
-Ne les modifie pas : l'usine les restaure et refuse la tâche. `Dockerfile`, `test/sante.test.js`, `server/index.js` (seul l'ajout de routes passe par `server/routes/index.js`), `.usine/**`, `docs/PLAN.md`.
+Ne les modifie pas : l'usine les restaure et refuse la tâche. `Dockerfile`, `test/sante.test.js`, `server/index.js` (seul l'ajout de routes passe par `server/routes/index.js`), `server/email.js` (tout email passe par `envoyer()`, jamais par un autre transport), `.usine/**`, `docs/PLAN.md`.

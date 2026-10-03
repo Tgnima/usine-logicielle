@@ -9,7 +9,8 @@ const AIDE = `Usage : node src/cli.mjs <commande>
   valider <n°>                   valide le plan : la fabrication commence
   corriger <n°> "<retours>"      corrige le plan (ou demande des corrections après livraison)
   decider <escalade> <A|B|C> ["consigne"]
-  production <n°>                met en production (après livraison)
+  production <n°> [--donnees demo|vide] [--emails captures|reels] [--horloge acceleree|reelle] [--autorises "a@b.fr,@domaine.fr"]
+                                 met en production (après livraison)
   journal <n°>                   les derniers événements
   relancer <n°> · stop · reprendre`
 
@@ -28,7 +29,13 @@ const table = {
   valider: () => appel("POST", `/valider/${a}`, {}),
   corriger: () => appel("POST", `/corriger/${a}`, { texte: b }),
   decider: () => appel("POST", `/decider/${a}`, { choix: String(b).toUpperCase(), texte: c }),
-  production: () => appel("POST", `/production/${a}`, {}),
+  production: () => {
+    // Les options --cle valeur deviennent les choix de production.
+    const args = process.argv.slice(4)
+    const choix = {}
+    for (let i = 0; i < args.length; i += 2) if (args[i]?.startsWith("--")) choix[args[i].slice(2).replace("autorises", "destinataires_autorises")] = args[i + 1]
+    return appel("POST", `/production/${a}`, Object.keys(choix).length ? { choix } : {})
+  },
   journal: async () => (await appel("GET", `/journal/${a}`)).map((l) => `${l.le}  ${l.type.padEnd(12)} ${l.message.split("\n")[0]}`).join("\n"),
   relancer: () => appel("POST", `/relancer/${a}`, {}),
   stop: () => appel("POST", "/stop", {}),

@@ -64,6 +64,9 @@ export function ouvrirDb(chemin) {
       message_ts TEXT, cree_le TEXT NOT NULL DEFAULT (datetime('now')), relance_le TEXT
     );
   `)
+  // Colonnes ajoutées après coup : présentes sur une base neuve comme sur une base existante.
+  const colonnes = new Set(db.prepare("PRAGMA table_info(projets)").all().map((c) => c.name))
+  if (!colonnes.has("production")) db.exec("ALTER TABLE projets ADD COLUMN production TEXT") // choix de production (JSON)
   return db
 }
 
