@@ -42,3 +42,11 @@ test("le site et la PWA gardent l'interface, avec les jetons du brief", () => {
   }
   assert.throws(() => assembler("../etc", join(dossier(), "x")), /Brique inconnue/)
 })
+
+test("une tâche qui demande de modifier un fichier protégé est refusée, pas une qui le lit", async () => {
+  const { tachesSurProteges } = await import("../src/analyste.mjs")
+  const lot = (description) => [{ taches: [{ cle: "T30", titre: "Revue", description, criteres: ["…"] }] }]
+  assert.equal(tachesSurProteges(lot("Documentation : ajouter à docs/DESIGN.md une section « Revue de finition »."), ["docs/DESIGN.md"]).length, 1)
+  assert.equal(tachesSurProteges(lot("Passer chaque écran au crible de la grille de docs/DESIGN.md et corriger les écarts."), ["docs/DESIGN.md"]).length, 0)
+  assert.equal(tachesSurProteges(lot("Écrire la revue dans docs/REVUE.md."), ["docs/DESIGN.md"]).length, 0)
+})

@@ -74,12 +74,35 @@ Règles du plan :
 8. Une démo doit impressionner : prévois une interface soignée et un parcours qui raconte une histoire.
 9. Le "design" est un vrai brief, propre à CE produit et à son public (pas une palette passe-partout) : il sera écrit dans docs/DESIGN.md, suivi par les agents et vérifié sur captures d'écran avec cette grille :
 ${grilleEnTexte()}
-10. Dans les tâches, décris les écrans comme un designer : ce qu'on voit d'abord, l'action principale, les états vides, de chargement et d'erreur.`
+10. Dans les tâches, décris les écrans comme un designer : ce qu'on voit d'abord, l'action principale, les états vides, de chargement et d'erreur.
+${regleProteges(config)}`
+}
+
+// Les fichiers protégés (le périmètre qui juge le produit) : l'usine les restaure avant
+// chaque contrôle. Une tâche qui demande d'y écrire échouerait en boucle.
+const PROTEGES_PAR_DEFAUT = ["Dockerfile", "server/index.js", "server/securite.js", "server/email.js", "docs/PLAN.md", "docs/DESIGN.md"]
+const proteges = (config) => (config?.perimetre_protege?.length ? config.perimetre_protege : PROTEGES_PAR_DEFAUT).filter((f) => !f.includes("*"))
+const regleProteges = (config) => `11. Fichiers protégés, restaurés par l'usine avant chaque contrôle : ${proteges(config).join(", ")}. Aucune tâche ne demande d'y écrire ni ne fait dépendre un test de leur contenu. Une documentation va dans un autre fichier (par exemple docs/REVUE.md).`
+
+// Une tâche qui demande de modifier un fichier protégé (repérée dans sa description ou ses critères).
+export function tachesSurProteges(lots, liste = PROTEGES_PAR_DEFAUT) {
+  const p = []
+  const verbes = "(?:ajout|modifi|écri|ecri|complét|complet|mettre à jour|mets à jour|met à jour|réécri|enrichi|section)"
+  for (const lot of lots ?? []) for (const t of lot.taches ?? []) {
+    const texte = `${t.titre ?? ""}\n${t.description ?? ""}\n${(t.criteres ?? []).join("\n")}`
+    for (const f of liste.filter((x) => !x.includes("*"))) {
+      const fichier = f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      if (new RegExp(`${verbes}[^.\\n]{0,80}${fichier}|${fichier}[^.\\n]{0,40}(?:section|ajout|modifi|mis à jour|complét)`, "i").test(texte)) {
+        p.push(`${t.cle} demande de modifier ${f}, un fichier protégé que l'usine restaure : mets cette documentation dans un autre fichier (docs/REVUE.md par exemple)`)
+      }
+    }
+  }
+  return p
 }
 
 // Vérifie le plan. Renvoie la liste des problèmes (vide = plan acceptable).
 // lotsMax : la limite d'un plan neuf ; les lots de corrections s'ajoutent sans limite.
-export function verifierPlan(plan, { lotsMax = 6 } = {}) {
+export function verifierPlan(plan, { lotsMax = 6, protege } = {}) {
   const p = []
   if (!plan || typeof plan !== "object") return ["le plan n'est pas un objet JSON"]
   if (plan.questions?.length && !plan.lots?.length) return []
@@ -100,6 +123,8 @@ export function verifierPlan(plan, { lotsMax = 6 } = {}) {
     }
   }
   p.push(...verifierDesign(plan.design))
+  // (Seulement si on le demande : un vieux plan peut en contenir, on ne juge que le nouveau.)
+  if (protege) p.push(...tachesSurProteges(plan.lots, protege))
   return p
 }
 
@@ -148,7 +173,7 @@ async function interroger(config, texteBase, valider, mesurer = () => {}) {
 }
 
 export async function analyser(config, projet, options = {}) {
-  const { objet, tokens } = await interroger(config, consigne(config, projet, options), verifierPlan, options.mesurer)
+  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => verifierPlan(r, { protege: proteges(config) }), options.mesurer)
   return { plan: objet, tokens }
 }
 
@@ -191,11 +216,12 @@ Enquête d'abord : cherche dans les journaux et les réglages la cause réelle d
 
 Règles : "lot" vaut null si aucun code n'est à changer (un simple réglage suffit). Sinon 1 à 4 tâches ; clés à partir de T${derniere + 1},
 dans l'ordre ; "depend_de" ne cite que des tâches de ce lot ; chaque critère est observable sur l'application en marche ;
-ne casse rien de ce qui marche ; reste dans la brique ; ne refais pas un autre produit : on corrige celui-ci.`
+ne casse rien de ce qui marche ; reste dans la brique ; ne refais pas un autre produit : on corrige celui-ci.
+${regleProteges(config)}`
   const valider = (r) => {
     if (!r || typeof r.diagnostic !== "string" || !r.diagnostic.trim()) return ["« diagnostic » manquant"]
     if (r.lot === null || r.lot === undefined) return r.reglage?.trim() ? [] : ["ni réglage ni lot : propose l'un ou l'autre"]
-    return verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity })
+    return [...verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity }), ...tachesSurProteges([r.lot], proteges(config))]
   }
   const { objet } = await interroger(config, texte, valider, contexte.mesurer)
   return { diagnostic: objet.diagnostic.trim(), reglage: String(objet.reglage ?? "").trim(), lot: objet.lot ?? null }

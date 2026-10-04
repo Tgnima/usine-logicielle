@@ -288,7 +288,7 @@ const ROUTES = [
     const avant = lirePlan(p)
     // Seuls les champs qu'on édite dans la console changent ; le reste du plan est gardé tel quel.
     const plan = { ...avant, lots: c.plan?.lots ?? avant.lots }
-    const problemes = verifierPlan(plan)
+    const problemes = verifierPlan(plan, { protege: ctx.config.perimetre_protege?.filter((f) => !f.includes("*")) })
     if (problemes.length) throw erreur(400, `Plan refusé : ${problemes.slice(0, 3).join(" ; ")}`)
     maj(ctx.db, "projets", p.id, { plan: JSON.stringify(plan) })
     noter(ctx.db, { projet: p.id, type: "plan", message: `Plan modifié dans la console par ${qui.email}` })
