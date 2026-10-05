@@ -15,11 +15,12 @@ export async function repondreDansLeFil(ctx, projetId, texte, par) {
   const projet = obtenir(db, "projets", projetId)
   if (!projet || !texte.trim()) return null
 
-  const escalade = db.prepare("SELECT * FROM escalades WHERE projet_id = ? AND statut = 'ouverte' ORDER BY id DESC LIMIT 1").get(projetId)
-  if (escalade) {
-    const r = lireReponse(texte, JSON.parse(escalade.options).map((o) => o.cle))
+  const choix = choisirEscalade(db, projetId, texte)
+  if (choix?.ambigu) return choix.ambigu
+  if (choix) {
+    const r = lireReponse(choix.texte, JSON.parse(choix.escalade.options).map((o) => o.cle))
     if (r) {
-      const res = await resoudre(ctx, escalade.id, { ...r, par })
+      const res = await resoudre(ctx, choix.escalade.id, { ...r, par })
       return res.ok ? null : res.message
     }
   }
@@ -45,4 +46,23 @@ export async function repondreDansLeFil(ctx, projetId, texte, par) {
     default:
       return `Ce projet est « ${projet.statut} » : il n'attend pas de réponse.`
   }
+}
+
+// Plusieurs décisions peuvent attendre en même temps (une tâche bloquée, la durée du projet…) :
+// une réponse sans précision ne doit pas partir sur la mauvaise. On demande laquelle, et on
+// accepte « T30 A … », « budget A », « coût A » ou « #4 A ».
+const NOMS = { budget: "la durée du projet", cout: "le budget du projet", livraison: "le déploiement de l'aperçu", verificateur: "le vérificateur", infrastructure: "l'infrastructure" }
+export function choisirEscalade(db, projetId, texte) {
+  const ouvertes = db.prepare("SELECT e.*, t.cle AS tache FROM escalades e LEFT JOIN taches t ON t.id = e.tache_id WHERE e.projet_id = ? AND e.statut = 'ouverte' ORDER BY e.id").all(projetId)
+  if (!ouvertes.length) return null
+  if (ouvertes.length === 1) return { escalade: ouvertes[0], texte }
+  const m = String(texte).trim().match(/^(T\d+|budget|durée|duree|co[uû]t|livraison|#\d+)(?=$|[\s:,.—–-])[\s:,.—–-]*/i)
+  if (m) {
+    const cle = m[1].toLowerCase()
+    const e = ouvertes.find((x) => (x.tache && x.tache.toLowerCase() === cle) || `#${x.id}` === cle
+      || (["budget", "durée", "duree"].includes(cle) && x.raison === "budget") || (/^co[uû]t$/.test(cle) && x.raison === "cout") || (cle === "livraison" && x.raison === "livraison"))
+    if (e) return { escalade: e, texte: String(texte).trim().slice(m[0].length) }
+  }
+  const ligne = (e) => e.tache ? `• *${e.tache}* (${e.raison === "criteres" ? "critères non tenus" : e.raison}) : réponds « ${e.tache} A … », « ${e.tache} B » ou « ${e.tache} C »` : `• *${NOMS[e.raison] ?? e.raison}* : réponds « ${e.raison === "cout" ? "coût" : e.raison === "budget" ? "budget" : `#${e.id}`} A » ou « … C »`
+  return { ambigu: `:point_up: ${ouvertes.length} décisions attendent sur ce projet ; précise laquelle :\n${ouvertes.map(ligne).join("\n")}\nTu peux aussi utiliser les boutons de chaque message, ou la console.` }
 }

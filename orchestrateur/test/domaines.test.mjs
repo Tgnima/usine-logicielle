@@ -32,3 +32,17 @@ test("un domaine se demande seulement pour un produit en production, une fois", 
   assert.equal((await ajouterDomaine(ctx, 1, "APP.client.fr", "test")).ok, false)
   assert.match(listerDomaines(db, 1)[0], /app\.client\.fr.*attente du DNS/)
 })
+
+test("deux décisions ouvertes : une réponse sans précision est mise en attente, une réponse précise va à la bonne", async () => {
+  const { choisirEscalade } = await import("../src/conversation.mjs")
+  const db = new DatabaseSync(":memory:")
+  db.exec("CREATE TABLE taches (id INTEGER PRIMARY KEY, cle TEXT); CREATE TABLE escalades (id INTEGER PRIMARY KEY, projet_id INTEGER, tache_id INTEGER, raison TEXT, options TEXT, statut TEXT)")
+  db.exec("INSERT INTO taches VALUES (32, 'T30'); INSERT INTO escalades VALUES (4, 2, 32, 'criteres', '[]', 'ouverte'), (5, 2, NULL, 'budget', '[]', 'ouverte')")
+  assert.match(choisirEscalade(db, 2, "A mets la revue ailleurs").ambigu, /T30 A/)
+  const t = choisirEscalade(db, 2, "T30 A mets la revue dans docs/REVUE.md")
+  assert.equal(t.escalade.id, 4)
+  assert.equal(t.texte, "A mets la revue dans docs/REVUE.md")
+  assert.equal(choisirEscalade(db, 2, "budget A").escalade.id, 5)
+  db.exec("UPDATE escalades SET statut = 'resolue' WHERE id = 5")
+  assert.equal(choisirEscalade(db, 2, "A").escalade.id, 4)
+})
