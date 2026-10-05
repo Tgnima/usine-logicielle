@@ -34,8 +34,8 @@ test("une façon épuisée n'est plus tentée jusqu'à sa reprise", () => {
 })
 
 test("le nom d'un modèle sur la passerelle", () => {
-  assert.equal(modelePasserelle({}, "claude-sonnet-5-5"), "anthropic/claude-sonnet-5.5")
-  assert.equal(modelePasserelle({}, "anthropic/claude-opus-5.5"), "anthropic/claude-opus-5.5")
+  assert.equal(modelePasserelle({}, "claude-sonnet-5-5"), "claude-sonnet-5-5")
+  assert.equal(modelePasserelle({ secours: { modeles_passerelle: { "claude-sonnet-5-5": "autre" } } }, "claude-sonnet-5-5"), "autre")
 })
 
 // Un faux « claude » : l'abonnement est épuisé, la passerelle répond ; il écrit un résultat « stream-json ».

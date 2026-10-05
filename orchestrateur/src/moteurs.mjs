@@ -66,9 +66,9 @@ export function noterLimites(ctx, moteur, marqueurs = {}) {
   return { mode, epuise, reprise: reprises.length ? new Date(Math.min(...reprises)) : null }
 }
 
-// Le nom d'un modèle Anthropic sur la passerelle : claude-sonnet-5-5 -> anthropic/claude-sonnet-5.5.
-export const modelePasserelle = (config, modele) =>
-  config.secours?.modeles_passerelle?.[modele] ?? (modele.includes("/") ? modele : `anthropic/${modele.replace(/-(\d+)-(\d+)$/, "-$1.$2")}`)
+// Le nom du modèle pour Claude Code via la passerelle : le même nom qu'avec l'abonnement
+// (vérifié sur Vercel AI Gateway ; Claude Code refuse « anthropic/… »). Surchargeable.
+export const modelePasserelle = (config, modele) => config.secours?.modeles_passerelle?.[modele] ?? modele.replace(/^anthropic\//, "")
 
 // Ce qu'il faut pour qu'une façon soit tentée (une façon non configurée est sautée, sans alerte).
 const PREALABLE = { abonnement: "true", cle: null, passerelle: '[ -n "$AI_GATEWAY_API_KEY" ]' }

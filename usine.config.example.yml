@@ -103,7 +103,7 @@ apercus:
 secours:
   ordre: [abonnement, cle, passerelle]
   modele_codex_passerelle: openai/gpt-5.5   # le vérificateur via la passerelle
-  # modeles_passerelle: { claude-sonnet-5-5: anthropic/claude-sonnet-5.5 }   # si les noms diffèrent
+  # modeles_passerelle: { claude-sonnet-5-5: claude-sonnet-5-5 }   # si un nom diffère sur la passerelle
 
 # Le lot de finition : avant le rapport final, un dernier lot de polissage (design, textes,
 # états vides, mobile) construit à partir des remarques du relecteur design. Une fois par projet.
