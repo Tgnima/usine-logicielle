@@ -5,6 +5,7 @@
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { usagesClaude } from "./couts.mjs"
 import { SCHEMA_DESIGN, grilleEnTexte, verifierDesign } from "./design.mjs"
+import { listerPieces, scriptPieces } from "./pieces.mjs"
 
 const SYSTEME = "Tu es l'analyste d'une usine logicielle. Tu transformes une demande en plan de fabrication précis, réaliste et testable. Tu réponds uniquement par un objet JSON valide, sans texte autour."
 
@@ -139,16 +140,21 @@ export function extraireJson(texte) {
 // Lance l'analyste dans l'atelier (Claude Code, sans aucun outil : il raisonne
 // seulement). Deux essais si le JSON est invalide ; valider() renvoie les problèmes.
 // mesurer(usages, duree_s) reçoit la consommation de chaque essai (suivi des coûts).
-async function interroger(config, texteBase, valider, mesurer = () => {}) {
+async function interroger(config, texteBase, valider, mesurer = () => {}, { projetId = null } = {}) {
   const modele = config.modeles.analyste.modele
+  // Des pièces jointes (maquettes, PDF) : l'analyste peut les lire, et seulement elles.
+  const pieces = projetId ? listerPieces(config, projetId) : []
+  const lirePieces = pieces.length ? `\n\nL'utilisateur a joint ${pieces.length} pièce(s) (maquettes, captures ou cahier des charges). Lis-les avec l'outil Read AVANT de planifier, et tiens-en compte (écrans, contenus, style) :\n${pieces.map((p) => `- /tmp/sorties/analyse/pieces/${p.nom}`).join("\n")}` : ""
+  const outils = pieces.length ? `--tools Read --allowedTools Read --max-turns ${pieces.length + 3}` : `--tools "" --max-turns 2`
   let problemes = []
   for (let essai = 1; essai <= 2; essai++) {
-    const texte = texteBase + (problemes.length ? `\n\nTon essai précédent avait ces défauts, corrige-les :\n- ${problemes.join("\n- ")}` : "")
+    const texte = texteBase + lirePieces + (problemes.length ? `\n\nTon essai précédent avait ces défauts, corrige-les :\n- ${problemes.join("\n- ")}` : "")
     const script = [
       "set -e",
-      "mkdir -p /tmp/sorties/analyse && cd /tmp/sorties/analyse",
+      "rm -rf /tmp/sorties/analyse && mkdir -p /tmp/sorties/analyse && cd /tmp/sorties/analyse",
+      ...(projetId ? scriptPieces(config, projetId, "/tmp/sorties/analyse/pieces") : []),
       ecrireFichier("/tmp/sorties/analyse/consigne.md", texte),
-      `claude -p "$(cat consigne.md)" --output-format json --model ${q(modele)} --system-prompt ${q(SYSTEME)} --tools "" --max-turns 2 > reponse.json`,
+      `claude -p "$(cat consigne.md)" --output-format json --model ${q(modele)} --system-prompt ${q(SYSTEME)} ${outils} > reponse.json`,
       "echo \"@@ ANALYSE_OK\"",
     ].join("\n")
     const r = await executer(config.atelier.url, config.secrets.worker, script, { minutes: 20 })
@@ -173,7 +179,7 @@ async function interroger(config, texteBase, valider, mesurer = () => {}) {
 }
 
 export async function analyser(config, projet, options = {}) {
-  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => verifierPlan(r, { protege: proteges(config) }), options.mesurer)
+  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => verifierPlan(r, { protege: proteges(config) }), options.mesurer, { projetId: projet.id })
   return { plan: objet, tokens }
 }
 

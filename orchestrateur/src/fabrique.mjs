@@ -92,6 +92,7 @@ function consigne(ctx, projet, tache) {
     "- Reste dans le périmètre de la tâche ; ne casse pas ce qui existe.",
     "- Avant de terminer, `npm run verify` doit passer. Lance-le et corrige jusqu'à ce qu'il passe.",
     "- Puis autocontrôle, comme le fera le vérificateur : `npm run build`, lance l'application (`PORT=4300 DEMO=1 DATA_DIR=/tmp/autocontrole npm start &`), vérifie avec curl chaque critère observable par HTTP et que les pages demandées répondent, puis arrête-la. Corrige ce qui ne tient pas.",
+    "- Si docs/maquettes/ existe, ce sont les maquettes, captures ou documents fournis par l'utilisateur : regarde-les (outil Read) et respecte-les.",
     "- Design (si le produit a des écrans, dossier client/) : lis docs/DESIGN.md s'il existe, construis avec client/src/ui et les jetons de couleur ; tes écrans seront jugés sur captures (ordinateur et mobile) avec sa grille.",
     "- Si tu lances un serveur pour essayer, arrête-le avant de terminer.",
   ]

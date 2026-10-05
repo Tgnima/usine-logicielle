@@ -5,6 +5,7 @@ import { RESEAU, executer, ecrireFichier, q } from "./travaux.mjs"
 import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { designEnMarkdown, jetonsCss } from "./design.mjs"
+import { scriptPieces } from "./pieces.mjs"
 
 export const ETIQUETTES = [
   ["usine:attente", "c5def5", "Tâche planifiée, en attente de ses dépendances"],
@@ -43,6 +44,8 @@ export async function creerProduit(ctx, projetId) {
     "mkdir -p docs .usine",
     ecrireFichier("docs/PLAN.md", planEnMarkdown(plan)),
     ecrireFichier("docs/DESIGN.md", designEnMarkdown(plan)),
+    // Les maquettes et documents joints à la demande : les agents s'en inspirent.
+    ...scriptPieces(config, projetId, "docs/maquettes"),
     ecrireFichier(".usine/plan.json", `${JSON.stringify(plan, null, 2)}\n`),
     `DEPS=$(sed -n 's/^@@ DEPENDANCES //p' /tmp/sorties/brique.txt); DEV=$(sed -n 's/^@@ DEV //p' /tmp/sorties/brique.txt)`,
     'if [ -n "$DEPS" ]; then npm install --no-audit --no-fund $DEPS 2>&1 | tail -2; fi',

@@ -194,3 +194,13 @@ dialog.palette::backdrop { background: rgba(15, 18, 22, .45) }
 .direct span { display: inline-block; width: 1.2em; color: var(--code-doux) }
 .direct .d-pensee { color: #ffffff } .direct .d-commande { color: #9fb4ff } .direct .d-ecriture { color: #f5d38a }
 .direct .d-erreur { color: #f19a91 } .direct .d-fin { color: #7fd39b } .direct .d-lecture, .direct .d-plan { color: var(--code-texte) }
+
+/* Plan modifiable, filtres, pièces jointes */
+.btn-icone { min-width: 32px; min-height: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--doux); font: inherit; font-size: 14px; cursor: pointer }
+.btn-icone:hover { border-color: var(--trait); color: var(--encre); background: var(--surface-2) }
+.outils { display: flex; gap: 2px; align-items: center }
+.filtre { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--champ); background: var(--surface); color: var(--encre); font: inherit; font-size: 13px; cursor: pointer }
+.filtre[aria-pressed="true"] { background: var(--encre); border-color: var(--encre); color: var(--fond); font-weight: 600 }
+.pieces { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px }
+.pieces li { display: flex; gap: 10px; align-items: center; font-size: 13px; padding: 6px 10px; border: 1px solid var(--trait); border-radius: 8px; background: var(--surface) }
+.pieces li .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }

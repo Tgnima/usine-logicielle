@@ -28,6 +28,8 @@ import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evo
 import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
 import { direct } from "./direct.mjs"
+import { enregistrerPieces, listerPieces, verifierPieces } from "./pieces.mjs"
+import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -153,6 +155,8 @@ async function detailProjet(ctx, id) {
     domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id),
     ip_serveur: (await ipServeur(config).catch(() => []))[0] ?? null,
     captures: capturesProjet(ctx, id),
+    pieces: listerPieces(config, id).map((x) => ({ nom: x.nom, taille: x.taille })),
+    estimation: plan?.lots?.length ? estimation(ctx, plan.lots.reduce((n, l) => n + l.taches.length, 0)) : null,
     apercu_garde: !!p.apercu_garde,
     budget: (() => {
       const rc = reglagesCouts(db, config)
@@ -183,6 +187,44 @@ async function santeEtCouts(ctx) {
       }),
     },
   }
+}
+
+// L'estimation d'un projet, d'après l'historique de l'usine : le coût (équivalent API) et le
+// temps de calcul moyens d'une tâche fusionnée, multipliés par le nombre de tâches. Sans
+// historique suffisant (moins de 5 tâches mesurées), pas d'estimation : on n'invente rien.
+export function estimation(ctx, nbTaches = null) {
+  const { db, config } = ctx
+  const rc = reglagesCouts(db, config)
+  const t = db.prepare(`SELECT COUNT(*) AS n, AVG(cout) AS cout, AVG(duree) AS duree FROM (
+      SELECT t.id, SUM(COALESCE(c.cout_api_usd, 0)) AS cout, SUM(c.duree_s) AS duree
+      FROM taches t JOIN consommations c ON c.tache_id = t.id WHERE t.statut = 'fusionnee' GROUP BY t.id)`).get()
+  if (!t || t.n < 5) return { disponible: false, mesurees: t?.n ?? 0 }
+  const plans = db.prepare("SELECT plan FROM projets WHERE plan IS NOT NULL AND statut NOT IN ('abandonne', 'questions', 'analyse')").all()
+    .map((p) => { try { return JSON.parse(p.plan).lots ?? [] } catch { return [] } }).filter((l) => l.length)
+  const tachesTypiques = plans.length ? Math.round(plans.reduce((s, l) => s + Math.min(l.slice(0, 6).reduce((n, x) => n + (x.taches?.length ?? 0), 0), 40), 0) / plans.length) : null
+  const n = nbTaches ?? tachesTypiques
+  if (!n) return { disponible: false, mesurees: t.n }
+  const minutes = Math.round((t.duree * n) / 60)
+  return {
+    disponible: true,
+    mesurees: t.n,
+    taches: n,
+    typique: nbTaches === null,
+    cout: montant(rc, versDevise(rc, t.cout * n), { decimales: 0 }),
+    duree: minutes >= 90 ? `${Math.round(minutes / 60)} h` : `${minutes} min`,
+    par_tache: montant(rc, versDevise(rc, t.cout)),
+  }
+}
+
+// L'historique : qui a fait quoi (validations, décisions, production, corrections, réglages…).
+const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur"]
+function historique(ctx, { projet = null, type = null } = {}) {
+  const types = type && TYPES_HISTORIQUE.includes(type) ? [type] : TYPES_HISTORIQUE
+  const filtre = projet ? "AND j.projet_id = ?" : ""
+  const lignes = ctx.db.prepare(`SELECT j.id, j.le, j.type, j.message, j.projet_id, p.nom AS projet FROM journal j LEFT JOIN projets p ON p.id = j.projet_id
+      WHERE j.type IN (${types.map(() => "?").join(",")}) ${filtre} ORDER BY j.id DESC LIMIT 200`).all(...types, ...(projet ? [projet] : []))
+  // L'auteur, quand le message le dit (« … par x », « (par x) », « validé par x »).
+  return lignes.map((l) => ({ ...l, message: l.message.slice(0, 600), par: (l.message.match(/\bpar ([^\s()]+@[^\s()]+|[A-Za-zÀ-ÿ0-9._-]{2,40})\)?\s*$/) ?? l.message.match(/\(par ([^)]+)\)/))?.[1] ?? null }))
 }
 
 // Les réglages : la forge du code (GitHub aujourd'hui, GitLab prévu), les budgets
@@ -270,6 +312,8 @@ const productionsEnCours = new Set()
 const ROUTES = [
   ["GET", /^\/api\/moi$/, (_ctx, _p, _c, qui) => ({ email: qui.email, role: qui.role })],
   ["GET", /^\/api\/resume$/, (ctx) => resume(ctx)],
+  ["GET", /^\/api\/estimation$/, (ctx) => estimation(ctx)],
+  ["GET", /^\/api\/historique$/, (ctx, _p, _c, _q, url) => historique(ctx, { projet: Number(url.searchParams.get("projet")) || null, type: url.searchParams.get("type") })],
   ["GET", /^\/api\/sante$/, (ctx) => santeEtCouts(ctx)],
   ["GET", /^\/api\/projets\/(\d+)$/, (ctx, [id]) => detailProjet(ctx, Number(id))],
   // Le direct : ce que fait l'agent (ou le vérificateur) sur la tâche en cours du projet.
@@ -279,7 +323,14 @@ const ROUTES = [
     const prompt = String(c.prompt ?? "").trim()
     if (prompt.length < 20) throw erreur(400, "Décris un peu plus ce que tu veux construire (20 caractères au moins).")
     if (prompt.length > 8000) throw erreur(400, "La demande est trop longue (8 000 caractères au plus).")
-    const id = await actions.nouveauProjet(ctx, { prompt, demandeur: qui.email })
+    let fichiers
+    try {
+      fichiers = verifierPieces(c.pieces)
+    } catch (e) {
+      throw erreur(400, e.message)
+    }
+    // Les pièces sont posées avant le lancement de l'analyse, qui les lit.
+    const id = await actions.nouveauProjet(ctx, { prompt, demandeur: qui.email, avant: (projetId) => enregistrerPieces(ctx.config, projetId, fichiers) })
     return { ok: true, id }
   }],
   ["PUT", /^\/api\/projets\/(\d+)\/plan$/, (ctx, [id], c, qui) => {
@@ -375,12 +426,12 @@ function envoyerJson(res, code, corps) {
   res.end(JSON.stringify(corps))
 }
 
-async function lireJson(req) {
+async function lireJson(req, max = 200_000) {
   if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) throw erreur(415, "JSON attendu.")
   let corps = ""
   for await (const morceau of req) {
     corps += morceau
-    if (corps.length > 200_000) throw erreur(413, "Requête trop volumineuse.")
+    if (corps.length > max) throw erreur(413, "Requête trop volumineuse.")
   }
   try {
     return corps ? JSON.parse(corps) : {}
@@ -427,10 +478,10 @@ export async function traiter(ctx, req, res) {
           hoteOrigine = new URL(origine).host
         } catch {}
         if (!hoteOrigine || hoteOrigine !== hote) throw erreur(403, "Origine refusée.")
-        corps = await lireJson(req)
+        corps = await lireJson(req, req.method === "POST" && url.pathname === "/api/projets" ? 9_000_000 : 200_000)
         console.log(`Console : ${req.method} ${url.pathname} par ${qui.email}`)
       }
-      const r = await route[2](ctx, url.pathname.match(route[1]).slice(1), corps, qui)
+      const r = await route[2](ctx, url.pathname.match(route[1]).slice(1), corps, qui, url)
       if (r && r.ok === false) return envoyerJson(res, 409, { erreur: r.message ?? "Action impossible." })
       return envoyerJson(res, 200, r ?? { ok: true })
     }

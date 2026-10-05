@@ -9,9 +9,10 @@ import { adresses } from "./config.mjs"
 import { enregistrer } from "./couts.mjs"
 import { demanderCorrections } from "./livraison.mjs"
 
-export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null }) {
+export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null, avant = null }) {
   const id = Number(ctx.db.prepare("INSERT INTO projets (prompt, demandeur, canal, fil) VALUES (?, ?, ?, ?)").run(prompt, demandeur, canal, fil).lastInsertRowid)
-  noter(ctx.db, { projet: id, type: "demande", message: prompt })
+  noter(ctx.db, { projet: id, type: "demande", message: `${prompt}\n(par ${demandeur})` })
+  avant?.(id)
   lancerAnalyse(ctx, id).catch((e) => console.error(e))
   return id
 }

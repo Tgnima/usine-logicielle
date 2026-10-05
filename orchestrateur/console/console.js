@@ -66,6 +66,12 @@ const etat = {
   occupe: false, // une action est en cours : pas de double envoi, pas de rafraîchissement
   numero: 0, // numéro de chargement : une réponse périmée est ignorée
   detailsOuvert: false,
+  filtre: "actifs", // la liste des projets : actifs | production | archives | tous
+  pieces: [], // les fichiers choisis pour une nouvelle demande
+  estimation: null,
+  historique: null,
+  histoFiltre: { projet: "", type: "" },
+  vus: null, // les éléments « à traiter » déjà connus (notifications)
   cleCreee: null,
   invitation: null,
   planModifie: false,
@@ -79,6 +85,7 @@ function lireRoute() {
   if (h.startsWith("/sante")) return { vue: "sante" }
   if (h.startsWith("/acces")) return { vue: "acces" }
   if (h.startsWith("/reglages")) return { vue: "reglages" }
+  if (h.startsWith("/historique")) return { vue: "historique" }
   return { vue: "projets" }
 }
 
@@ -112,7 +119,9 @@ function afficherMessages() {
 function vueProjets() {
   const r = etat.resume
   if (!r) return html`<div class="chargement">Chargement…</div>`
-  const projets = r.projets.filter((p) => p.statut !== "abandonne")
+  const FILTRES = { actifs: (p) => !["abandonne", "en_production"].includes(p.statut), production: (p) => p.statut === "en_production", archives: (p) => p.statut === "abandonne", tous: () => true }
+  const compte = (f) => r.projets.filter(FILTRES[f]).length
+  const projets = r.projets.filter(FILTRES[etat.filtre] ?? FILTRES.tous)
   return html`
     ${barreHaut()}
     <div class="entete">
@@ -128,7 +137,8 @@ function vueProjets() {
         <em>${x.type === "plan" ? "Relire" : x.type === "livre" ? "Décider" : "Répondre"}</em></a>`)}</div>
     </section>` : ""}
     <section class="carte" aria-labelledby="tous">
-      <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="tous">Tous les projets</h2><span class="aide">${projets.length} projet(s)</span></div>
+      <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="tous">Projets</h2>
+        <div class="rangee" role="group" aria-label="Filtrer les projets">${[["actifs", "Actifs"], ["production", "En production"], ["archives", "Abandonnés"], ["tous", "Tous"]].map(([id, nom]) => html`<button type="button" class="filtre" data-action="filtre" data-id="${id}" aria-pressed="${String(etat.filtre === id)}">${nom} · ${compte(id)}</button>`)}</div></div>
       ${projets.length ? html`<div class="tableau"><table style="min-width:860px">
         <thead><tr><th>Projet</th><th>Type</th><th>État</th><th>Avancement</th><th>Coût</th><th>Adresses</th></tr></thead>
         <tbody>${projets.map((p) => {
@@ -143,7 +153,7 @@ function vueProjets() {
             <td class="mono">${p.cout ?? "—"}</td>
             <td>${p.production ? html`<a href="${p.production}" target="_blank" rel="noopener">production</a>` : ""}${p.production && p.apercu ? " · " : ""}${p.apercu ? html`<a href="${p.apercu}" target="_blank" rel="noopener">aperçu</a>` : ""}${!p.production && !p.apercu ? html`<span class="aide">pas encore</span>` : ""}</td>
           </tr>`
-        })}</tbody></table></div>` : html`<div class="vide">Aucun projet pour l'instant. <a href="#/nouveau">Lance le premier</a>.</div>`}
+        })}</tbody></table></div>` : html`<div class="vide">${r.projets.length ? "Aucun projet dans ce filtre." : html`Aucun projet pour l'instant. <a href="#/nouveau">Lance le premier</a>.`}</div>`}
     </section>
     <section class="grille" aria-label="Résumé de l'usine">
       <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Budget du mois</div><div style="font-size:22px;font-weight:700">${r.couts.pct !== null ? `${r.couts.pct} % utilisé` : r.couts.mois}</div><div class="aide">${r.couts.budget ? `${r.couts.mois} sur ${r.couts.budget} (équivalent API)` : "pas de budget mensuel"}</div></a>
@@ -169,12 +179,24 @@ function vueNouveau() {
         <div class="pile"><label class="titre-champ" for="demande">La demande</label>
           <textarea id="demande" name="prompt" class="champ" rows="8" required minlength="20" style="resize:vertical;line-height:1.6" placeholder="Ex. : une application pour nos techniciens de maintenance : chaque matin ils voient leurs interventions du jour, sur place ils saisissent le compte rendu (photos, pièces changées, signature), même sans réseau. Le responsable suit tout depuis un tableau de bord."></textarea>
           <div class="aide">Pour aller plus vite, précise : qui l'utilise · les écrans clés · ce qui n'est pas demandé.</div></div>
+        <div class="pile">
+          <label class="titre-champ" for="pieces">Pièces jointes <span class="aide" style="font-weight:400">· maquettes, captures ou cahier des charges : PNG, JPEG, WebP ou PDF, 3 au plus, 2 Mo chacune</span></label>
+          <input id="pieces" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple class="champ" style="padding:9px">
+          ${etat.pieces.length ? html`<ul class="pieces">${etat.pieces.map((f, i) => html`<li><span class="mono">${f.name}</span><span class="aide">${Math.ceil(f.size / 1024)} Ko</span><button type="button" class="btn-icone" data-action="retirer-piece" data-id="${i}" aria-label="Retirer ${f.name}">✕</button></li>`)}</ul>` : ""}
+          <div class="aide">L'analyste les lit avant de planifier ; elles sont ensuite copiées dans le dépôt (docs/maquettes/) pour les agents.</div>
+        </div>
         <fieldset><legend>Type de produit <span class="aide" style="font-weight:400">· une indication pour l'analyste, qui choisit en dernier ressort</span></legend>
           <div class="briques">${choix.map(([id, texte]) => html`<button type="button" class="brique" data-action="brique" data-id="${id}" aria-pressed="${String(etat.brique === id)}"><strong>${BRIQUES[id]}</strong><span>${texte}</span></button>`)}</div>
         </fieldset>
         <div class="rangee"><button type="submit" class="btn btn-p">Lancer l'analyse</button><a href="#/" class="btn btn-s">Annuler</a></div>
       </form>
       <aside class="colonne-etroite" aria-label="Comment ça se passe">
+        <div class="carte carte-p pile">
+          <strong>Estimation</strong>
+          ${etat.estimation?.disponible ? html`<div style="font-size:14px">Un projet typique de l'usine : <strong>${etat.estimation.taches} tâches</strong>, <strong>${etat.estimation.cout}</strong> en équivalent API, <strong>${etat.estimation.duree}</strong> de calcul.</div>
+            <div class="aide">D'après les ${etat.estimation.mesurees} tâches déjà fabriquées. L'estimation exacte arrive avec le plan, avant que tu le valides.</div>`
+          : html`<div class="aide">${etat.estimation ? `Pas encore assez d'historique (${etat.estimation.mesurees} tâche(s) mesurée(s), 5 au moins) : l'estimation apparaîtra avec le plan des prochains projets.` : "Calcul de l'estimation…"}</div>`}
+        </div>
         <div class="sombre pile">
           <div class="surtitre" style="color:inherit;opacity:.75">Ce qui va se passer</div>
           <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px">
@@ -199,25 +221,46 @@ function etapesTache(t) {
   return html`<ol class="etapes" aria-label="Étapes de la tâche">${noms.map((n, i) => html`<li class="${i < fait ? "fait" : i === fait && t.statut !== "fusionnee" ? "encours" : ""}">${n}</li>`)}</ol>`
 }
 
+// Le plan en cours de modification (une copie, tant qu'il n'est pas enregistré).
+const planAffiche = (p) => (etat.planEdition && etat.planEditionId === p.id ? etat.planEdition : p.plan)
+const petitBouton = (action, attrs, texte, libelle) => html`<button type="button" class="btn-icone" data-action="${action}" ${brut(attrs)} aria-label="${libelle}" title="${libelle}">${texte}</button>`
+
 function blocPlan(p) {
-  const plan = p.plan
+  const plan = planAffiche(p)
   if (!plan?.lots?.length) return ""
   const d = plan.design
+  const e = p.estimation
+  const nb = plan.lots.reduce((n, l) => n + l.taches.length, 0)
   return html`
     <div class="colonnes">
       <form class="colonne-large" data-form="plan">
-        <p class="aide" style="margin:0">Tout est modifiable : clique sur un titre ou un critère. Les critères doivent rester observables sur l'application en marche.</p>
-        ${plan.lots.map((lot, i) => html`<section class="carte lot">
-          <div class="lot-tete"><span class="mono aide">LOT ${i + 1}</span><input class="champ-discret" style="flex:1;min-width:220px;font-weight:600;font-size:16px" aria-label="Nom du lot ${i + 1}" data-lot="${i}" data-champ="nom" value="${lot.nom}"></div>
+        <p class="aide" style="margin:0">Tout est modifiable : titres, descriptions, critères, dépendances, ordre des tâches et des lots. Les critères doivent rester observables sur l'application en marche. Les numéros se recalculent seuls.</p>
+        ${plan.lots.map((lot, i) => html`<section class="carte lot" aria-label="Lot ${i + 1}">
+          <div class="lot-tete">
+            <span class="mono aide">LOT ${i + 1}</span>
+            <div style="flex:1;min-width:220px">
+              <input class="champ-discret" style="font-weight:600;font-size:16px" aria-label="Nom du lot ${i + 1}" data-lot="${i}" data-champ="nom" value="${lot.nom}">
+              <input class="champ-discret aide" style="font-size:14px" aria-label="Objectif du lot ${i + 1}" placeholder="Ce que l'utilisateur peut faire à la fin du lot" data-lot="${i}" data-champ="objectif" value="${lot.objectif ?? ""}">
+            </div>
+            <span class="outils">${petitBouton("monter-lot", `data-lot="${i}"`, "↑", `Monter le lot ${i + 1}`)}${petitBouton("descendre-lot", `data-lot="${i}"`, "↓", `Descendre le lot ${i + 1}`)}${petitBouton("supprimer-lot", `data-lot="${i}"`, "✕", `Supprimer le lot ${i + 1}`)}</span>
+          </div>
           <div style="padding:6px 8px">${lot.taches.map((t, j) => html`<div class="tache-plan">
             <span class="cle mono">${t.cle}</span>
             <div style="flex:1;min-width:0">
               <input class="champ-discret" style="font-weight:600" aria-label="Titre de ${t.cle}" data-lot="${i}" data-tache="${j}" data-champ="titre" value="${t.titre}">
-              <ul class="criteres">${t.criteres.map((c, k) => html`<li><span style="color:var(--ok-point)" aria-hidden="true">✓</span><input class="champ-discret" style="padding:5px 8px" aria-label="Critère ${k + 1} de ${t.cle}" data-lot="${i}" data-tache="${j}" data-critere="${k}" value="${c}"></li>`)}</ul>
-              <button type="button" class="lien-btn" data-action="ajouter-critere" data-lot="${i}" data-tache="${j}">+ Ajouter un critère</button>
-            </div></div>`)}</div>
+              <textarea class="champ-discret" rows="2" style="font-size:14px;color:var(--texte);resize:vertical" aria-label="Description de ${t.cle}" placeholder="Ce qu'il faut construire, précisément" data-lot="${i}" data-tache="${j}" data-champ="description">${t.description ?? ""}</textarea>
+              <ul class="criteres">${t.criteres.map((c, k) => html`<li><span style="color:var(--ok-point)" aria-hidden="true">✓</span><input class="champ-discret" style="padding:5px 8px" aria-label="Critère ${k + 1} de ${t.cle}" data-lot="${i}" data-tache="${j}" data-critere="${k}" value="${c}">${petitBouton("supprimer-critere", `data-lot="${i}" data-tache="${j}" data-critere="${k}"`, "✕", `Retirer le critère ${k + 1} de ${t.cle}`)}</li>`)}</ul>
+              <div class="rangee" style="padding-left:12px">
+                <button type="button" class="lien-btn" style="padding-left:0" data-action="ajouter-critere" data-lot="${i}" data-tache="${j}">+ Ajouter un critère</button>
+                <label class="aide" style="display:flex;align-items:center;gap:6px">après <input class="champ-discret mono" style="width:110px;padding:4px 8px" placeholder="aucune" aria-label="Tâches dont ${t.cle} dépend" data-lot="${i}" data-tache="${j}" data-champ="depend" value="${(t.depend_de ?? []).join(", ")}"></label>
+              </div>
+            </div>
+            <span class="outils" style="flex-direction:column">${petitBouton("monter-tache", `data-lot="${i}" data-tache="${j}"`, "↑", `Monter ${t.cle}`)}${petitBouton("descendre-tache", `data-lot="${i}" data-tache="${j}"`, "↓", `Descendre ${t.cle}`)}${petitBouton("supprimer-tache", `data-lot="${i}" data-tache="${j}"`, "✕", `Supprimer ${t.cle}`)}</span>
+          </div>`)}
+          <button type="button" class="lien-btn" style="margin:0 0 8px 52px" data-action="ajouter-tache" data-lot="${i}">+ Ajouter une tâche au lot ${i + 1}</button></div>
         </section>`)}
-        <div class="rangee"><button type="submit" class="btn btn-s" ${etat.planModifie ? "" : "disabled"}>Enregistrer les modifications</button>${etat.planModifie ? html`<span class="aide">Modifications non enregistrées</span>` : ""}</div>
+        <div><button type="button" class="btn btn-s btn-petit" data-action="ajouter-lot">+ Ajouter un lot</button></div>
+        <div class="rangee"><button type="submit" class="btn btn-p" ${etat.planModifie ? "" : "disabled"}>Enregistrer les modifications</button>${etat.planModifie ? html`<span class="aide">Modifications non enregistrées</span><button type="button" class="lien-btn" data-action="annuler-plan">Tout annuler</button>` : ""}</div>
         <div class="carte carte-p pile">
           <label class="titre-champ" for="revision">Ou demander une révision à l'analyste</label>
           <textarea id="revision" class="champ" rows="3" placeholder="Ex. : la signature du client n'est pas utile, mais il faut un mode sombre."></textarea>
@@ -225,6 +268,7 @@ function blocPlan(p) {
         </div>
       </form>
       <aside class="colonne-etroite" aria-label="Brief et décision">
+        ${p.pieces?.length ? html`<div class="carte carte-p pile"><strong>Pièces jointes</strong>${p.pieces.map((x) => html`<div class="aide mono">${x.nom} · ${Math.ceil(x.taille / 1024)} Ko</div>`)}<div class="aide">Lues par l'analyste ; copiées dans docs/maquettes/ du dépôt pour les agents.</div></div>` : ""}
         ${d ? html`<div class="carte carte-p pile"><strong>Brief de design</strong><p style="margin:0;font-size:14px;color:var(--texte)">${d.intention ?? ""}</p>
           ${d.palette ? html`<div class="palette-couleurs" aria-label="Palette">${Object.entries(d.palette).slice(0, 6).map(([k, v]) => html`<span title="${k} ${v}" style="background:${/^#[0-9a-f]{3,8}$/i.test(v) ? v : "transparent"}"></span>`)}</div>` : ""}
           ${d.typographie ? html`<div class="aide">Polices : ${[d.typographie.titres, d.typographie.texte].filter(Boolean).join(" · ")}</div>` : ""}</div>` : ""}
@@ -232,7 +276,8 @@ function blocPlan(p) {
           ${plan.hors_perimetre?.length ? html`<strong>Hors périmètre</strong><div style="color:var(--texte)">${plan.hors_perimetre.join(" · ")}</div>` : ""}
           ${plan.risques?.length ? html`<strong>Risques</strong><div style="color:var(--texte)">${plan.risques.join(" · ")}</div>` : ""}</div>` : ""}
         <div class="sombre pile">
-          <div class="aide">${BRIQUES[plan.brique ?? "webapp"]} · ${plan.lots.length} lots · ${plan.lots.reduce((n, l) => n + l.taches.length, 0)} tâches</div>
+          <div class="aide">${BRIQUES[plan.brique ?? "webapp"]} · ${plan.lots.length} lots · ${nb} tâches</div>
+          ${e?.disponible ? html`<div style="font-size:14px">Estimation : <strong>${e.cout}</strong> en équivalent API · <strong>${e.duree}</strong> de calcul</div><div class="aide">d'après les ${e.mesurees} tâches déjà fabriquées par l'usine (${e.par_tache} par tâche en moyenne)</div>` : ""}
           <button type="button" class="btn" style="background:var(--fond);color:var(--encre)" data-action="valider-plan" ${etat.planModifie ? "disabled" : ""}>Valider le plan et lancer</button>
           <div class="aide">${etat.planModifie ? "Enregistre d'abord tes modifications." : "Première porte humaine. La seconde viendra au produit fini."}</div>
           <button type="button" class="lien-btn" style="color:inherit;opacity:.8;align-self:flex-start;padding-left:0" data-action="confirmer" data-quoi="abandonner">Abandonner ce plan</button>
@@ -560,9 +605,31 @@ async function suivreDirect() {
 }
 setInterval(suivreDirect, 3000)
 
+const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Production", abandon: "Abandon", cycle: "Cycle de vie", plan: "Plan", domaine: "Domaine", corrections: "Corrections", remarque: "Remarque", escalade: "Escalade", erreur: "Erreur" }
+function vueHistorique() {
+  const h = etat.historique
+  const projets = etat.resume?.projets ?? []
+  return html`
+    ${barreHaut()}
+    <div><h1>Historique</h1><p class="chapeau">Qui a fait quoi : demandes, validations, décisions, mises en production, corrections, réglages. Les 200 derniers évènements.</p></div>
+    <div class="rangee">
+      <label class="aide" for="h-projet">Projet</label>
+      <select id="h-projet" class="champ" style="width:auto" data-filtre-histo="projet"><option value="">Tous</option>${projets.map((p) => html`<option value="${p.id}" ${String(p.id) === etat.histoFiltre.projet ? "selected" : ""}>${p.nom}</option>`)}</select>
+      <label class="aide" for="h-type">Type</label>
+      <select id="h-type" class="champ" style="width:auto" data-filtre-histo="type"><option value="">Tous</option>${Object.entries(TYPES_HISTO).map(([k, v]) => html`<option value="${k}" ${k === etat.histoFiltre.type ? "selected" : ""}>${v}</option>`)}</select>
+    </div>
+    <section class="carte" aria-label="Évènements">
+      ${!h ? html`<div class="chargement">Chargement…</div>` : h.length ? html`<div class="tableau"><table style="min-width:760px"><thead><tr><th>Quand</th><th>Projet</th><th>Type</th><th>Quoi</th><th>Par</th></tr></thead>
+        <tbody>${h.map((x) => html`<tr><td class="mono" style="white-space:nowrap">${heure(x.le)}</td><td>${x.projet_id ? html`<a class="lien-projet" href="#/projets/${x.projet_id}">${x.projet ?? `#${x.projet_id}`}</a>` : "—"}</td>
+          <td><span class="badge ${["erreur", "escalade"].includes(x.type) ? "orange" : x.type === "production" || x.type === "validation" ? "vert" : ""}">${TYPES_HISTO[x.type] ?? x.type}</span></td>
+          <td style="white-space:pre-wrap;word-break:break-word">${nettoyer(x.message.length > 280 ? x.message.slice(0, 280) + "…" : x.message)}</td><td>${x.par ?? html`<span class="aide">usine</span>`}</td></tr>`)}</tbody></table></div>`
+      : html`<div class="vide">Rien dans ce filtre.</div>`}
+    </section>`
+}
+
 // --- Rendu et chargement ------------------------------------------------------------------
 function rendre() {
-  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages }[etat.route.vue]
+  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages, historique: vueHistorique }[etat.route.vue]
   const m = $("#principal")
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
@@ -591,6 +658,8 @@ function rendre() {
   if (r) {
     $("#base").textContent = r.usine.base
     $("#cote-bas").innerHTML = html`${r.usine.mise_a_jour?.disponible ? html`<a href="#/sante" class="carte" style="display:block;padding:12px;color:var(--encre);text-decoration:none"><strong style="display:block">Mise à jour disponible</strong><span class="aide">${r.usine.mise_a_jour.disponible} changement(s)</span></a>` : ""}
+      ${"Notification" in window && Notification.permission === "default" ? html`<button type="button" class="btn btn-s btn-petit" data-action="notifications">Me prévenir des décisions</button>` : ""}
+      ${"Notification" in window && Notification.permission === "denied" ? html`<span class="aide">Notifications bloquées dans le navigateur</span>` : ""}
       <a href="${r.usine.portail}" target="_blank" rel="noopener">Mes applications</a><span class="aide" id="moi"></span>`[BRUT]
     if (etat.moi) $("#moi").textContent = `${etat.moi.email} · administrateur`
   }
@@ -602,10 +671,11 @@ async function charger({ silencieux = false } = {}) {
     const n = ++etat.numero
     const frais = () => n === etat.numero
     // Chaque partie s'affiche dès qu'elle arrive : une page lente ne bloque pas le reste.
-    const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; rendre() } })]
+    const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; prevenir(x); rendre() } })]
+    if (r.vue === "nouveau" && !etat.estimation) taches.push(api("GET", "estimation").then((x) => { etat.estimation = x; rendre() }))
+    if (r.vue === "historique") taches.push(api("GET", `historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`).then((x) => { if (frais()) { etat.historique = x; rendre() } }))
     if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => {
       if (!frais()) return
-      if (etat.planModifie && etat.projet?.id === x.id) x.plan = etat.projet.plan
       etat.projet = x
       rendre()
     }))
@@ -661,24 +731,121 @@ async function agir(fonction, { succes } = {}) {
 }
 const confirmer = (texte) => window.confirm(texte)
 
-// --- Plan modifiable --------------------------------------------------------------------
-function planDepuisFormulaire() {
-  const plan = structuredClone(etat.projet.plan)
-  for (const el of document.querySelectorAll("[data-form=plan] [data-lot]")) {
-    const lot = plan.lots[Number(el.dataset.lot)]
-    if (!lot || el.tagName !== "INPUT") continue
-    if (el.dataset.champ === "nom") lot.nom = el.value.trim()
-    else if (el.dataset.critere !== undefined) lot.taches[Number(el.dataset.tache)].criteres[Number(el.dataset.critere)] = el.value.trim()
-    else if (el.dataset.champ === "titre") lot.taches[Number(el.dataset.tache)].titre = el.value.trim()
+// Un fichier en base64, par morceaux (un gros fichier dépasserait la pile d'appels).
+function enBase64(tampon) {
+  const octets = new Uint8Array(tampon)
+  let binaire = ""
+  for (let i = 0; i < octets.length; i += 0x8000) binaire += String.fromCharCode(...octets.subarray(i, i + 0x8000))
+  return btoa(binaire)
+}
+const PIECES = { max: 3, taille: 2 * 1024 * 1024, types: ["image/png", "image/jpeg", "image/webp", "application/pdf"] }
+document.addEventListener("change", (e) => {
+  if (e.target.id === "pieces") {
+    const choisis = [...e.target.files]
+    const refuses = choisis.filter((f) => !PIECES.types.includes(f.type) || f.size > PIECES.taille)
+    const toutes = [...etat.pieces, ...choisis.filter((f) => !refuses.includes(f))]
+    etat.pieces = toutes.slice(0, PIECES.max)
+    if (refuses.length) etat.message = { type: "erreur", texte: `Non retenu : ${refuses.map((f) => f.name).join(", ")} (PNG, JPEG, WebP ou PDF de 2 Mo au plus).` }
+    else if (toutes.length > PIECES.max) etat.message = { type: "info", texte: `${PIECES.max} pièces jointes au plus : les suivantes n'ont pas été retenues.` }
+    const texte = $("#demande")?.value
+    rendre()
+    if (texte) $("#demande").value = texte
   }
-  for (const lot of plan.lots) for (const t of lot.taches) t.criteres = t.criteres.filter(Boolean)
+  if (e.target.dataset?.filtreHisto) {
+    etat.histoFiltre[e.target.dataset.filtreHisto] = e.target.value
+    charger()
+  }
+})
+
+// --- 3. Être prévenu : notification du navigateur et compteur dans l'onglet ------------------
+function prevenir(resume) {
+  const items = resume.a_traiter ?? []
+  document.title = items.length ? `(${items.length}) Console de l'usine` : "Console de l'usine"
+  const cles = new Set(items.map((x) => `${x.type}:${x.projet}:${x.titre}`))
+  if (etat.vus) {
+    const nouveaux = items.filter((x) => !etat.vus.has(`${x.type}:${x.projet}:${x.titre}`))
+    if (nouveaux.length && "Notification" in window && Notification.permission === "granted") {
+      for (const x of nouveaux.slice(0, 3)) {
+        const n = new Notification(x.titre, { body: nettoyer(x.detail), tag: `usine-${x.type}-${x.projet}` })
+        n.onclick = () => { window.focus(); location.hash = `#/projets/${x.projet}`; n.close() }
+      }
+    }
+  }
+  etat.vus = cles
+}
+
+// --- Plan modifiable --------------------------------------------------------------------
+const nouvelleTache = () => ({ cle: `Tn${Math.random().toString(36).slice(2, 7)}`, titre: "Nouvelle tâche", description: "", criteres: [""], depend_de: [] })
+const planCourant = () => (etat.planEdition && etat.planEditionId === etat.projet.id ? etat.planEdition : structuredClone(etat.projet.plan))
+
+// Recopie ce qui a été tapé dans le plan en cours de modification.
+function syncPlan(plan) {
+  for (const el of document.querySelectorAll("[data-form=plan] [data-lot]")) {
+    if (!["INPUT", "TEXTAREA"].includes(el.tagName)) continue
+    const lot = plan.lots[Number(el.dataset.lot)]
+    if (!lot) continue
+    const t = el.dataset.tache !== undefined ? lot.taches[Number(el.dataset.tache)] : null
+    const v = el.value
+    if (!t && el.dataset.champ === "nom") lot.nom = v
+    else if (!t && el.dataset.champ === "objectif") lot.objectif = v
+    else if (t && el.dataset.critere !== undefined) t.criteres[Number(el.dataset.critere)] = v
+    else if (t && el.dataset.champ === "titre") t.titre = v
+    else if (t && el.dataset.champ === "description") t.description = v
+    else if (t && el.dataset.champ === "depend") t.depend_de = (v.toUpperCase().match(/T\d+/g) ?? [])
+  }
   return plan
+}
+
+// Numérote les tâches T1, T2… dans l'ordre ; une dépendance ne vise qu'une tâche placée avant.
+function normaliserPlan(plan) {
+  const nouvelles = new Map()
+  let n = 0
+  for (const lot of plan.lots) for (const t of lot.taches) nouvelles.set(t.cle, `T${++n}`)
+  const avant = new Set()
+  for (const lot of plan.lots) for (const t of lot.taches) {
+    const cle = nouvelles.get(t.cle)
+    t.depend_de = [...new Set((t.depend_de ?? []).map((k) => nouvelles.get(k)).filter((k) => k && avant.has(k)))]
+    t.cle = cle
+    avant.add(cle)
+  }
+  return plan
+}
+
+function editerPlan(modifier) {
+  const plan = syncPlan(planCourant())
+  if (modifier(plan) === false) return
+  etat.planEdition = normaliserPlan(plan)
+  etat.planEditionId = etat.projet.id
+  etat.planModifie = true
+  rendre()
+}
+
+// Les défauts visibles avant d'envoyer (le serveur revérifie tout).
+function defautsPlan(plan) {
+  const d = []
+  plan.lots.forEach((lot, i) => {
+    if (!lot.nom.trim()) d.push(`le lot ${i + 1} n'a pas de nom`)
+    if (!lot.taches.length) d.push(`le lot ${i + 1} n'a plus de tâche : supprime-le ou ajoutes-en une`)
+    for (const t of lot.taches) {
+      if (!t.titre.trim()) d.push(`${t.cle} n'a pas de titre`)
+      if (!t.criteres.some((c) => c.trim())) d.push(`${t.cle} n'a aucun critère d'acceptation`)
+    }
+  })
+  if (!plan.lots.length) d.push("le plan n'a plus de lot")
+  return d
 }
 
 // --- Évènements ----------------------------------------------------------------------------
 const ACTIONS = {
   palette: () => ouvrirPalette(),
   "fermer-message": () => { etat.message = null; rendre() },
+  filtre: (el) => { etat.filtre = el.dataset.id; rendre() },
+  "retirer-piece": (el) => { etat.pieces.splice(Number(el.dataset.id), 1); const t = $("#demande")?.value; rendre(); if (t) $("#demande").value = t },
+  notifications: async () => {
+    const r = await Notification.requestPermission().catch(() => "denied")
+    etat.message = r === "granted" ? { type: "ok", texte: "C'est noté : une notification arrivera dès qu'une décision t'attend (onglet ouvert, même en arrière-plan)." } : { type: "info", texte: "Notifications refusées : le compteur dans le titre de l'onglet reste là." }
+    rendre()
+  },
   brique: (el) => { etat.brique = el.dataset.id; const t = $("#demande")?.value; rendre(); if (t) $("#demande").value = t },
   exemple: (el) => { $("#demande").value = el.dataset.texte; $("#demande").focus() },
   onglet: (el) => { etat.onglet = el.dataset.id; rendre() },
@@ -725,12 +892,54 @@ const ACTIONS = {
   decider: (el) => agir(() => api("POST", `escalades/${el.dataset.id}`, { choix: el.dataset.choix, texte: $(`#consigne-${el.dataset.id}`)?.value ?? "" }), { succes: "Décision transmise : l'usine reprend." }),
   "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
   "ajouter-critere": (el) => {
-    etat.projet.plan = planDepuisFormulaire()
-    etat.projet.plan.lots[Number(el.dataset.lot)].taches[Number(el.dataset.tache)].criteres.push("")
-    etat.planModifie = true
-    rendre()
-    const champs = document.querySelectorAll(`[data-lot="${el.dataset.lot}"][data-tache="${el.dataset.tache}"][data-critere]`)
+    const [l, t] = [Number(el.dataset.lot), Number(el.dataset.tache)]
+    editerPlan((plan) => { plan.lots[l].taches[t].criteres.push("") })
+    const champs = document.querySelectorAll(`[data-lot="${l}"][data-tache="${t}"][data-critere]`)
     champs[champs.length - 1]?.focus()
+  },
+  "supprimer-critere": (el) => editerPlan((plan) => { plan.lots[Number(el.dataset.lot)].taches[Number(el.dataset.tache)].criteres.splice(Number(el.dataset.critere), 1) }),
+  "ajouter-tache": (el) => {
+    const l = Number(el.dataset.lot)
+    editerPlan((plan) => { plan.lots[l].taches.push(nouvelleTache()) })
+    const titres = document.querySelectorAll(`[data-lot="${l}"][data-champ="titre"]`)
+    titres[titres.length - 1]?.select()
+  },
+  "supprimer-tache": (el) => editerPlan((plan) => { plan.lots[Number(el.dataset.lot)].taches.splice(Number(el.dataset.tache), 1) }),
+  "monter-tache": (el) => editerPlan((plan) => {
+    const [l, t] = [Number(el.dataset.lot), Number(el.dataset.tache)]
+    const lot = plan.lots[l]
+    if (t > 0) [lot.taches[t - 1], lot.taches[t]] = [lot.taches[t], lot.taches[t - 1]]
+    else if (l > 0) plan.lots[l - 1].taches.push(lot.taches.shift())
+    else return false
+  }),
+  "descendre-tache": (el) => editerPlan((plan) => {
+    const [l, t] = [Number(el.dataset.lot), Number(el.dataset.tache)]
+    const lot = plan.lots[l]
+    if (t < lot.taches.length - 1) [lot.taches[t + 1], lot.taches[t]] = [lot.taches[t], lot.taches[t + 1]]
+    else if (l < plan.lots.length - 1) plan.lots[l + 1].taches.unshift(lot.taches.pop())
+    else return false
+  }),
+  "ajouter-lot": () => editerPlan((plan) => { plan.lots.push({ nom: "Nouveau lot", objectif: "", taches: [nouvelleTache()] }) }),
+  "supprimer-lot": (el) => editerPlan((plan) => {
+    const l = Number(el.dataset.lot)
+    if (plan.lots[l].taches.length && !confirmer(`Supprimer le lot ${l + 1} et ses ${plan.lots[l].taches.length} tâche(s) ?`)) return false
+    plan.lots.splice(l, 1)
+  }),
+  "monter-lot": (el) => editerPlan((plan) => {
+    const l = Number(el.dataset.lot)
+    if (l === 0) return false
+    ;[plan.lots[l - 1], plan.lots[l]] = [plan.lots[l], plan.lots[l - 1]]
+  }),
+  "descendre-lot": (el) => editerPlan((plan) => {
+    const l = Number(el.dataset.lot)
+    if (l >= plan.lots.length - 1) return false
+    ;[plan.lots[l + 1], plan.lots[l]] = [plan.lots[l], plan.lots[l + 1]]
+  }),
+  "annuler-plan": () => {
+    if (!confirmer("Annuler toutes les modifications du plan ?")) return
+    etat.planEdition = null
+    etat.planModifie = false
+    rendre()
   },
   abandonner: () => agir(() => api("POST", `projets/${etat.projet.id}/abandonner`, {})),
   supprimer: async () => {
@@ -770,6 +979,8 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("input", (e) => {
   if (e.target.closest("[data-form=plan]") && e.target.matches("[data-lot]") && !etat.planModifie) {
+    etat.planEdition = syncPlan(planCourant())
+    etat.planEditionId = etat.projet.id
     etat.planModifie = true
     // Activer « Enregistrer » sans tout redessiner.
     const b = $("[data-form=plan] button[type=submit]")
@@ -788,14 +999,31 @@ document.addEventListener("submit", async (e) => {
   if (type === "nouveau") {
     const prompt = String(d.get("prompt") ?? "").trim()
     const indication = etat.brique !== "webapp" ? `\n\n(Type de produit souhaité : ${BRIQUES[etat.brique]}.)` : ""
-    const r = await agir(() => api("POST", "projets", { prompt: prompt + indication }), { succes: "Demande envoyée : l'analyste prépare le plan." })
-    if (r?.id) location.hash = `#/projets/${r.id}`
+    const r = await agir(async () => {
+      const pieces = await Promise.all(etat.pieces.map(async (f) => ({ nom: f.name, type: f.type, base64: enBase64(await f.arrayBuffer()) })))
+      return api("POST", "projets", { prompt: prompt + indication, pieces })
+    }, { succes: "Demande envoyée : l'analyste prépare le plan." })
+    if (r?.id) {
+      etat.pieces = []
+      location.hash = `#/projets/${r.id}`
+    }
   }
   if (type === "plan") {
-    const plan = planDepuisFormulaire()
+    const plan = normaliserPlan(syncPlan(planCourant()))
+    etat.planEdition = plan
+    etat.planEditionId = etat.projet.id
+    for (const lot of plan.lots) for (const t of lot.taches) t.criteres = t.criteres.map((c) => c.trim()).filter(Boolean)
+    const defauts = defautsPlan(plan)
+    if (defauts.length) {
+      etat.message = { type: "erreur", texte: `Avant d'enregistrer : ${defauts.slice(0, 4).join(" ; ")}.` }
+      return afficherMessages()
+    }
     const r = await agir(() => api("PUT", `projets/${etat.projet.id}/plan`, { plan }), { succes: "Plan enregistré. Tu peux le valider." })
-    if (r) etat.planModifie = false
-    rendre()
+    if (r) {
+      etat.planModifie = false
+      etat.planEdition = null
+      await charger({ silencieux: true })
+    }
   }
   if (type === "production") {
     await agir(() => api("POST", `projets/${etat.projet.id}/production`, {
@@ -841,6 +1069,7 @@ function entreesPalette(filtre) {
     { texte: "Santé et coûts", aide: "page", aller: "#/sante" },
     { texte: "Accès et clés d'API", aide: "page", aller: "#/acces" },
     { texte: "Réglages : dépôt de code, budgets, contrat", aide: "page", aller: "#/reglages" },
+    { texte: "Historique : qui a fait quoi", aide: "page", aller: "#/historique" },
     { texte: "Arrêter l'usine après la tâche en cours", aide: "commande", faire: () => confirmer("Arrêter l'usine après la tâche en cours ?") && agir(() => api("POST", "usine/stop", {})) },
     { texte: "Reprendre l'usine", aide: "commande", faire: () => agir(() => api("POST", "usine/reprendre", {})) },
     { texte: "Mettre à jour l'usine", aide: "commande", faire: () => confirmer("Mettre à jour l'usine ? Elle finit sa tâche en cours, se reconstruit et redémarre.") && agir(() => api("POST", "usine/mettre-a-jour", {})) },
@@ -889,6 +1118,7 @@ window.addEventListener("hashchange", () => {
   etat.message = null
   etat.confirmer = null
   etat.planModifie = false
+  etat.planEdition = null
   etat.cleCreee = null
   etat.invitation = null
   if (etat.route.vue !== "projet") etat.onglet = null
