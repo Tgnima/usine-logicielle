@@ -89,12 +89,19 @@ const regleProteges = (config) => `11. Fichiers protégés, restaurés par l'usi
 // Une tâche qui demande de modifier un fichier protégé (repérée dans sa description ou ses critères).
 export function tachesSurProteges(lots, liste = PROTEGES_PAR_DEFAUT) {
   const p = []
-  const verbes = "(?:ajout|modifi|écri|ecri|complét|complet|mettre à jour|mets à jour|met à jour|réécri|enrichi|section)"
+  // Juste avant le nom du fichier (même phrase) : un verbe d'écriture, et aucun mot de lecture
+  // (« selon la grille de docs/DESIGN.md », « comme décrit dans… » sont des lectures).
+  const ECRIRE = /(?<!\p{L})(ajout|modifi|écri[rst]|ecri[rst]|complét|complet|mettre à jour|mets à jour|met à jour|réécri|enrichi|rédig)/iu
+  const LIRE = /(selon|grille|d['’]après|suivant|conform|respect|(?<!\p{L})lis|(?<!\p{L})lire|(?<!\p{L})voir|indiqu|décri|défini|prévu|référence)/iu
   for (const lot of lots ?? []) for (const t of lot.taches ?? []) {
     const texte = `${t.titre ?? ""}\n${t.description ?? ""}\n${(t.criteres ?? []).join("\n")}`
     for (const f of liste.filter((x) => !x.includes("*"))) {
-      const fichier = f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-      if (new RegExp(`${verbes}[^.\\n]{0,80}${fichier}|${fichier}[^.\\n]{0,40}(?:section|ajout|modifi|mis à jour|complét)`, "i").test(texte)) {
+      const ecrit = [...texte.matchAll(new RegExp(f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))].some((m) => {
+        const avant = texte.slice(Math.max(0, m.index - 70), m.index).split(/[.\n]/).pop()
+        const apres = texte.slice(m.index + f.length, m.index + f.length + 40).split(/[.\n]/)[0]
+        return (ECRIRE.test(avant) && !LIRE.test(avant)) || /(?<!\p{L})(est |sont )?(mis à jour|complété|enrichi)/iu.test(apres)
+      })
+      if (ecrit) {
         p.push(`${t.cle} demande de modifier ${f}, un fichier protégé que l'usine restaure : mets cette documentation dans un autre fichier (docs/REVUE.md par exemple)`)
       }
     }

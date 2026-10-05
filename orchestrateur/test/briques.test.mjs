@@ -49,4 +49,7 @@ test("une tâche qui demande de modifier un fichier protégé est refusée, pas 
   assert.equal(tachesSurProteges(lot("Documentation : ajouter à docs/DESIGN.md une section « Revue de finition »."), ["docs/DESIGN.md"]).length, 1)
   assert.equal(tachesSurProteges(lot("Passer chaque écran au crible de la grille de docs/DESIGN.md et corriger les écarts."), ["docs/DESIGN.md"]).length, 0)
   assert.equal(tachesSurProteges(lot("Écrire la revue dans docs/REVUE.md."), ["docs/DESIGN.md"]).length, 0)
+  // Des lectures, pas des écritures (faux positifs rencontrés sur Prospecta).
+  for (const lecture of ["Corriger les écrans comme décrit dans docs/DESIGN.md.", "Modifier les écrans selon la grille de docs/DESIGN.md.", "Respecter la section Couleurs de docs/DESIGN.md."]) assert.equal(tachesSurProteges(lot(lecture), ["docs/DESIGN.md"]).length, 0, lecture)
+  for (const ecriture of ["Mettre à jour docs/DESIGN.md avec la revue.", "Rédiger dans docs/DESIGN.md le bilan.", "Le fichier docs/DESIGN.md est mis à jour."]) assert.equal(tachesSurProteges(lot(ecriture), ["docs/DESIGN.md"]).length, 1, ecriture)
 })
