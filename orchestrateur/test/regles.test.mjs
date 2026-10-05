@@ -176,15 +176,3 @@ test("suivi : un seul message, avec l'avancement et les 6 dernières étapes", a
   assert.doesNotMatch(t, /étape 2\b/)
   assert.match(t, /étape 8/)
 })
-
-test("la limite d'usage de l'abonnement n'est pas un échec de la tâche ; la reprise est lue dans le message", async () => {
-  const { limiteAtteinte, heureDeReprise } = await import("../src/fabrique.mjs")
-  const sortie = { is_error: true, api_error_status: 429, result: "You've hit your session limit · resets 12:40pm (UTC)" }
-  const l = limiteAtteinte(sortie)
-  assert.ok(l)
-  const midi = new Date("2026-10-05T11:28:00Z")
-  assert.equal(heureDeReprise(sortie.result, midi).toISOString(), "2026-10-05T12:42:00.000Z")
-  assert.equal(heureDeReprise("resets 3am (UTC)", midi).toISOString(), "2026-10-06T03:02:00.000Z")
-  assert.equal(limiteAtteinte({ is_error: true, result: "npm test a échoué" }), null)
-  assert.equal(limiteAtteinte({ is_error: false, result: "fini" }), null)
-})

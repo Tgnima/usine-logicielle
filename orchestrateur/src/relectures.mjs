@@ -3,6 +3,7 @@
 // un refus du vérificateur ; les remarques mineures sont laissées sur la PR.
 //
 //   relireSecurite : injections, XSS, secrets, accès, redirections, données personnelles…
+import { noterLimites, scriptClaude } from "./moteurs.mjs"
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { extraireJson } from "./analyste.mjs"
 import { enregistrer, usagesClaude } from "./couts.mjs"
@@ -58,9 +59,9 @@ export async function relireSecurite(ctx, projet, tache, nomDepot) {
   const r = await executer(atelier, jeton, [
     "mkdir -p /tmp/sorties/relecture && cd /tmp/sorties/relecture",
     ecrireFichier("/tmp/sorties/relecture/consigne.md", consigneSecurite(projet, tache, borne)),
-    `claude -p "$(cat consigne.md)" --output-format json --model ${q(modele)} --tools "" --max-turns 2 > reponse.json`,
-    "echo \"@@ RELECTURE_CODE $?\"",
+    scriptClaude(ctx, { args: `-p "$(cat consigne.md)" --output-format json --tools "" --max-turns 2`, modele, sortie: "/tmp/sorties/relecture/reponse.json" }),
   ].join("\n"), { minutes: 10 })
+  if (noterLimites(ctx, "claude-code", r.marqueurs).epuise) return { graves: [], mineurs: [], resume: "relecture sautée : Claude à sa limite d'usage", indisponible: true }
   let sortie
   try {
     sortie = JSON.parse(await lireFichier(atelier, jeton, "/tmp/sorties/relecture/reponse.json"))

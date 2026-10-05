@@ -25,7 +25,7 @@ export async function lancerAnalyse(ctx, projetId, options = {}) {
   await ctx.notifier.etape(projet, ":brain: L'analyste étudie la demande et prépare le plan de fabrication…")
   try {
     const mesurer = (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s })
-    const { plan, tokens } = await analyser(ctx.config, projet, { ...options, mesurer })
+    const { plan, tokens } = await analyser(ctx.config, projet, { ...options, mesurer, ctx })
     noter(db, { projet: projetId, type: "analyse", message: `Plan reçu (${tokens} jetons) : ${plan.lots?.length ?? 0} lot(s), ${plan.questions?.length ?? 0} question(s)` })
     if (plan.questions?.length && !plan.lots?.length) {
       maj(db, "projets", projetId, { statut: "questions", plan: JSON.stringify(plan) })

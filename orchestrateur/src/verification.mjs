@@ -9,6 +9,7 @@
 // un test de non-régression (.usine/e2e/), rejoué à chaque tâche suivante.
 //
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
+import { noterLimites, scriptCodex } from "./moteurs.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS } from "./creation.mjs"
 import { extraireJson } from "./analyste.mjs"
@@ -127,8 +128,7 @@ export async function verifier(ctx, projet, tache, sha) {
     "E2E_T=0; E2E_E=0; for f in .usine/e2e/*.cjs; do [ -f \"$f\" ] || continue; E2E_T=$((E2E_T+1)); if ! BASE=http://localhost:4100 timeout 90 node \"$f\" > /tmp/e2e.out 2>&1; then E2E_E=$((E2E_E+1)); echo \"== $(basename $f)\" >> /tmp/sorties/verif/e2e-echecs.txt; tail -5 /tmp/e2e.out >> /tmp/sorties/verif/e2e-echecs.txt; fi; done",
     "echo \"@@ E2E_TOTAL $E2E_T\"; echo \"@@ E2E_ECHECS $E2E_E\"",
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-    "  codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt \"$(cat /tmp/sorties/verif/consigne.md)\" > /tmp/sorties/verif/codex.log 2>&1",
-    "  echo \"@@ CODEX_CODE $?\"",
+    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt "$(cat /tmp/sorties/verif/consigne.md)"`, journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE" }),
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     "else tail -30 /tmp/sorties/verif/app.log; fi",
@@ -139,12 +139,13 @@ export async function verifier(ctx, projet, tache, sha) {
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
     "if [ -n \"$IMAGES\" ] && grep -q '\"approuve\"' /tmp/sorties/verif/verdict.txt 2>/dev/null; then",
-    "  codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt \"$(cat /tmp/sorties/verif/consigne-design.md)\" > /tmp/sorties/verif/design.log 2>&1",
-    "  echo \"@@ DESIGN_CODE $?\"",
+    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt "$(cat /tmp/sorties/verif/consigne-design.md)"`, journal: "/tmp/sorties/verif/design.log", marqueur: "DESIGN_CODE" }),
     "fi",
   ].join("\n"), { minutes: 40 })
 
   const m = r.marqueurs
+  const accesCodex = noterLimites(ctx, "codex", m)
+  if (accesCodex.epuise) return { ok: false, infra: true, limite: true, reprise: accesCodex.reprise, raisons: ["Codex à sa limite d'usage (abonnement et secours)"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
   // La consommation de Codex, même quand il refuse ou échoue.
   if ("CODEX_CODE" in m) {
     const journalCodex = await lireFichier(serveur, jeton, "/tmp/sorties/verif/codex.log")

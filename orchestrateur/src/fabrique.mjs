@@ -20,6 +20,7 @@ import { ecrireReglage, enregistrer, lireReglage, usagesClaude } from "./couts.m
 import { verifierBudgets } from "./budgets.mjs"
 import { garderCaptures } from "./suivi.mjs"
 import { decrireDefaut, relireSecurite } from "./relectures.mjs"
+import { nomMode, noterLimites, scriptClaude } from "./moteurs.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -35,25 +36,6 @@ export function liberer(db, projetId) {
 
 export const arretGeneral = (config) => existsSync(join(config.dataDir, "STOP"))
 
-// La limite d'usage de l'abonnement (Claude) : l'agent répond aussitôt « limite atteinte ».
-// Ce n'est pas une faute de la tâche : on n'use aucune tentative, on attend la réinitialisation.
-export function limiteAtteinte(sortie) {
-  if (!sortie?.is_error) return null
-  const texte = String(sortie.result ?? "")
-  if (sortie.api_error_status !== 429 && !/(session|usage|rate) limit|limite d'usage/i.test(texte)) return null
-  return { texte, reprise: heureDeReprise(texte) }
-}
-// « resets 12:40pm (UTC) » ou « resets 3pm (UTC) » ; sinon dans 30 minutes.
-export function heureDeReprise(texte, maintenant = new Date()) {
-  const m = /resets? (?:at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(?UTC\)?/i.exec(texte)
-  if (!m) return new Date(maintenant.getTime() + 30 * 60_000)
-  let h = Number(m[1]) % 12
-  if (m[3]?.toLowerCase() === "pm") h += 12
-  if (!m[3] && Number(m[1]) === 12) h = 12
-  const d = new Date(Date.UTC(maintenant.getUTCFullYear(), maintenant.getUTCMonth(), maintenant.getUTCDate(), h, Number(m[2] ?? 0)))
-  if (d <= maintenant) d.setUTCDate(d.getUTCDate() + 1)
-  return new Date(d.getTime() + 2 * 60_000) // une petite marge
-}
 const enPauseLimite = (db) => {
   const jusqua = lireReglage(db, "pause_limite", "")
   return jusqua && new Date(jusqua) > new Date() ? jusqua : null
@@ -161,17 +143,24 @@ async function fabriquer(ctx, projet, tache) {
     `cd /travail/${nomDepot}/depot`,
     ecrireFichier("/tmp/sorties/tache/consigne.md", consigne(ctx, projet, tache)),
     ": > /tmp/sorties/tache/agent.jsonl",
-    `claude -p "$(cat /tmp/sorties/tache/consigne.md)" --model ${q(tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele)} --dangerously-skip-permissions --max-turns 150 --output-format stream-json --verbose > /tmp/sorties/tache/agent.jsonl 2> /tmp/sorties/tache/agent.err`,
-    "echo \"@@ AGENT_CODE $?\"",
+    // Abonnement, puis clé API, puis passerelle : la première façon qui n'est pas à sa limite.
+    scriptClaude(ctx, {
+      args: `-p "$(cat /tmp/sorties/tache/consigne.md)" --dangerously-skip-permissions --max-turns 150 --output-format stream-json --verbose`,
+      modele: tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele,
+      sortie: "/tmp/sorties/tache/agent.jsonl",
+      erreurs: "/tmp/sorties/tache/agent.err",
+    }),
     // Le dernier évènement (« result ») a la forme de l'ancienne sortie JSON : coûts et résumé.
     "grep '\"type\":\"result\"' /tmp/sorties/tache/agent.jsonl | tail -1 > /tmp/sorties/tache/agent.json",
   ].join("\n"), { minutes, surAvancement: () => {} })
   let resume = ""
-  let limite = null
+  const acces = noterLimites(ctx, "claude-code", agent.marqueurs)
+  const limite = acces.epuise ? { texte: "toutes les façons d'utiliser Claude (abonnement, clé API, passerelle) sont à leur limite", reprise: acces.reprise ?? new Date(Date.now() + 30 * 60_000) } : null
+  if (acces.mode && acces.mode !== "abonnement") noter(db, { projet: projet.id, tache: tache.id, type: "moteur", message: `${tache.cle} : l'abonnement Claude est à sa limite, l'agent a travaillé via ${nomMode(acces.mode)} (payé à l'usage).` })
   try {
     const sortie = JSON.parse(await lireFichier(atelier, jeton, "/tmp/sorties/tache/agent.json"))
-    limite = limiteAtteinte(sortie)
-    enregistrer(db, { projet: projet.id, tache: tache.id, role: "agent", moteur: "claude-code", usages: usagesClaude(sortie), duree_s: agent.duree_s ?? 0 })
+    // Hors abonnement, ce qui est consommé se paie à l'usage : compté comme la passerelle.
+    enregistrer(db, { projet: projet.id, tache: tache.id, role: "agent", moteur: acces.mode && acces.mode !== "abonnement" ? "passerelle" : "claude-code", usages: usagesClaude(sortie), duree_s: agent.duree_s ?? 0 })
     resume = String(sortie.result ?? "").trim().slice(0, 1500)
     if (sortie.is_error) resume = `(l'agent signale une erreur) ${resume}`
   } catch {
@@ -184,9 +173,9 @@ async function fabriquer(ctx, projet, tache) {
     const deja = enPauseLimite(db)
     ecrireReglage(db, "pause_limite", limite.reprise.toISOString())
     const heure = limite.reprise.toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" })
-    noter(db, { projet: projet.id, tache: tache.id, type: "pause", message: `Limite d'usage de l'abonnement Claude atteinte (${limite.texte}). Reprise automatique vers ${heure} (heure de Paris), sans tentative consommée.` })
-    await ctx.notifier.progres(projet, `⏸️ ${tache.cle} : limite d'usage de l'abonnement Claude atteinte, reprise automatique vers ${heure}`).catch(() => {})
-    if (!deja) await ctx.notifier.alerte(`:pause_button: *Limite d'usage de l'abonnement Claude atteinte.* La fabrication s'arrête sans consommer de tentative et reprend toute seule vers ${heure} (heure de Paris).`).catch(() => {})
+    noter(db, { projet: projet.id, tache: tache.id, type: "pause", message: `Limite d'usage : ${limite.texte}. Reprise automatique vers ${heure} (heure de Paris), sans tentative consommée.` })
+    await ctx.notifier.progres(projet, `⏸️ ${tache.cle} : Claude à sa limite d'usage (abonnement et secours), reprise automatique vers ${heure}`).catch(() => {})
+    if (!deja) await ctx.notifier.alerte(`:pause_button: *Claude est à sa limite d'usage* (abonnement, et ni clé API ni passerelle disponibles). La fabrication s'arrête sans consommer de tentative et reprend toute seule vers ${heure} (heure de Paris). Pour basculer sans attendre : pose une clé AI Gateway ou une clé API Anthropic (bash secrets.sh editer).`).catch(() => {})
     return
   }
 
@@ -251,6 +240,13 @@ async function fabriquer(ctx, projet, tache) {
 
   // 6. Le vérificateur indépendant, puis la porte.
   const v = await verifier(ctx, obtenir(db, "projets", projet.id), obtenir(db, "taches", tache.id), sha)
+  if (v.limite) {
+    // Codex à sa limite partout : la tâche repassera (sans tentative consommée) à la reprise.
+    maj(db, "taches", tache.id, { statut: "prete" })
+    ecrireReglage(db, "pause_limite", (v.reprise ?? new Date(Date.now() + 30 * 60_000)).toISOString())
+    noter(db, { projet: projet.id, tache: tache.id, type: "pause", message: `${tache.cle} : Codex (vérificateur) à sa limite d'usage, abonnement et secours compris. Reprise automatique, sans tentative consommée.` })
+    return ctx.notifier.alerte(`:pause_button: *Le vérificateur (Codex) est à sa limite d'usage*, abonnement et secours compris. La fabrication reprend toute seule à la réinitialisation, sans consommer de tentative.`).catch(() => {})
+  }
   if (v.infra) {
     // Une panne du vérificateur n'est pas une faute de l'agent : on escalade sans consommer de tentative.
     maj(db, "taches", tache.id, { statut: "bloquee" })

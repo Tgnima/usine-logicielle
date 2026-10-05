@@ -160,6 +160,12 @@ docker compose exec orchestrateur node src/cli.mjs production 1
 
 ## Surveiller et entretenir l'usine
 
+- **Les limites d'usage des abonnements** (Claude, ChatGPT) : quand l'abonnement est à sa limite,
+  l'usine reprend le même travail avec la clé API du fournisseur, puis avec la passerelle
+  (Vercel AI Gateway), et revient à l'abonnement après sa réinitialisation. Si tout est
+  épuisé, elle se met en pause sans consommer de tentative et reprend seule. Réglage :
+  `secours` dans le contrat ; les limites en cours apparaissent dans la santé.
+
 - **La santé** (onglet Accueil, `/usine sante`, page web) : déployeur, ateliers, vérificateur,
   portier, Caddy, Mailpit, connexions Claude et Codex, GitHub, disque, mémoire, applications.
   Une alerte Slack seulement quand un état change (confirmé deux fois de suite).

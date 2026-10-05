@@ -96,6 +96,15 @@ budget:
 apercus:
   duree_vie_jours: 7
 
+# Les limites d'usage des abonnements : quand une façon d'utiliser un moteur est à sa limite,
+# l'usine passe à la suivante pour le même travail, puis revient à l'abonnement après sa
+# réinitialisation. Toutes épuisées : pause sans consommer de tentative, reprise automatique.
+#   abonnement (Claude Pro/Max, ChatGPT) · cle (ANTHROPIC_API_KEY / OPENAI_API_KEY) · passerelle (AI_GATEWAY_API_KEY)
+secours:
+  ordre: [abonnement, cle, passerelle]
+  modele_codex_passerelle: openai/gpt-5.5   # le vérificateur via la passerelle
+  # modeles_passerelle: { claude-sonnet-5-5: anthropic/claude-sonnet-5.5 }   # si les noms diffèrent
+
 # Le lot de finition : avant le rapport final, un dernier lot de polissage (design, textes,
 # états vides, mobile) construit à partir des remarques du relecteur design. Une fois par projet.
 finition: true
