@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Vidéo de présentation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden }
+  #scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; font-family: "IBM Plex Sans", system-ui, sans-serif; background: var(--fond); color: var(--encre) }
+  .plan { position: absolute; inset: 0; opacity: 0 }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace }
+  .grille { position: absolute; inset: 0; background-image: linear-gradient(var(--trait) 1px, transparent 1px), linear-gradient(90deg, var(--trait) 1px, transparent 1px); background-size: 80px 80px; opacity: .35 }
+  .carte { background: var(--surface); border: 2px solid var(--trait); border-radius: 22px }
+  .surtitre { font-size: 30px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--doux) }
+  .ecran { position: absolute; left: 860px; top: 140px; width: 960px; height: 680px; border-radius: 22px; overflow: hidden; background: var(--surface); border: 2px solid var(--trait); box-shadow: 0 40px 100px rgba(0,0,0,.14) }
+  .ecran .barre { height: 52px; border-bottom: 2px solid var(--trait); display: flex; align-items: center; gap: 10px; padding: 0 22px }
+  .ecran .barre i { width: 13px; height: 13px; border-radius: 50%; background: var(--trait); display: block }
+  .ecran .vue { position: absolute; top: 52px; left: 0; right: 0; bottom: 0; overflow: hidden }
+  .ecran img { width: 100%; display: block; transform-origin: 50% 0 }
+  .chiffre { font-size: 120px; font-weight: 700; line-height: 1; letter-spacing: -0.03em }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<!-- DONNEES -->
+<script>
+// Les données du projet, posées par l'usine : window.DONNEES = { nom, resume, demande, couleurs, lots: [{ nom, objectif, taches, capture }], chiffres, adresse }.
+const D = window.DONNEES ?? { nom: "Produit", resume: "", demande: "", couleurs: {}, lots: [], chiffres: {}, adresse: "" }
+const C = { fond: "#f3f4f1", surface: "#ffffff", encre: "#15181c", doux: "#5b626b", trait: "#dee1dc", accent: "#2b47c9", ...D.couleurs }
+for (const [k, v] of Object.entries(C)) document.documentElement.style.setProperty(`--${k}`, v)
+const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
+const $ = (s) => document.querySelector(s)
+const borne = (x) => Math.min(1, Math.max(0, x))
+const sortie = (x) => 1 - Math.pow(1 - borne(x), 3)
+const p = (t, a, b) => borne((t - a) / (b - a))
+const glisse = (el, x, y = 40) => { if (!el) return; el.style.opacity = x; el.style.transform = `translateY(${(1 - x) * y}px)` }
+
+// --- Le découpage : titre, besoin, une scène par fonctionnalité, chiffres, fin.
+const LOTS = D.lots.slice(0, 4)
+const PLANS = [["titre", 0, 6], ["besoin", 6, 12.5]]
+LOTS.forEach((_, i) => PLANS.push([`lot${i}`, 12.5 + i * 6.5, 19 + i * 6.5]))
+const apres = 12.5 + LOTS.length * 6.5
+PLANS.push(["chiffres", apres, apres + 6.5], ["fin", apres + 6.5, apres + 12])
+const DUREE = apres + 12
+const initiale = echapper(String(D.nom).trim().charAt(0).toUpperCase() || "U")
+
+let html = `
+<section class="plan" id="titre"><div class="grille"></div>
+  <div style="position:absolute;left:0;right:0;top:300px;display:flex;flex-direction:column;align-items:center;gap:36px;text-align:center;padding:0 160px">
+    <div id="t-logo" style="width:150px;height:150px;border-radius:36px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:84px;font-weight:700">${initiale}</div>
+    <div id="t-nom" style="font-size:120px;font-weight:700;letter-spacing:-0.03em;line-height:1.05">${echapper(D.nom)}</div>
+    <div id="t-resume" style="font-size:42px;color:var(--doux);max-width:1400px;line-height:1.35">${echapper(D.resume)}</div>
+  </div></section>
+<section class="plan" id="besoin"><div class="grille"></div>
+  <div class="surtitre" style="position:absolute;left:140px;top:150px">Le besoin, en une phrase</div>
+  <div id="b-carte" class="carte" style="position:absolute;left:140px;top:240px;width:1640px;padding:60px 70px;box-shadow:0 30px 80px rgba(0,0,0,.08)">
+    <div id="b-texte" style="font-size:50px;line-height:1.35;font-weight:500;min-height:200px"></div>
+  </div>
+  <div id="b-legende" style="position:absolute;left:140px;bottom:140px;font-size:64px;font-weight:700;letter-spacing:-0.02em">Voici ce qui a été construit.</div>
+</section>`
+LOTS.forEach((lot, i) => {
+  html += `<section class="plan" id="lot${i}"><div class="grille"></div>
+    <div style="position:absolute;left:140px;top:260px;width:640px">
+      <div class="surtitre mono" style="color:var(--accent)">${String(i + 1).padStart(2, "0")} / ${String(LOTS.length).padStart(2, "0")}</div>
+      <div class="l-titre" style="font-size:72px;font-weight:700;line-height:1.08;letter-spacing:-0.02em;margin-top:22px">${echapper(lot.nom)}</div>
+      <div class="l-objectif" style="font-size:34px;color:var(--doux);line-height:1.4;margin-top:26px">${echapper(lot.objectif)}</div>
+      <div class="l-taches" style="display:flex;flex-direction:column;gap:12px;margin-top:34px">${(lot.taches ?? []).slice(0, 4).map((t) => `<div style="font-size:28px">✓ ${echapper(t)}</div>`).join("")}</div>
+    </div>
+    <div class="ecran l-ecran"><div class="barre"><i></i><i></i><i></i><span class="mono" style="margin-left:18px;font-size:19px;color:var(--doux)">${echapper(D.adresse.replace(/^https?:\/\//, ""))}</span></div>
+      <div class="vue">${lot.capture ? `<img class="l-img" src="${lot.capture}" alt="">` : `<div style="padding:60px;display:flex;flex-direction:column;gap:22px">${(lot.taches ?? []).slice(0, 4).map((t) => `<div class="carte" style="padding:30px 34px;font-size:30px;font-weight:600">${echapper(t)}</div>`).join("")}</div>`}</div></div>
+  </section>`
+})
+const ch = D.chiffres
+const chiffres = [[ch.lots, "lots livrés"], [ch.taches, "fonctionnalités"], [ch.tests, "tests automatisés"], [ch.duree, "de travail des agents"]].filter(([v]) => v !== undefined && v !== null && v !== "")
+html += `<section class="plan" id="chiffres"><div class="grille"></div>
+  <div class="surtitre" style="position:absolute;left:140px;top:150px">Fabriqué et vérifié</div>
+  <div style="position:absolute;left:140px;right:140px;top:330px;display:grid;grid-template-columns:repeat(${chiffres.length},minmax(0,1fr));gap:40px">
+    ${chiffres.map(([v, l]) => `<div class="c-bloc"><div class="chiffre">${echapper(v)}</div><div style="font-size:32px;color:var(--doux);margin-top:16px">${echapper(l)}</div></div>`).join("")}
+  </div>
+  <div id="c-legende" style="position:absolute;left:140px;bottom:150px;font-size:44px;color:var(--doux)">Chaque fonctionnalité codée, relue et vérifiée avant d'être livrée.</div>
+</section>
+<section class="plan" id="fin" style="background:var(--encre)">
+  <div id="f-bloc" style="position:absolute;left:0;right:0;top:320px;display:flex;flex-direction:column;align-items:center;gap:34px;color:#fff;text-align:center">
+    <div style="width:130px;height:130px;border-radius:32px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:72px;font-weight:700">${initiale}</div>
+    <div style="font-size:104px;font-weight:700;letter-spacing:-0.02em">${echapper(D.nom)}</div>
+    <div class="mono" id="f-adresse" style="font-size:38px;opacity:.85">${echapper(D.adresse.replace(/^https?:\/\//, ""))}</div>
+    <div id="f-usine" style="font-size:28px;opacity:.6;margin-top:30px">Fabriqué par l'usine logicielle</div>
+  </div></section>`
+$("#scene").innerHTML = html
+
+function rendre(t) {
+  for (const [id, a, b] of PLANS) {
+    const el = document.getElementById(id)
+    const o = id === "titre" ? 1 - p(t, b - 0.45, b) : id === "fin" ? p(t, a, a + 0.45) : Math.min(p(t, a - 0.01, a + 0.45), 1 - p(t, b - 0.45, b))
+    el.style.opacity = o
+    el.style.visibility = t >= a - 0.5 && t <= b + 0.1 ? "visible" : "hidden"
+  }
+  const lg = $("#t-logo")
+  lg.style.opacity = sortie(p(t, 0.2, 0.9))
+  lg.style.transform = `scale(${0.6 + 0.4 * sortie(p(t, 0.2, 1.0))}) rotate(${(1 - sortie(p(t, 0.2, 1.0))) * -12}deg)`
+  glisse($("#t-nom"), sortie(p(t, 0.7, 1.6)))
+  glisse($("#t-resume"), sortie(p(t, 1.4, 2.3)))
+
+  glisse($("#b-carte"), sortie(p(t, 6.2, 7.0)))
+  const demande = String(D.demande ?? "")
+  const n = Math.round(demande.length * p(t, 6.8, 10.2))
+  $("#b-texte").textContent = demande.slice(0, n)
+  glisse($("#b-legende"), sortie(p(t, 10.6, 11.4)))
+
+  LOTS.forEach((_, i) => {
+    const a = 12.5 + i * 6.5
+    const s = document.getElementById(`lot${i}`)
+    glisse(s.querySelector(".l-titre"), sortie(p(t, a + 0.2, a + 0.9)))
+    glisse(s.querySelector(".l-objectif"), sortie(p(t, a + 0.6, a + 1.3)))
+    s.querySelectorAll(".l-taches > div").forEach((el, k) => glisse(el, sortie(p(t, a + 1.1 + k * 0.25, a + 1.6 + k * 0.25)), 20))
+    const e = s.querySelector(".l-ecran")
+    e.style.opacity = sortie(p(t, a + 0.1, a + 0.9))
+    e.style.transform = `translateX(${(1 - sortie(p(t, a + 0.1, a + 1.0))) * 120}px)`
+    const img = s.querySelector(".l-img")
+    // Un lent zoom sur la capture, qui descend un peu dans la page.
+    if (img) img.style.transform = `scale(${1.02 + 0.08 * p(t, a, a + 6.5)}) translateY(${-90 * p(t, a + 1, a + 6.5)}px)`
+  })
+
+  document.querySelectorAll(".c-bloc").forEach((el, k) => glisse(el, sortie(p(t, apres + 0.3 + k * 0.3, apres + 1.0 + k * 0.3)), 50))
+  glisse($("#c-legende"), sortie(p(t, apres + 2.0, apres + 2.8)))
+
+  glisse($("#f-bloc"), sortie(p(t, apres + 6.8, apres + 7.8)), 40)
+  $("#f-adresse").style.opacity = 0.85 * p(t, apres + 7.6, apres + 8.4)
+  $("#f-usine").style.opacity = 0.6 * p(t, apres + 8.4, apres + 9.2)
+}
+
+function ajuster() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080)
+  const sc = $("#scene")
+  sc.style.transform = `scale(${s})`
+  sc.style.left = `${(innerWidth - 1920 * s) / 2}px`
+  sc.style.top = `${(innerHeight - 1080 * s) / 2}px`
+}
+addEventListener("resize", ajuster)
+ajuster()
+window.rendre = rendre
+window.DUREE = DUREE
+if (!location.search.includes("capture")) {
+  const debut = performance.now()
+  const boucle = () => { rendre(((performance.now() - debut) / 1000) % DUREE); requestAnimationFrame(boucle) }
+  requestAnimationFrame(boucle)
+} else rendre(0)
+</script>
+</body>
+</html>

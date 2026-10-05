@@ -4,7 +4,7 @@
 # Codex (une autre famille de modèles que l'atelier) rend son verdict.
 FROM node:24-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 RUN npm install -g @openai/codex@latest playwright@latest && npm cache clean --force
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_PATH=/usr/local/lib/node_modules

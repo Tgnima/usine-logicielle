@@ -408,6 +408,21 @@ function blocProduction(p) {
     </div>`
 }
 
+// La vidéo de présentation du projet : un bouton, et la vidéo quand elle est prête.
+function blocVideo(p) {
+  if (!p.plan?.lots?.length) return ""
+  const v = p.video ?? { etat: "aucune" }
+  const src = `/api/projets/${p.id}/video.mp4?v=${encodeURIComponent(v.fichier?.le ?? "")}`
+  return html`<section class="carte carte-p pile" aria-labelledby="video-titre" style="gap:14px">
+    <div class="barre"><div><h2 id="video-titre">Vidéo de présentation</h2><div class="aide">Une minute pour montrer le produit : le besoin, les fonctionnalités avec les vraies captures, les chiffres, l'adresse.</div></div>
+      ${v.etat === "en_cours" ? html`<span class="badge bleu">Génération en cours…</span>` : html`<button type="button" class="btn ${v.fichier ? "btn-s" : "btn-p"}" data-action="video">${v.fichier ? "Regénérer la vidéo" : "Générer la vidéo de présentation"}</button>`}</div>
+    ${v.etat === "en_cours" ? html`<div class="aide">Le rendu se fait sur le serveur dès que le vérificateur est libre, en quelques minutes. Cette page se met à jour toute seule.</div>` : ""}
+    ${v.etat === "erreur" ? html`<div class="message erreur">La génération a échoué : ${v.message ?? "erreur inconnue"}</div>` : ""}
+    ${v.fichier ? html`<video controls preload="metadata" src="${src}" style="width:100%;max-width:960px;border-radius:12px;background:#000"></video>
+      <div class="rangee"><a class="btn btn-s btn-petit" href="${src}&telecharger=1" download>Télécharger (${Math.round(v.fichier.taille / 1024 / 1024 * 10) / 10} Mo)</a><span class="aide">générée le ${heure(v.fichier.le)}</span></div>` : ""}
+  </section>`
+}
+
 function vueProjet() {
   const p = etat.projet
   if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement du projet…</div>`
@@ -432,6 +447,7 @@ function vueProjet() {
     ${enPlan ? blocPlan(p) : ""}
     ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
     ${blocProduction(p)}
+    ${blocVideo(p)}
     <details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine et la zone sensible</summary>
       <p style="white-space:pre-wrap;color:var(--texte)">${p.prompt}</p>
       <div class="confirmer" role="alertdialog" aria-labelledby="conf-sup" id="conf-supprimer" hidden><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
@@ -694,6 +710,7 @@ function enSaisie() {
   const a = document.activeElement
   if (a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && $("#principal").contains(a)) return true
   if (etat.planModifie || etat.confirmer || etat.occupe) return true
+  if ([...document.querySelectorAll("#principal video")].some((v) => !v.paused)) return true
   return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio])")].some((x) => x.value && x.defaultValue !== x.value)
 }
 
@@ -839,6 +856,7 @@ function defautsPlan(plan) {
 const ACTIONS = {
   palette: () => ouvrirPalette(),
   "fermer-message": () => { etat.message = null; rendre() },
+  video: () => agir(() => api("POST", `projets/${etat.projet.id}/video`, {}), { succes: "Génération lancée : la vidéo arrive ici dans quelques minutes." }),
   filtre: (el) => { etat.filtre = el.dataset.id; rendre() },
   "retirer-piece": (el) => { etat.pieces.splice(Number(el.dataset.id), 1); const t = $("#demande")?.value; rendre(); if (t) $("#demande").value = t },
   notifications: async () => {

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Usine logicielle · film</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root { --encre: #15181c; --fond: #f3f4f1; --surface: #ffffff; --doux: #5b626b; --trait: #dee1dc; --accent: #2b47c9; --accent-clair: #c9d2f5; --signal: #e8590c; --vert: #1d7a46; --rouge: #c0392b; --code: #0f1216; }
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden }
+  #scene { position: absolute; width: 1920px; height: 1080px; left: 0; top: 0; transform-origin: 0 0; background: var(--fond); overflow: hidden; font-family: "IBM Plex Sans", system-ui, sans-serif; color: var(--encre) }
+  .plan { position: absolute; inset: 0; opacity: 0 }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace }
+  .abs { position: absolute }
+  .legende { position: absolute; left: 140px; bottom: 120px; width: 1100px }
+  .legende h2 { font-size: 76px; line-height: 1.05; font-weight: 700; letter-spacing: -0.02em }
+  .legende p { font-size: 34px; color: var(--doux); margin-top: 22px; line-height: 1.35 }
+  .carte { background: var(--surface); border: 2px solid var(--trait); border-radius: 22px }
+  .grille-fond { position: absolute; inset: 0; background-image: linear-gradient(var(--trait) 1px, transparent 1px), linear-gradient(90deg, var(--trait) 1px, transparent 1px); background-size: 80px 80px; opacity: .35 }
+  .pastille { white-space: nowrap; display: inline-flex; align-items: center; gap: 12px; padding: 10px 22px; border-radius: 999px; font-weight: 600; font-size: 26px }
+  .logo { width: 96px; height: 96px; border-radius: 22px; background: var(--encre); color: var(--fond); display: flex; align-items: center; justify-content: center; font-family: "IBM Plex Mono", monospace; font-size: 40px; font-weight: 500 }
+  .noeud { z-index: 2; position: absolute; width: 210px; height: 210px; border-radius: 28px; background: var(--surface); border: 3px solid var(--trait); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; font-weight: 600; font-size: 28px }
+  .noeud svg { width: 64px; height: 64px }
+  .ligne-log { font-family: "IBM Plex Mono", monospace; font-size: 30px; line-height: 1.75; color: #d5d9df; white-space: nowrap }
+  .ligne-log span { color: #8b93a0; margin-right: 18px }
+  .squelette { background: #eceee9; border-radius: 10px }
+  .garde { position: absolute; width: 800px; height: 200px; display: flex; gap: 30px; align-items: center; padding: 0 40px }
+  .garde .icone { width: 110px; height: 110px; border-radius: 24px; display: flex; align-items: center; justify-content: center; flex: none }
+  .garde strong { display: block; font-size: 33px; line-height: 1.2 }
+  .garde span { display: block; margin-top: 6px; font-size: 25px; line-height: 1.3; color: var(--doux) }
+</style>
+</head>
+<body>
+<div id="scene">
+
+  <!-- 1. L'idée -->
+  <section class="plan" id="p1">
+    <div class="grille-fond"></div>
+    <div class="abs" id="p1-titre" style="left:140px;top:150px;font-size:40px;font-weight:600;color:var(--doux)">Tout commence par une phrase.</div>
+    <div class="carte abs" id="p1-boite" style="left:140px;top:250px;width:1640px;height:330px;padding:56px 64px;box-shadow:0 30px 80px rgba(21,24,28,.10)">
+      <div class="mono" style="font-size:30px;color:var(--doux);margin-bottom:26px">/usine</div>
+      <div id="p1-texte" style="font-size:54px;line-height:1.3;font-weight:500"></div>
+    </div>
+    <div class="legende"><h2 id="p1-h">Du prompt au produit en ligne.</h2><p id="p1-s">Une usine logicielle pilotée depuis Slack et sa console.</p></div>
+  </section>
+
+  <!-- 2. Le plan -->
+  <section class="plan" id="p2">
+    <div class="grille-fond"></div>
+    <div class="abs" style="left:1000px;top:110px;width:800px">
+      <div style="font-size:30px;color:var(--doux);font-weight:600;margin-bottom:24px">L'ANALYSTE PROPOSE</div>
+      <div id="p2-lots"></div>
+    </div>
+    <div class="legende" style="bottom:auto;top:300px;width:780px"><h2>Un plan vérifiable.</h2><p>Lots, tâches, critères observables, brief de design. Tu le modifies, puis tu le valides.</p>
+      <div id="p2-valide" class="pastille" style="margin-top:44px;background:var(--encre);color:var(--fond);font-size:32px;padding:20px 34px">✓ Plan validé</div></div>
+  </section>
+
+  <!-- 3. La fabrication -->
+  <section class="plan" id="p3">
+    <div class="grille-fond"></div>
+    <div class="abs" style="left:140px;top:110px;font-size:30px;color:var(--doux);font-weight:600">CHAQUE TÂCHE PASSE PAR</div>
+    <div id="p3-chemin" class="abs" style="left:140px;top:430px;width:1640px;height:6px;background:var(--trait);border-radius:3px"></div>
+    <div id="p3-trace" class="abs" style="left:140px;top:430px;width:0;height:6px;background:var(--accent);border-radius:3px"></div>
+    <div id="p3-noeuds"></div>
+    <div id="p3-jeton" class="abs" style="width:44px;height:44px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 12px rgba(43,71,201,.18);top:411px"></div>
+    <div id="p3-refus" class="pastille abs" style="background:#fdecea;color:var(--rouge);top:590px;left:560px;font-size:30px;padding:14px 28px">✕ Refusé : un critère n'est pas tenu → correction</div>
+    <div class="abs" style="right:140px;top:96px;text-align:right">
+      <div class="mono" style="font-size:24px;color:var(--doux)">tests automatisés</div>
+      <div id="p3-tests" class="mono" style="font-size:88px;font-weight:500;line-height:1">0</div>
+    </div>
+    <div class="legende" style="bottom:90px"><h2 style="font-size:64px">Codée, relue, vérifiée par un autre modèle.</h2><p>Fusionnée seulement si tous les critères passent.</p></div>
+  </section>
+
+  <!-- 4. Le direct -->
+  <section class="plan" id="p4">
+    <div class="abs" style="inset:0;background:var(--code)"></div>
+    <div class="abs" style="left:140px;top:110px;font-size:30px;color:#8b93a0;font-weight:600">● EN DIRECT DANS LA CONSOLE</div>
+    <div id="p4-log" class="abs" style="left:140px;top:200px;width:1640px;height:560px;overflow:hidden"></div>
+    <div class="legende"><h2 style="color:#fff">Tu vois l'usine travailler.</h2><p style="color:#9aa2ad">Fichiers lus et modifiés, commandes, verdicts. Les secrets sont masqués.</p></div>
+  </section>
+
+  <!-- 5. L'aperçu -->
+  <section class="plan" id="p5">
+    <div class="grille-fond"></div>
+    <div id="p5-ecran" class="carte abs" style="left:840px;top:120px;width:960px;height:620px;overflow:hidden;box-shadow:0 40px 100px rgba(21,24,28,.14)">
+      <div style="height:54px;border-bottom:2px solid var(--trait);display:flex;align-items:center;gap:12px;padding:0 22px">
+        <i style="width:14px;height:14px;border-radius:50%;background:#e5e7e3;display:block"></i><i style="width:14px;height:14px;border-radius:50%;background:#e5e7e3;display:block"></i><i style="width:14px;height:14px;border-radius:50%;background:#e5e7e3;display:block"></i>
+        <div class="mono" style="margin-left:20px;font-size:20px;color:var(--doux)">prospecta.apercu.45-93-21-17.sslip.io</div>
+      </div>
+      <div style="display:flex;height:566px">
+        <div style="width:200px;background:#1b2430;padding:26px 18px;display:flex;flex-direction:column;gap:16px">
+          <div style="height:22px;width:120px;background:#fff;opacity:.9;border-radius:6px"></div>
+          <div class="p5-menu" style="height:16px;width:140px;background:#fff;opacity:.35;border-radius:5px;margin-top:20px"></div>
+          <div class="p5-menu" style="height:16px;width:110px;background:#fff;opacity:.35;border-radius:5px"></div>
+          <div class="p5-menu" style="height:16px;width:130px;background:#e8590c;border-radius:5px"></div>
+          <div class="p5-menu" style="height:16px;width:100px;background:#fff;opacity:.35;border-radius:5px"></div>
+        </div>
+        <div style="flex:1;padding:30px;display:flex;flex-direction:column;gap:22px">
+          <div style="display:flex;gap:18px">
+            <div class="p5-kpi carte" style="flex:1;height:110px;padding:18px"><div style="font-size:16px;color:var(--doux)">Relances du jour</div><div style="font-size:42px;font-weight:700">24</div></div>
+            <div class="p5-kpi carte" style="flex:1;height:110px;padding:18px"><div style="font-size:16px;color:var(--doux)">Taux de réponse</div><div style="font-size:42px;font-weight:700">18 %</div></div>
+            <div class="p5-kpi carte" style="flex:1;height:110px;padding:18px"><div style="font-size:16px;color:var(--doux)">Rendez-vous</div><div style="font-size:42px;font-weight:700">7</div></div>
+          </div>
+          <div class="carte" style="flex:1;padding:20px;display:flex;flex-direction:column;gap:14px" id="p5-lignes"></div>
+        </div>
+      </div>
+    </div>
+    <div id="p5-tel" class="abs" style="left:1560px;top:470px;width:250px;height:500px;border-radius:40px;background:var(--encre);padding:14px;box-shadow:0 30px 80px rgba(21,24,28,.25)">
+      <div style="width:100%;height:100%;border-radius:28px;background:var(--fond);padding:20px 16px;display:flex;flex-direction:column;gap:12px">
+        <div style="height:18px;width:110px;background:var(--encre);border-radius:5px"></div>
+        <div class="carte" style="height:70px"></div><div class="carte" style="height:70px"></div><div class="carte" style="height:70px"></div>
+        <div style="margin-top:auto;height:40px;border-radius:10px;background:#e8590c"></div>
+      </div>
+    </div>
+    <div class="legende" style="width:640px;bottom:auto;top:330px"><h2 style="font-size:58px">Un aperçu à chaque lot.</h2><p>Avec les captures ordinateur et mobile, jugées par un relecteur design.</p></div>
+  </section>
+
+  <!-- 6. Les garde-fous -->
+  <section class="plan" id="p6">
+    <div class="grille-fond"></div>
+    <div class="abs" style="left:140px;top:110px;font-size:30px;color:var(--doux);font-weight:600">PROTÉGÉ PAR DÉFAUT</div>
+    <div id="p6-gardes"></div>
+    <div class="legende" style="bottom:100px"><h2 style="font-size:64px">Rien ne part sans garde-fou.</h2></div>
+  </section>
+
+  <!-- 7. La production -->
+  <section class="plan" id="p7">
+    <div class="grille-fond"></div>
+    <div class="carte abs" style="left:290px;top:180px;width:1340px;height:420px;padding:60px 70px;box-shadow:0 40px 100px rgba(21,24,28,.12)">
+      <div style="display:flex;align-items:center;gap:24px"><div style="font-size:64px;font-weight:700">Prospecta</div><div id="p7-badge" class="pastille" style="background:#e3f1e8;color:var(--vert)">● En production</div></div>
+      <div class="mono" style="font-size:30px;color:var(--doux);margin-top:18px">https://prospecta.45-93-21-17.sslip.io</div>
+      <div style="display:flex;gap:30px;margin-top:56px;align-items:center">
+        <div id="p7-bleu" class="pastille" style="background:#e6eafa;color:var(--accent);font-size:30px">version actuelle</div>
+        <div id="p7-fleche" style="height:6px;width:200px;flex:none;background:var(--trait);border-radius:3px;position:relative"><div id="p7-flux" style="position:absolute;left:0;top:0;height:6px;width:0;background:var(--vert);border-radius:3px"></div></div>
+        <div id="p7-vert" class="pastille" style="background:#e3f1e8;color:var(--vert);font-size:30px">nouvelle version</div>
+        <div style="margin-left:auto;font-size:28px;color:var(--doux)">sans coupure · données sauvegardées</div>
+      </div>
+    </div>
+    <div class="legende" style="bottom:110px"><h2 style="font-size:66px">Tu valides. C'est en ligne.</h2><p>La mise en production reste une décision humaine.</p></div>
+  </section>
+
+  <!-- 8. La fin -->
+  <section class="plan" id="p8" style="background:var(--encre)">
+    <div class="abs" id="p8-bloc" style="left:0;right:0;top:330px;display:flex;flex-direction:column;align-items:center;gap:40px;color:var(--fond)">
+      <div class="logo" style="background:var(--fond);color:var(--encre);width:130px;height:130px;font-size:54px;border-radius:30px">U/</div>
+      <div style="font-size:96px;font-weight:700;letter-spacing:-0.02em">Usine logicielle</div>
+      <div id="p8-devise" style="font-size:46px;color:#c9ced6">Décris. Valide. C'est en ligne.</div>
+      <div id="p8-pied" class="mono" style="font-size:28px;color:#8b93a0;margin-top:20px">Slack · Console · ton serveur</div>
+    </div>
+  </section>
+</div>
+
+<script>
+// Le film : une fonction pure du temps (rendre(t)) — chaque image est reproductible.
+const DUREE = 62
+const PLANS = [["p1", 0, 8], ["p2", 8, 16], ["p3", 16, 28.5], ["p4", 28.5, 35.5], ["p5", 35.5, 43], ["p6", 43, 51], ["p7", 51, 56.5], ["p8", 56.5, 62]]
+const $ = (s) => document.querySelector(s)
+const borne = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x))
+const lisse = (x) => { x = borne(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2 }
+const sortie = (x) => 1 - Math.pow(1 - borne(x), 3)
+const p = (t, a, b) => (b <= a ? (t >= a ? 1 : 0) : borne((t - a) / (b - a)))
+const glisse = (el, x, y = 40) => { el.style.opacity = x; el.style.transform = `translateY(${(1 - x) * y}px)` }
+
+// --- Construction ---
+const DEMANDE = "Une app de prospection B2B : segments, campagnes email, relances automatiques et tableau de bord des rendez-vous."
+const LOTS = [
+  ["Socle et contacts", ["Liste et fiches contacts", "Import CSV", "Données de démo"]],
+  ["Segments et campagnes", ["Éditeur de segments", "Assistant de campagne", "Envoi et suivi"]],
+  ["Relances et réponses", ["Séquences de relance", "Boîte des réponses"]],
+  ["Tableau de bord", ["Indicateurs du jour", "Rendez-vous obtenus"]],
+]
+$("#p2-lots").innerHTML = LOTS.map(([nom, taches], i) => `<div class="carte p2-lot" style="padding:24px 30px;margin-bottom:18px">
+  <div style="display:flex;gap:16px;align-items:baseline"><span class="mono" style="color:var(--doux);font-size:22px">LOT ${i + 1}</span><strong style="font-size:32px">${nom}</strong></div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px">${taches.map((x) => `<span class="p2-tache" style="font-size:22px;padding:6px 14px;border-radius:999px;background:#eef0ec">✓ ${x}</span>`).join("")}</div></div>`).join("")
+
+const ICONES = {
+  agent: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M13.5 6l-3 12"/></svg>',
+  controle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  securite: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>',
+  verif: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>',
+  design: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/></svg>',
+  fusion: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 7.2C12 9 13 11 15.5 12M8.3 16.8C12 15 13 13 15.5 12"/></svg>',
+  cadenas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="60" height="60"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+  cle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="60" height="60"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3"/></svg>',
+  main: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="60" height="60"><path d="M9 11V5a1.5 1.5 0 0 1 3 0v5M12 10V4a1.5 1.5 0 0 1 3 0v6M15 10V6a1.5 1.5 0 0 1 3 0v7a7 7 0 0 1-7 7h-.5A6.5 6.5 0 0 1 4 14l-.5-3a1.5 1.5 0 0 1 3-.5L7 12"/></svg>',
+  relais: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="60" height="60"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg>',
+}
+const NOEUDS = [["agent", "Agent"], ["controle", "Contrôle"], ["securite", "Sécurité"], ["verif", "Vérificateur"], ["design", "Design"], ["fusion", "Fusion"]]
+const X0 = 140, PAS = (1640 - 210) / 5
+$("#p3-noeuds").innerHTML = NOEUDS.map(([i, n], k) => `<div class="noeud" id="n${k}" style="left:${X0 + k * PAS}px;top:328px">${ICONES[i]}<span>${n}</span></div>`).join("")
+
+const LOG = [
+  ["14:03:01", "l'agent démarre · approche 2, modèle renforcé"],
+  ["14:03:12", "◇ lit docs/DESIGN.md et client/src/ui"],
+  ["14:05:40", "✎ modifie client/src/pages/Campagnes.jsx"],
+  ["14:07:02", "✎ modifie client/src/pages/Sequences.jsx"],
+  ["14:09:18", "› npm run verify · 199 tests passés"],
+  ["14:10:05", "relecture sécurité · aucun point grave"],
+  ["14:12:40", "vérificateur · « Le critère 4 est tenu. »"],
+  ["14:21:14", "✓ T32 fusionnée · PR #69"],
+]
+$("#p4-log").innerHTML = LOG.map(([h, m]) => `<div class="ligne-log"><span>${h}</span>${m}</div>`).join("")
+$("#p5-lignes").innerHTML = Array.from({ length: 6 }, (_, i) => `<div style="display:flex;gap:16px;align-items:center"><div class="p5-sq squelette" style="width:40px;height:40px;border-radius:50%"></div><div class="p5-sq squelette" style="flex:1;height:18px"></div><div class="p5-sq squelette" style="width:110px;height:18px"></div><div class="p5-ok" style="width:110px;height:30px;border-radius:999px;background:${["#e3f1e8", "#e6eafa", "#fbebdc"][i % 3]};opacity:0"></div></div>`).join("")
+
+const GARDES = [
+  ["cadenas", "#e6eafa", "#2b47c9", "Page de connexion devant chaque application", "comptes par invitation, clés d'API révocables"],
+  ["cle", "#fbebdc", "#b35309", "Secrets chiffrés sur ton serveur", "jamais dans le code, jamais dans une conversation"],
+  ["main", "#e3f1e8", "#1d7a46", "Deux validations humaines", "le plan, puis la mise en production"],
+  ["relais", "#eceee9", "#15181c", "Limites d'abonnement gérées seules", "abonnement → clé API → passerelle, sans tentative perdue"],
+]
+$("#p6-gardes").innerHTML = GARDES.map(([i, f, c, titre, sous], k) => `<div class="carte garde" id="g${k}" style="left:${140 + (k % 2) * 840}px;top:${210 + Math.floor(k / 2) * 240}px"><div class="icone" style="background:${f};color:${c}">${ICONES[i]}</div><div><strong>${titre}</strong><span>${sous}</span></div></div>`).join("")
+
+// --- Rendu ---
+function rendre(t) {
+  for (const [id, a, b] of PLANS) {
+    const el = document.getElementById(id)
+    const o = Math.min(p(t, a - 0.01, a + 0.45), 1 - p(t, b - 0.45, b))
+    el.style.opacity = id === "p1" ? 1 - p(t, b - 0.45, b) : id === "p8" ? p(t, a, a + 0.45) : o
+    el.style.visibility = t >= a - 0.5 && t <= b + 0.1 ? "visible" : "hidden"
+  }
+
+  // 1. L'idée : la demande se tape, puis le titre.
+  glisse($("#p1-titre"), sortie(p(t, 0.2, 0.9)), 20)
+  glisse($("#p1-boite"), sortie(p(t, 0.3, 1.1)), 40)
+  const n = Math.round(DEMANDE.length * p(t, 1.2, 4.6))
+  $("#p1-texte").innerHTML = DEMANDE.slice(0, n) + `<span style="display:inline-block;width:4px;height:58px;vertical-align:-10px;background:var(--accent);margin-left:4px;opacity:${Math.floor(t * 2.2) % 2 ? 1 : 0.15}"></span>`
+  glisse($("#p1-h"), sortie(p(t, 5.0, 5.8)))
+  glisse($("#p1-s"), sortie(p(t, 5.5, 6.3)))
+
+  // 2. Le plan : les lots arrivent l'un après l'autre, puis la validation.
+  document.querySelectorAll(".p2-lot").forEach((el, i) => glisse(el, sortie(p(t, 8.5 + i * 0.55, 9.3 + i * 0.55)), 60))
+  document.querySelectorAll(".p2-tache").forEach((el, i) => { el.style.opacity = p(t, 9.0 + i * 0.12, 9.4 + i * 0.12) })
+  const v = sortie(p(t, 13.0, 13.6))
+  $("#p2-valide").style.opacity = v
+  $("#p2-valide").style.transform = `scale(${0.85 + 0.15 * v})`
+
+  // 3. La fabrication : un jeton parcourt les étapes ; un refus au vérificateur, une correction, puis la fusion.
+  const xNoeud = (k) => X0 + k * PAS + 105
+  let pos
+  if (t < 18.4) pos = 3 * lisse(p(t, 16.6, 18.4))                         // agent → vérificateur
+  else if (t < 19.8) pos = 3                                                // refus
+  else if (t < 21.0) pos = 3 - 3 * lisse(p(t, 19.8, 21.0))                  // retour à l'agent
+  else if (t < 23.6) pos = 5 * lisse(p(t, 21.6, 23.6))                      // jusqu'à la fusion
+  else pos = 5
+  const xj = X0 + 105 + pos * PAS
+  $("#p3-jeton").style.left = `${xj - 22}px`
+  $("#p3-jeton").style.opacity = p(t, 16.3, 16.6)
+  const refus = t >= 18.4 && t < 20.2
+  $("#p3-jeton").style.background = refus ? "var(--rouge)" : "var(--accent)"
+  $("#p3-jeton").style.boxShadow = refus ? "0 0 0 12px rgba(192,57,43,.2)" : "0 0 0 12px rgba(43,71,201,.18)"
+  $("#p3-trace").style.width = `${Math.max(0, xj - X0)}px`
+  NOEUDS.forEach((_, k) => {
+    const el = document.getElementById(`n${k}`)
+    const atteint = pos >= k - 0.05
+    const fini = t >= 23.6
+    el.style.borderColor = refus && k === 3 ? "var(--rouge)" : fini && k === 5 ? "var(--vert)" : atteint ? "var(--accent)" : "var(--trait)"
+    el.style.color = refus && k === 3 ? "var(--rouge)" : fini && k === 5 ? "var(--vert)" : atteint ? "var(--encre)" : "var(--doux)"
+    el.style.transform = `translateY(${(1 - sortie(p(t, 16 + k * 0.08, 16.6 + k * 0.08))) * 50}px) scale(${Math.abs(pos - k) < 0.3 ? 1.06 : 1})`
+    el.style.opacity = sortie(p(t, 16 + k * 0.08, 16.6 + k * 0.08))
+  })
+  glisse($("#p3-refus"), refus ? sortie(p(t, 18.4, 18.8)) : 1 - p(t, 20.2, 20.5), 20)
+  if (!refus && t < 20.2) $("#p3-refus").style.opacity = 0
+  $("#p3-tests").textContent = Math.round(199 * lisse(p(t, 21.6, 24.6)))
+  $("#p3-tests").style.color = t >= 24.6 ? "var(--vert)" : "var(--encre)"
+
+  // 4. Le direct : les lignes défilent.
+  document.querySelectorAll("#p4-log .ligne-log").forEach((el, i) => glisse(el, sortie(p(t, 29 + i * 0.65, 29.4 + i * 0.65)), 18))
+
+  // 5. L'aperçu : squelettes, puis contenu ; le téléphone arrive.
+  glisse($("#p5-ecran"), sortie(p(t, 35.8, 36.8)), 80)
+  const rempli = p(t, 38.0, 39.4)
+  document.querySelectorAll(".p5-sq").forEach((el) => { el.style.background = rempli > 0.5 ? "#d5d9df" : "#eceee9" })
+  document.querySelectorAll(".p5-ok").forEach((el, i) => { el.style.opacity = p(t, 38.2 + i * 0.12, 38.6 + i * 0.12) })
+  document.querySelectorAll(".p5-kpi").forEach((el, i) => glisse(el, sortie(p(t, 37.0 + i * 0.2, 37.6 + i * 0.2)), 20))
+  glisse($("#p5-tel"), sortie(p(t, 39.4, 40.4)), 120)
+
+  // 6. Les garde-fous.
+  GARDES.forEach((_, k) => glisse(document.getElementById(`g${k}`), sortie(p(t, 43.6 + k * 0.7, 44.3 + k * 0.7)), 50))
+
+  // 7. La production : bascule sans coupure.
+  const f = lisse(p(t, 52.2, 53.8))
+  $("#p7-flux").style.width = `${200 * f}px`
+  $("#p7-bleu").style.opacity = 1 - 0.6 * f
+  $("#p7-vert").style.transform = `scale(${1 + 0.06 * Math.sin(Math.PI * p(t, 53.6, 54.4))})`
+  $("#p7-badge").style.opacity = p(t, 53.8, 54.3)
+
+  // 8. La fin.
+  glisse($("#p8-bloc"), sortie(p(t, 56.8, 57.8)), 40)
+  $("#p8-devise").style.opacity = p(t, 57.8, 58.6)
+  $("#p8-pied").style.opacity = p(t, 58.6, 59.4)
+}
+
+// L'image remplit la fenêtre (aperçu) ; la capture fixe le temps elle-même.
+function ajuster() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080)
+  const sc = $("#scene")
+  sc.style.transform = `scale(${s})`
+  sc.style.left = `${(innerWidth - 1920 * s) / 2}px`
+  sc.style.top = `${(innerHeight - 1080 * s) / 2}px`
+}
+addEventListener("resize", ajuster)
+ajuster()
+window.rendre = rendre
+window.DUREE = DUREE
+if (!location.search.includes("capture")) {
+  const debut = performance.now()
+  const boucle = () => { rendre(((performance.now() - debut) / 1000) % DUREE); requestAnimationFrame(boucle) }
+  requestAnimationFrame(boucle)
+} else rendre(0)
+</script>
+</body>
+</html>

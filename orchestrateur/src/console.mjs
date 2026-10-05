@@ -28,6 +28,7 @@ import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evo
 import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
 import { direct } from "./direct.mjs"
+import { etatVideo, fichierVideo, genererVideo } from "./video.mjs"
 import { enregistrerPieces, listerPieces, verifierPieces } from "./pieces.mjs"
 import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
@@ -156,6 +157,7 @@ async function detailProjet(ctx, id) {
     ip_serveur: (await ipServeur(config).catch(() => []))[0] ?? null,
     captures: capturesProjet(ctx, id),
     pieces: listerPieces(config, id).map((x) => ({ nom: x.nom, taille: x.taille })),
+    video: etatVideo(ctx, id),
     estimation: plan?.lots?.length ? estimation(ctx, plan.lots.reduce((n, l) => n + l.taches.length, 0)) : null,
     apercu_garde: !!p.apercu_garde,
     budget: (() => {
@@ -353,6 +355,13 @@ const ROUTES = [
     const r = await repondreDansLeFil(ctx, Number(id), texte, qui.email)
     return { ok: true, message: r ?? "Message transmis à l'usine." }
   }],
+  ["POST", /^\/api\/projets\/(\d+)\/video$/, (ctx, [id], _c, qui) => {
+    try {
+      return genererVideo(ctx, Number(id), qui.email)
+    } catch (e) {
+      throw erreur(409, e.message)
+    }
+  }],
   ["POST", /^\/api\/projets\/(\d+)\/corriger$/, (ctx, [id], c, qui) => demanderCorrections(ctx, Number(id), String(c.texte ?? ""), qui.email)],
   ["POST", /^\/api\/escalades\/(\d+)$/, (ctx, [id], c, qui) => resoudre(ctx, Number(id), { choix: String(c.choix ?? ""), texte: String(c.texte ?? ""), par: qui.email })],
   ["POST", /^\/api\/projets\/(\d+)\/production$/, (ctx, [id], c, qui) => {
@@ -464,6 +473,23 @@ export async function traiter(ctx, req, res) {
       if (!existsSync(f)) return envoyerJson(res, 404, { erreur: "Capture introuvable." })
       res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=3600", ...ENTETES })
       return res.end(readFileSync(f))
+    }
+    const vid = url.pathname.match(/^\/api\/projets\/(\d+)\/video\.mp4$/)
+    if (vid && req.method === "GET") {
+      const f = fichierVideo(ctx.config, Number(vid[1]))
+      if (!existsSync(f)) return envoyerJson(res, 404, { erreur: "Pas encore de vidéo." })
+      const contenu = readFileSync(f)
+      const plage = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ""))
+      const nom = url.searchParams.has("telecharger") ? { "content-disposition": `attachment; filename="presentation-${vid[1]}.mp4"` } : {}
+      if (plage) {
+        const debut = plage[1] ? Number(plage[1]) : Math.max(0, contenu.length - Number(plage[2]))
+        const fin = plage[1] && plage[2] ? Math.min(Number(plage[2]), contenu.length - 1) : contenu.length - 1
+        if (debut >= contenu.length || debut > fin) return res.writeHead(416, { "content-range": `bytes */${contenu.length}` }).end()
+        res.writeHead(206, { "content-type": "video/mp4", "accept-ranges": "bytes", "content-range": `bytes ${debut}-${fin}/${contenu.length}`, "content-length": fin - debut + 1, "cache-control": "private, no-cache", ...nom, ...ENTETES })
+        return res.end(contenu.subarray(debut, fin + 1))
+      }
+      res.writeHead(200, { "content-type": "video/mp4", "accept-ranges": "bytes", "content-length": contenu.length, "cache-control": "private, no-cache", ...nom, ...ENTETES })
+      return res.end(contenu)
     }
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES.find(([m, motif]) => m === req.method && motif.test(url.pathname))
