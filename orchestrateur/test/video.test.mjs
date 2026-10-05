@@ -34,3 +34,10 @@ test("un texte piégé ne ferme pas la balise du script", () => {
   assert.ok(!h.includes("</script><script>alert(1)"))
   assert.match(h, /window\.DONNEES = /)
 })
+
+test("les pages photographiées : l'accueil et les pages de la tâche, jamais l'API ni les fichiers", async () => {
+  const { pagesDeLaTache } = await import("../src/verification.mjs")
+  const t = { titre: "Écrans", description: "Sur /campagnes et /campagnes/:id ; voir docs/DESIGN.md", criteres: JSON.stringify(["La page /contacts liste 50 contacts", "POST /api/segments renvoie 201"]) }
+  assert.deepEqual(pagesDeLaTache(t), ["/", "/campagnes", "/campagnes/1"])
+  assert.deepEqual(pagesDeLaTache({ titre: "API", description: "GET /api/x", criteres: "[]" }), ["/"])
+})

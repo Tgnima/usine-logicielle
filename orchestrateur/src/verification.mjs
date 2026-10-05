@@ -75,6 +75,49 @@ Brief :
 `
 }
 
+// Les pages à photographier : l'accueil et les pages citées par la tâche (pas l'API ni les fichiers).
+export function pagesDeLaTache(tache) {
+  let criteres = []
+  try {
+    criteres = JSON.parse(tache.criteres ?? "[]")
+  } catch {}
+  const texte = `${tache.titre ?? ""}\n${tache.description ?? ""}\n${criteres.join("\n")}`
+  const pages = new Set(["/"])
+  for (const m of texte.matchAll(/(?<![\w./-])\/[a-z][a-z0-9_\-/:]*/gi)) {
+    const chemin = m[0].replace(/\/:[a-z_]+/gi, "/1").replace(/\/+$/, "")
+    if (/^\/(api|_portier|tmp|travail|public)\b/i.test(chemin) || /\.[a-z]{2,4}$/i.test(chemin) || chemin.length < 2) continue
+    pages.add(chemin)
+    if (pages.size >= 3) break
+  }
+  return [...pages]
+}
+
+const CAPTURES_JS = `// Les captures d'écran de la tâche, prises par l'usine elle-même (pas par le modèle) :
+// chaque page, sur ordinateur (1440 px) puis sur mobile (390 px).
+const { chromium } = require("playwright")
+const BASE = process.env.BASE
+const PAGES = JSON.parse(process.env.PAGES || '["/"]')
+;(async () => {
+  const navigateur = await chromium.launch()
+  for (const [format, largeur, hauteur] of [["bureau", 1440, 900], ["mobile", 390, 844]]) {
+    const contexte = await navigateur.newContext({ viewport: { width: largeur, height: hauteur } })
+    const page = await contexte.newPage()
+    for (const [i, chemin] of PAGES.entries()) {
+      try {
+        await page.goto(BASE + chemin, { waitUntil: "networkidle", timeout: 20000 })
+        await page.waitForTimeout(800)
+        const nom = (chemin.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "accueil").slice(0, 40)
+        await page.screenshot({ path: \`/tmp/sorties/verif/captures/\${i + 1}-\${nom}-\${format}.png\` })
+      } catch (e) {
+        console.log(\`capture impossible : \${chemin} (\${String(e.message).split("\\n")[0]})\`)
+      }
+    }
+    await contexte.close()
+  }
+  await navigateur.close()
+})().catch((e) => console.log(\`captures : \${e.message}\`))
+`
+
 export async function verifier(ctx, projet, tache, sha) {
   const { config } = ctx
   const serveur = config.verificateur.url
@@ -127,6 +170,10 @@ export async function verifier(ctx, projet, tache, sha) {
     "mkdir -p /tmp/sorties/verif/e2e /tmp/sorties/verif/captures && : > /tmp/sorties/verif/e2e-echecs.txt",
     "E2E_T=0; E2E_E=0; for f in .usine/e2e/*.cjs; do [ -f \"$f\" ] || continue; E2E_T=$((E2E_T+1)); if ! BASE=http://localhost:4100 timeout 90 node \"$f\" > /tmp/e2e.out 2>&1; then E2E_E=$((E2E_E+1)); echo \"== $(basename $f)\" >> /tmp/sorties/verif/e2e-echecs.txt; tail -5 /tmp/e2e.out >> /tmp/sorties/verif/e2e-echecs.txt; fi; done",
     "echo \"@@ E2E_TOTAL $E2E_T\"; echo \"@@ E2E_ECHECS $E2E_E\"",
+    // Les captures, prises par l'usine (le modèle ne les prenait pas) : pour le relecteur design, Slack, la console et la vidéo.
+    "rm -f /tmp/sorties/verif/captures/*.png",
+    ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
+    `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 180 node /tmp/sorties/verif/captures.cjs; fi`,
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
     scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt "$(cat /tmp/sorties/verif/consigne.md)"`, journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE" }),
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).

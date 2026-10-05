@@ -56,9 +56,11 @@ export function donneesVideo(ctx, projetId) {
   // Les fonctionnalités : les lots du plan d'origine (les lots de corrections ne sont pas des fonctionnalités).
   const lots = plan.lots.map((l, i) => ({ ...l, numero: i + 1 })).filter((l) => !/^corrections?\b/i.test(l.nom)).slice(0, 4)
   const dejaPrises = new Set()
+  // En secours, les captures les plus récentes du projet (les lots de finition montrent l'interface actuelle).
+  const toutes = t.filter((x) => x.statut === "fusionnee").flatMap((x) => capturesTache(config, projetId, x.cle)).sort((a, b) => Number(b.bureau) - Number(a.bureau) || b.date - a.date)
   const lotsVideo = lots.map((l) => {
     const cles = t.filter((x) => x.lot === l.numero && x.statut === "fusionnee").map((x) => x.cle)
-    const capture = cles.flatMap((c) => capturesTache(config, projetId, c)).find((c) => !dejaPrises.has(c.chemin))
+    const capture = cles.flatMap((c) => capturesTache(config, projetId, c)).find((c) => !dejaPrises.has(c.chemin)) ?? toutes.find((c) => !dejaPrises.has(c.chemin))
     if (capture) dejaPrises.add(capture.chemin)
     return {
       nom: l.nom,
