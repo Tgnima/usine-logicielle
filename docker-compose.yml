@@ -40,6 +40,7 @@ services:
     networks: [usine]
 
   atelier-1:
+    init: true # un vrai processus 1 : les processus orphelins sont récupérés
     dns: *dns
     build: { context: ., dockerfile: atelier/Dockerfile }
     restart: unless-stopped
@@ -48,6 +49,7 @@ services:
     networks: [usine]
 
   verificateur:
+    init: true
     dns: *dns
     build: { context: ., dockerfile: verificateur/Dockerfile }
     restart: unless-stopped

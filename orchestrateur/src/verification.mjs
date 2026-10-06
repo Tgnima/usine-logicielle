@@ -118,6 +118,9 @@ const PAGES = JSON.parse(process.env.PAGES || '["/"]')
 })().catch((e) => console.log(\`captures : \${e.message}\`))
 `
 
+// Arrête tout serveur d'application encore en vie dans le vérificateur, puis attend que le port se libère.
+const LIBERER_PORT = "pkill -f 'node server/index.js' 2>/dev/null; pkill -f 'npm start' 2>/dev/null; for i in 1 2 3 4 5 6; do curl -s -o /dev/null http://localhost:4100/ || break; sleep 1; done"
+
 export async function verifier(ctx, projet, tache, sha) {
   const { config } = ctx
   const serveur = config.verificateur.url
@@ -164,6 +167,10 @@ export async function verifier(ctx, projet, tache, sha) {
     `npm test 2>&1 | tee /tmp/sorties/verif/tests.log | tail -8; ${COMPTER_TESTS} /tmp/sorties/verif/tests.log`,
     env,
     "rm -rf $DATA_DIR",
+    // Un serveur resté d'une vérification précédente (Codex peut relancer l'application hors du
+    // groupe de processus) garderait le port : l'usine jugerait l'ancien code, d'un autre projet.
+    LIBERER_PORT,
+    "if curl -s -o /dev/null http://localhost:4100/; then echo '@@ PORT_OCCUPE'; fi",
     "(npm start > /tmp/sorties/verif/app.log 2>&1 &)",
     "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
     // Le cliquet : les tests des critères déjà validés (.usine/e2e, protégé) sont rejoués.
@@ -188,9 +195,11 @@ export async function verifier(ctx, projet, tache, sha) {
     "if [ -n \"$IMAGES\" ] && grep -q '\"approuve\"' /tmp/sorties/verif/verdict.txt 2>/dev/null; then",
     scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt "$(cat /tmp/sorties/verif/consigne-design.md)"`, journal: "/tmp/sorties/verif/design.log", marqueur: "DESIGN_CODE" }),
     "fi",
+    LIBERER_PORT,
   ].join("\n"), { minutes: 40 })
 
   const m = r.marqueurs
+  if ("PORT_OCCUPE" in m) return { ok: false, infra: true, raisons: ["le port 4100 du vérificateur est occupé par un ancien serveur impossible à arrêter"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
   const accesCodex = noterLimites(ctx, "codex", m)
   if (accesCodex.epuise) return { ok: false, infra: true, limite: true, reprise: accesCodex.reprise, raisons: ["Codex à sa limite d'usage (abonnement et secours)"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
   // La consommation de Codex, même quand il refuse ou échoue.
