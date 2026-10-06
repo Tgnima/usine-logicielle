@@ -57,7 +57,9 @@ export function creerApp() {
     })
     app.get("/robots.txt", async (req, res) => {
       const m = await chargerMeta()
-      res.type("text/plain").send(`User-agent: *\nAllow: /\n${typeof m.pages === "function" ? `Sitemap: ${base(req)}/sitemap.xml\n` : ""}`)
+      // server/meta.js peut lister des chemins à ne pas faire indexer (interdits()).
+      const interdits = typeof m.interdits === "function" ? await m.interdits() : []
+      res.type("text/plain").send(`User-agent: *\nAllow: /\n${interdits.map((c) => `Disallow: ${c}\n`).join("")}${typeof m.pages === "function" ? `Sitemap: ${base(req)}/sitemap.xml\n` : ""}`)
     })
     app.get(/^(?!\/api\/).*/, async (req, res) => {
       const m = await chargerMeta()

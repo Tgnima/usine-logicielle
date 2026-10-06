@@ -8,3 +8,6 @@ export function meta(chemin) {
 }
 
 export const pages = () => PAGES.map((p) => p.chemin)
+
+// Facultatif : les chemins à ne pas faire indexer (robots.txt), par exemple ["/admin"].
+export const interdits = () => []

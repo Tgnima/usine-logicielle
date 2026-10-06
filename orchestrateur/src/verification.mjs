@@ -171,8 +171,11 @@ export async function verifier(ctx, projet, tache, sha) {
     // groupe de processus) garderait le port : l'usine jugerait l'ancien code, d'un autre projet.
     LIBERER_PORT,
     "if curl -s -o /dev/null http://localhost:4100/; then echo '@@ PORT_OCCUPE'; fi",
+    "touch /tmp/sorties/verif/avant-demarrage; sleep 1",
     "(npm start > /tmp/sorties/verif/app.log 2>&1 &)",
     "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
+    // En ligne, le code est en lecture seule : l'application n'écrit que dans DATA_DIR.
+    "sleep 2; echo \"@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/verif/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null | head -5 | tr '\\n' ' ')\"",
     // Le cliquet : les tests des critères déjà validés (.usine/e2e, protégé) sont rejoués.
     "mkdir -p /tmp/sorties/verif/e2e /tmp/sorties/verif/captures && : > /tmp/sorties/verif/e2e-echecs.txt",
     "E2E_T=0; E2E_E=0; for f in .usine/e2e/*.cjs; do [ -f \"$f\" ] || continue; E2E_T=$((E2E_T+1)); if ! BASE=http://localhost:4100 timeout 90 node \"$f\" > /tmp/e2e.out 2>&1; then E2E_E=$((E2E_E+1)); echo \"== $(basename $f)\" >> /tmp/sorties/verif/e2e-echecs.txt; tail -5 /tmp/e2e.out >> /tmp/sorties/verif/e2e-echecs.txt; fi; done",
@@ -253,6 +256,7 @@ export function porte({ marqueurs: m, verdict, design = null, plancher = 0, jour
     raisons.push("l'application ne démarre pas (le contrôle de santé /api/health ne répond pas)")
     return raisons
   }
+  if (String(m.ECRIT_DANS_CODE ?? "").trim()) raisons.push(`au démarrage, l'application écrit dans son propre code (${m.ECRIT_DANS_CODE.trim()}) : en ligne, ce dossier est en lecture seule et l'application ne démarre pas. N'écris que dans DATA_DIR (ou sers le contenu dynamiquement, par une route).`)
   if (!verdict) {
     raisons.push("le vérificateur n'a pas rendu de verdict lisible")
     return raisons

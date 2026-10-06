@@ -127,6 +127,9 @@ test("porte sécurité : refus seulement si la PR AJOUTE une faille grave de dé
   assert.deepEqual(porte({ marqueurs: { ...tout, VULN_GRAVES: "2", VULN_GRAVES_MAIN: "2" }, verdict: approuve }), [])
   assert.match(porte({ marqueurs: { ...tout, VULN_GRAVES: "3", VULN_GRAVES_MAIN: "2" }, verdict: approuve }).join(), /ajoute 1 faille/)
   assert.deepEqual(porte({ marqueurs: { ...tout, VULN_GRAVES: "?" }, verdict: approuve }), []) // audit indisponible : pas bloquant
+  // En ligne, le code est en lecture seule : une écriture au démarrage empêcherait l'aperçu de démarrer.
+  assert.match(porte({ marqueurs: { ...tout, ECRIT_DANS_CODE: "./dist/robots.txt " }, verdict: approuve }).join(), /écrit dans son propre code \(\.\/dist\/robots\.txt\)/)
+  assert.deepEqual(porte({ marqueurs: { ...tout, ECRIT_DANS_CODE: "" }, verdict: approuve }), [])
 })
 
 test("santé : le pire état l'emporte ; durée de vie d'un aperçu lisible", async () => {
