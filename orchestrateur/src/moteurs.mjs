@@ -86,7 +86,9 @@ export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null" 
     }[mode]
     return `if [ -z "$FAIT" ] && ${prealable}; then
   : > ${q(sortie)}
-  if ${lancer} > ${q(sortie)} 2> ${q(erreurs)}; then CODE=0; else CODE=$?; fi
+  # < /dev/null : le script arrive par l'entrée standard de bash ; sans cela, Claude la lirait
+  # et avalerait toutes les lignes qui suivent (elles ne s'exécuteraient jamais).
+  if ${lancer} < /dev/null > ${q(sortie)} 2> ${q(erreurs)}; then CODE=0; else CODE=$?; fi
   # Seul le résultat final compte (le travail de l'agent peut parler de « rate limit »).
   R=$(grep '"type":"result"' ${q(sortie)} 2>/dev/null | tail -1)
   if echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '"api_error_status":429|(session|usage|rate) limit|limite d.usage'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$R" | grep -oiE 'resets? [^"\\\\]{0,30}|try again [^"\\\\]{0,30}' | head -1)"
@@ -114,7 +116,7 @@ export function scriptCodex(ctx, { args, journal, marqueur = "CODEX_CODE" }) {
     }[mode]
     return `if [ -z "$FAIT" ] && ${prealable}; then
   : > ${q(journal)}
-  if ${lancer} > ${q(journal)} 2>&1; then CODE=0; else CODE=$?; fi
+  if ${lancer} < /dev/null > ${q(journal)} 2>&1; then CODE=0; else CODE=$?; fi
   # Seules les erreurs du moteur comptent (le vérificateur peut tester une limite de requêtes).
   E=$(grep -E '"type":"(error|turn.failed)"' ${q(journal)} 2>/dev/null | tail -3)
   if [ -n "$E" ] && echo "$E" | grep -qiE '(usage|rate) limit|429|quota'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$E" | grep -oiE '(try again|resets?) [^"\\\\]{0,30}' | head -1)"

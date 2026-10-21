@@ -156,3 +156,17 @@ test("recette : les écarts deviennent une demande de corrections ; aucun écart
   assert.ok(!texte.includes("Voir sa place"))
   assert.equal(ecartsEnCorrections({ ...r, scenarios: [r.scenarios[0]] }), "")
 })
+
+test("moteurs : Claude et Codex ne lisent jamais l'entrée standard du script (elle porte les lignes suivantes)", async () => {
+  const { scriptClaude, scriptCodex } = await import("../src/moteurs.mjs")
+  const db = ouvrirDb(join(mkdtempSync(join(tmpdir(), "moteurs-")), "usine.db"))
+  const { ouvrirCouts } = await import("../src/couts.mjs")
+  ouvrirCouts(db)
+  const ctx = { db, config: {} }
+  const claude = scriptClaude(ctx, { args: "-p x", modele: "m", sortie: "/tmp/s" })
+  const codex = scriptCodex(ctx, { args: "x", journal: "/tmp/j" })
+  for (const s of [claude, codex]) for (const ligne of s.split("\n").filter((l) => /(claude|codex exec) /.test(l) && /^\s*if /.test(l))) assert.match(ligne, /< \/dev\/null/)
+  // Le même mécanisme qu'en vrai : un script lu par bash sur son entrée standard, la ligne d'après doit s'exécuter.
+  const sortie = execFileSync("bash", ["-s"], { input: "cat < /dev/null > /dev/null\necho LIGNE_SUIVANTE\n" }).toString()
+  assert.match(sortie, /LIGNE_SUIVANTE/)
+})
