@@ -139,7 +139,36 @@ les ports 80 et 443 libres.
 Dans Slack : `/usine <ce que tu veux construire>`, puis les boutons du fil.
 Répondre dans le fil d'un projet vaut réponse à l'usine (correction, décision, remarque).
 `/usine acces` (comptes), `/usine couts [n°]`, `/usine tableau`, `/usine corriger <n°> …`,
-`/usine statut`, `/usine stop` (après la tâche en cours), `/usine reprendre`.
+`/usine statut`, `/usine stop` (après la tâche en cours), `/usine reprendre` (sans argument :
+l'usine repart après un arrêt).
+
+**Reprendre un dépôt existant, pour un persona.** Le cas d'usage : un reverse engineering (REA)
+a reproduit une partie d'une application ; l'usine la reprend, la spécialise pour une cible et la
+termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Dans Slack :
+`/usine reprendre https://github.com/o/depot persona Commerçant [mode copie|direct] : ce que tu veux en faire`.
+
+1. **Le persona** se crée dans la console (onglet *Personas*) : trois lignes suffisent. Un agent
+   l'approfondit par une recherche sourcée sur le web et rend une fiche (problèmes avec preuves,
+   besoins, outils actuels, objections), **ce qui est hors périmètre**, et **3 à 5 scénarios
+   cachés**. On relit, on corrige, on valide. Seul un persona validé sert à un projet.
+2. **Le mode** : *direct* si le compte GitHub de l'usine est invité en écriture sur le dépôt
+   (branche `usine/<slug>/integration`, une PR par tâche dessus, et à la fin **une PR de
+   livraison** vers la branche d'origine, que la personne fusionne elle-même : l'usine ne
+   pousse jamais sur sa branche principale) ; *copie* sinon (un dépôt de l'usine, l'original
+   n'est jamais touché).
+3. **L'inventaire**, avant tout plan : un agent lit le dépôt, trouve sa pile (Node ou Python) et
+   ses commandes, le met au contrat d'hébergement (Dockerfile, `$PORT`, `GET /api/health`,
+   `$DATA_DIR`) sans ajouter de fonctionnalité, et dit ce qui marche, ce qui est cassé, ce qui
+   manque. Le **code** éprouve ensuite chaque commande (installation, build, tests, démarrage,
+   santé) : un dépôt qui ne démarre pas s'arrête là, expliqué. Les commandes deviennent le
+   profil du projet (`.usine/profil.json`, protégé), utilisé par l'atelier et le vérificateur.
+4. **Le plan** part de l'inventaire et du persona ; on le valide comme d'habitude.
+5. Dans le dépôt : `MISSION.md` (le cap et le hors périmètre) et `ICP.md` (la fiche), tous deux
+   protégés, et `docs/INVENTAIRE.md`. **Les scénarios cachés n'y sont jamais** : l'agent qui code
+   ne peut pas coder « pour le test ».
+6. **La recette**, avant le rapport final : le vérificateur (Codex) joue les scénarios cachés dans
+   la peau du persona, sur ce qui va être livré. Le résultat est dans le rapport et la console ;
+   *Corriger les écarts* en fait un lot de corrections.
 
 **Un domaine à soi** : `/usine domaine <n°> app.mon-entreprise.fr` sur un produit en
 production. L'usine donne l'enregistrement DNS à créer (A vers le serveur), vérifie toutes

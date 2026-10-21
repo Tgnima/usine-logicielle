@@ -7,8 +7,9 @@ import { noterLimites, scriptClaude } from "./moteurs.mjs"
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { extraireJson } from "./analyste.mjs"
 import { enregistrer, usagesClaude } from "./couts.mjs"
+import { VERROUS } from "./profil.mjs"
 
-const GRILLE_SECURITE = `Grille (une application web Node/Express + React, publiée sur Internet) :
+const GRILLE_SECURITE = `Grille (une application web publiée sur Internet ; les exemples parlent de Node/Express + React, transpose-les à la pile du dépôt) :
 1. Injection SQL : toute requête SQL construite par concaténation de valeurs venant du visiteur (au lieu de paramètres « ? »).
 2. XSS : dangerouslySetInnerHTML, innerHTML, insertion de HTML venant du visiteur ou d'un modèle de langage sans échappement.
 3. Secrets : clé, jeton ou mot de passe écrit dans le code ou les tests.
@@ -42,15 +43,16 @@ Réponds UNIQUEMENT par ce JSON :
 {"graves": [{"fichier": "…", "probleme": "…", "correction": "…"}], "mineurs": [{"fichier": "…", "probleme": "…"}], "resume": "une phrase"}`
 }
 
-export async function relireSecurite(ctx, projet, tache, nomDepot) {
+// dossier : le clone de la tâche dans l'atelier ; base : la branche où elle sera fusionnée.
+export async function relireSecurite(ctx, projet, tache, { dossier, base = "main" }) {
   const { config, db } = ctx
   const atelier = config.atelier.url
   const jeton = config.secrets.worker
   const modele = config.modeles?.relecteur?.modele ?? config.modeles.atelier.modele
   // Le diff de la branche (le code, pas le verrou des dépendances), borné.
   const diff = await executer(atelier, jeton, [
-    `cd /travail/${nomDepot}/depot`,
-    "git diff main...HEAD -- . ':(exclude)package-lock.json' ':(exclude)dist/**' > /tmp/sorties/tache/diff.txt",
+    `cd ${dossier}`,
+    `git diff ${q(`origin/${base}`)}...HEAD -- . ${VERROUS} ':(exclude)dist/**' > /tmp/sorties/tache/diff.txt`,
     "echo \"@@ DIFF_OCTETS $(wc -c < /tmp/sorties/tache/diff.txt)\"",
   ].join("\n"), { minutes: 2 })
   const texteDiff = String((await lireFichier(atelier, jeton, "/tmp/sorties/tache/diff.txt")) ?? "")

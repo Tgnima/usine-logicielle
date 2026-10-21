@@ -22,6 +22,10 @@ modeles:
   produit:       { modele: anthropic/claude-sonnet-5.5 }
   # Quand une tâche change d'approche (les corrections n'ont pas suffi), un modèle plus fort.
   renfort:       { moteur: claude-code, modele: claude-opus-5-5 }
+  # Facultatifs : la recherche des personas (défaut : l'analyste) et l'inventaire d'un dépôt
+  # repris (défaut : le renfort ; une erreur d'inventaire coûte toute la reprise).
+  # chercheur:   { moteur: claude-code, modele: claude-opus-5-5 }
+  # inventaire:  { moteur: claude-code, modele: claude-opus-5-5 }
 
 autonomie:
   tentatives_par_tache: 2          # corrections après un refus du vérificateur

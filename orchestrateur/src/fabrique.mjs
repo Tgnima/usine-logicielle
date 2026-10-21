@@ -12,7 +12,7 @@ import { join } from "node:path"
 import { decisions, maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { ajouterEtiquettes, commentairePR, ecrireFichierDepot, fusionnerPR, ouvrirPR, retirerEtiquette } from "./github.mjs"
-import { COMPTER_TESTS } from "./creation.mjs"
+import { COMPTER_TESTS, VERROUS, brancheDeBase, brancheDeTache, estRepris, lireProfil, proteges } from "./profil.mjs"
 import { pathspec, verifier } from "./verification.mjs"
 import { escalader } from "./escalade.mjs"
 import { apresFusion } from "./livraison.mjs"
@@ -79,9 +79,12 @@ function consigne(ctx, projet, tache) {
   const lot = plan.lots[tache.lot - 1]
   const criteres = JSON.parse(tache.criteres)
   const decisionsPrises = decisions(ctx.db, projet.id)
+  const repris = estRepris(projet)
+  const p = lireProfil(projet)
   const parties = [
     `Tu es développeur senior dans une usine logicielle. Tu travailles dans ce dépôt : le produit « ${projet.nom} » (${plan.resume}).`,
-    "Lis d'abord AGENTS.md (les conventions, à suivre strictement) puis docs/PLAN.md (le plan validé).",
+    `Lis d'abord MISSION.md (le cap, et ce qu'on ne construit pas)${projet.persona_id ? ", ICP.md (le persona : juge chaque choix de son point de vue)" : ""}, AGENTS.md${repris ? " s'il existe" : ""} (les conventions, à suivre strictement) puis docs/PLAN.md (le plan validé).`,
+    ...(repris ? [`Ce produit existait avant l'usine (docs/INVENTAIRE.md dit ce qui marchait) : pars du code existant, respecte sa pile (${p.pile}) et son organisation, ne réécris pas ce qui marche.`] : []),
     "",
     `Lot ${tache.lot} : ${lot?.nom ?? ""}. Objectif du lot : ${lot?.objectif ?? ""}`,
     `Ta tâche : ${tache.cle} · ${tache.titre}`,
@@ -91,15 +94,23 @@ function consigne(ctx, projet, tache) {
     ...criteres.map((c, i) => `${i + 1}. ${c}`),
     "",
     "Règles :",
-    "- Écris d'abord les tests (node:test) des critères testables sans navigateur, puis le code.",
+    repris
+      ? `- Écris d'abord les tests des critères testables sans navigateur, avec l'outil de test du dépôt (la commande \`${p.tester}\` doit les lancer), puis le code.`
+      : "- Écris d'abord les tests (node:test) des critères testables sans navigateur, puis le code.",
     "- Ne supprime ni n'affaiblis aucun test existant.",
-    `- Ne modifie pas les fichiers protégés : ${(ctx.config.perimetre_protege ?? []).join(", ")}. L'usine les restaurerait.`,
+    `- Ne modifie pas les fichiers protégés : ${proteges(ctx.config, projet).join(", ")}. L'usine les restaurerait.`,
     "- Ne fais ni commit ni push : l'usine s'en charge.",
     "- Reste dans le périmètre de la tâche ; ne casse pas ce qui existe.",
-    "- Avant de terminer, `npm run verify` doit passer. Lance-le et corrige jusqu'à ce qu'il passe.",
-    "- Puis autocontrôle, comme le fera le vérificateur : `npm run build`, lance l'application (`PORT=4300 DEMO=1 DATA_DIR=/tmp/autocontrole npm start &`), vérifie avec curl chaque critère observable par HTTP et que les pages demandées répondent, puis arrête-la. Corrige ce qui ne tient pas.",
+    repris
+      ? `- Avant de terminer, \`${p.construire}\` puis \`${p.tester}\` doivent passer. Lance-les et corrige jusqu'à ce qu'ils passent (dépendances : \`${p.installer}\`).`
+      : "- Avant de terminer, `npm run verify` doit passer. Lance-le et corrige jusqu'à ce qu'il passe.",
+    repris
+      ? `- Puis autocontrôle, comme le fera le vérificateur : lance l'application (\`PORT=4300 DEMO=1 DATA_DIR=/tmp/autocontrole ${p.demarrer} &\`), vérifie que GET /api/health répond 200, vérifie avec curl chaque critère observable par HTTP et que les pages demandées répondent, puis arrête-la. Corrige ce qui ne tient pas.`
+      : "- Puis autocontrôle, comme le fera le vérificateur : `npm run build`, lance l'application (`PORT=4300 DEMO=1 DATA_DIR=/tmp/autocontrole npm start &`), vérifie avec curl chaque critère observable par HTTP et que les pages demandées répondent, puis arrête-la. Corrige ce qui ne tient pas.",
     "- Si docs/maquettes/ existe, ce sont les maquettes, captures ou documents fournis par l'utilisateur : regarde-les (outil Read) et respecte-les.",
-    "- Design (si le produit a des écrans, dossier client/) : lis docs/DESIGN.md s'il existe, construis avec client/src/ui et les jetons de couleur ; tes écrans seront jugés sur captures (ordinateur et mobile) avec sa grille.",
+    repris
+      ? "- Design (si le produit a des écrans) : lis docs/DESIGN.md s'il existe, réutilise les composants et le style déjà présents dans le dépôt ; tes écrans seront jugés sur captures (ordinateur et mobile)."
+      : "- Design (si le produit a des écrans, dossier client/) : lis docs/DESIGN.md s'il existe, construis avec client/src/ui et les jetons de couleur ; tes écrans seront jugés sur captures (ordinateur et mobile) avec sa grille.",
     "- Si tu lances un serveur pour essayer, arrête-le avant de terminer.",
   ]
   if (decisionsPrises.length) parties.push("", "Décisions humaines déjà prises sur ce projet (à respecter) :", ...decisionsPrises.map((d) => `- ${d.question} → ${d.reponse}`))
@@ -113,8 +124,12 @@ async function fabriquer(ctx, projet, tache) {
   const { config, db } = ctx
   const atelier = config.atelier.url
   const jeton = config.secrets.worker
-  const nomDepot = projet.depot.split("/")[1]
-  const branche = `usine/${tache.cle.toLowerCase()}`
+  // Les appels GitHub prennent le dépôt complet (un dépôt repris peut appartenir à quelqu'un d'autre).
+  const nomDepot = projet.depot
+  const base = brancheDeBase(projet)
+  const profil = lireProfil(projet)
+  const dossier = `/travail/${projet.slug}/depot`
+  const branche = brancheDeTache(projet, tache.cle)
   const reprendre = tache.tentative > 0 && tache.branche
   const essai = `tentative ${tache.tentative + 1}${tache.approche ? `, approche ${tache.approche + 1}` : ""}`
 
@@ -128,11 +143,12 @@ async function fabriquer(ctx, projet, tache) {
   const prep = await executer(atelier, jeton, [
     "set -eo pipefail",
     RESEAU,
-    `D=/travail/${nomDepot}; rm -rf "$D" && mkdir -p "$D" /tmp/sorties/tache && cd "$D"`,
+    `D=/travail/${projet.slug}; rm -rf "$D" && mkdir -p "$D" /tmp/sorties/tache && cd "$D"`,
     `cloner "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
     `cd depot && git remote set-url origin https://github.com/${projet.depot}.git`,
-    reprendre ? `git checkout -q -B ${q(branche)} origin/${q(branche)} 2>/dev/null || git checkout -q -B ${q(branche)} main` : `git checkout -q -B ${q(branche)} main`,
-    "npm ci --no-audit --no-fund > /tmp/sorties/tache/npm.log 2>&1 || npm install --no-audit --no-fund >> /tmp/sorties/tache/npm.log 2>&1",
+    reprendre ? `git checkout -q -B ${q(branche)} origin/${q(branche)} 2>/dev/null || git checkout -q -B ${q(branche)} origin/${q(base)}` : `git checkout -q -B ${q(branche)} origin/${q(base)}`,
+    // Dans l'atelier, un verrou en retard ne bloque pas l'agent (il le remettra d'aplomb).
+    `bash -c ${q(profil.installer)} > /tmp/sorties/tache/installation.log 2>&1 || { [ -f package.json ] && npm install --no-audit --no-fund >> /tmp/sorties/tache/installation.log 2>&1; }`,
     "echo '@@ PREPARATION_OK'",
   ].join("\n"), { env: { JETON: config.secrets.github }, minutes: 10 })
   if (!("PREPARATION_OK" in prep.marqueurs)) throw new Error(`Préparation impossible : ${prep.journal.slice(-600)}`)
@@ -140,7 +156,7 @@ async function fabriquer(ctx, projet, tache) {
   // 2. L'agent code. Il ne voit pas le jeton GitHub ; l'atelier est son bac à sable.
   const minutes = config.autonomie?.minutes_max_par_agent ?? 30
   const agent = await executer(atelier, jeton, [
-    `cd /travail/${nomDepot}/depot`,
+    `cd ${dossier}`,
     ecrireFichier("/tmp/sorties/tache/consigne.md", consigne(ctx, projet, tache)),
     ": > /tmp/sorties/tache/agent.jsonl",
     // Abonnement, puis clé API, puis passerelle : la première façon qui n'est pas à sa limite.
@@ -180,30 +196,32 @@ async function fabriquer(ctx, projet, tache) {
   }
 
   // 3. Contrôle local : fichiers protégés restaurés, taille du changement, build et tests.
-  const protege = pathspec(config.perimetre_protege ?? [])
+  const protege = pathspec(proteges(config, projet))
+  const B = `origin/${base}`
   const ctl = await executer(atelier, jeton, [
     "set -o pipefail",
-    `cd /travail/${nomDepot}/depot`,
+    `cd ${dossier}`,
     "git add -A",
-    `RESTAURES=$(git diff --cached --name-only main -- ${protege} | tr '\\n' ' ')`,
-    "for f in $RESTAURES; do if git cat-file -e \"main:$f\" 2>/dev/null; then git checkout -q main -- \"$f\"; else git rm -q -f --cached \"$f\"; rm -f \"$f\"; fi; done",
+    `RESTAURES=$(git diff --cached --name-only ${q(B)} -- ${protege} | tr '\\n' ' ')`,
+    `for f in $RESTAURES; do if git cat-file -e ${q(B)}":$f" 2>/dev/null; then git checkout -q ${q(B)} -- "$f"; else git rm -q -f --cached "$f"; rm -f "$f"; fi; done`,
     "git add -A",
     "echo \"@@ RESTAURES $RESTAURES\"",
-    "echo \"@@ FICHIERS $(git diff --cached --name-only main | wc -l)\"",
-    "echo \"@@ LIGNES $(git diff --cached --numstat main -- . ':(exclude)package-lock.json' | awk '{s+=$1+$2} END{print s+0}')\"",
-    `npm run verify 2>&1 | tee /tmp/sorties/tache/verify.log | tail -25; echo "@@ VERIFY_CODE \${PIPESTATUS[0]}"; ${COMPTER_TESTS} /tmp/sorties/tache/verify.log`,
+    `echo "@@ FICHIERS $(git diff --cached --name-only ${q(B)} | wc -l)"`,
+    `echo "@@ LIGNES $(git diff --cached --numstat ${q(B)} -- . ${VERROUS} | awk '{s+=$1+$2} END{print s+0}')"`,
+    // Le contrôle du profil : construire puis tester (npm run verify pour une brique).
+    `{ bash -c ${q(profil.construire)} && bash -c ${q(profil.tester)}; } 2>&1 | tee /tmp/sorties/tache/verify.log | tail -25; echo "@@ VERIFY_CODE \${PIPESTATUS[0]}"; ${COMPTER_TESTS} /tmp/sorties/tache/verify.log`,
   ].join("\n"), { minutes: 10 })
   const m = ctl.marqueurs
   const refus = []
   if (Number(m.FICHIERS ?? 0) === 0) refus.push("aucune modification : la tâche n'a pas été réalisée")
-  if (m.VERIFY_CODE !== "0") refus.push(`\`npm run verify\` échoue dans l'atelier :\n${ctl.journal.split("\n").slice(-25).join("\n")}`)
+  if (m.VERIFY_CODE !== "0") refus.push(`\`${profil.construire}\` puis \`${profil.tester}\` échouent dans l'atelier :\n${ctl.journal.split("\n").slice(-25).join("\n")}`)
   if (refus.length) return refuser(ctx, projet, tache, refus, { resume })
 
   // 4. Commit et push de la branche, puis la pull request.
   const push = await executer(atelier, jeton, [
     "set -eo pipefail",
     RESEAU,
-    `cd /travail/${nomDepot}/depot`,
+    `cd ${dossier}`,
     `git commit -q -m ${q(`${tache.cle} · ${tache.titre}`)} || true`,
     `reessayer git push -q --force "https://x-access-token:$JETON@github.com/${projet.depot}.git" HEAD:refs/heads/${branche} 2>&1 | sed "s/$JETON/***/g"`,
     "echo \"@@ SHA $(git rev-parse HEAD)\"",
@@ -224,14 +242,14 @@ async function fabriquer(ctx, projet, tache) {
     "",
     "_La fusion sera décidée par le code de l'usine, après le vérificateur indépendant._",
   ].join("\n")
-  const pr = await ouvrirPR(config, nomDepot, { titre: `${tache.cle} · ${tache.titre}`, corps, branche })
+  const pr = await ouvrirPR(config, nomDepot, { titre: `${tache.cle} · ${tache.titre}`, corps, branche, base })
   maj(db, "taches", tache.id, { statut: "verification", pr: pr.number })
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:en-cours").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:verification"]).catch(() => {})
   await ctx.notifier.progres(projet, `🔎 ${tache.cle} : PR <https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}> en relecture et en vérification`)
 
   // 5. La relecture sécurité (un autre agent, une grille) : un défaut grave renvoie la tâche.
-  const rs = await relireSecurite(ctx, projet, tache, nomDepot).catch((e) => ({ graves: [], mineurs: [], resume: e.message, indisponible: true }))
+  const rs = await relireSecurite(ctx, projet, tache, { dossier, base }).catch((e) => ({ graves: [], mineurs: [], resume: e.message, indisponible: true }))
   if (rs.graves.length) {
     await commentairePR(config, nomDepot, pr.number, `### :lock: Refusée par la relecture sécurité\n\n${rs.graves.map((d) => `- ${decrireDefaut(d)}`).join("\n")}`).catch(() => {})
     return refuser(ctx, projet, tache, rs.graves.map((d) => `sécurité : ${decrireDefaut(d)}`), { resume })
@@ -273,7 +291,7 @@ async function fabriquer(ctx, projet, tache) {
   for (const fichier of v.nouveauxTests ?? []) {
     const contenu = await lireFichier(config.verificateur.url, config.secrets.worker, `/tmp/sorties/verif/e2e/${fichier}`).catch(() => null)
     if (!contenu) continue
-    await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), `Non-régression : ${fichier} (${tache.cle})`).then(() => versés++).catch((e) => console.error("Test de non-régression :", e.message))
+    await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), `Non-régression : ${fichier} (${tache.cle})`, base).then(() => versés++).catch((e) => console.error("Test de non-régression :", e.message))
   }
   if (versés) noter(db, { projet: projet.id, tache: tache.id, type: "cliquet", message: `${versés} test(s) de non-régression ajouté(s) (${tache.cle})` })
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:verification").catch(() => {})

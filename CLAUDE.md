@@ -22,6 +22,10 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `commun/serveur-travaux.mjs` | Le serveur de travaux de l'atelier et du vérificateur |
 | `briques/` | Les points de départ des produits (`webapp`, et ses surcouches `site`, `api`, `pwa`), assemblés par `assembler.mjs` ; la liste de l'analyste est `BRIQUES` (analyste.mjs) |
 | `orchestrateur/src/domaines.mjs` | Les domaines personnalisés : DNS vérifié, puis `domaines/<slug>.json` pour le déployeur |
+| `orchestrateur/src/profil.mjs` | Le profil d'un projet : ses commandes (installer, construire, tester, démarrer), sa branche de base, ses fichiers protégés, le comptage des tests (node, jest, vitest, mocha, pytest, unittest) |
+| `orchestrateur/src/reprise.mjs` | Reprendre un dépôt existant : mode copie ou direct, l'inventaire (mise au contrat d'hébergement, éprouvée par `porteInventaire()`), le socle gardé en patch |
+| `orchestrateur/src/personas.mjs` | Les personas : recherche sourcée, fiche vérifiée par `verifierPersona()`, ICP.md et MISSION.md |
+| `orchestrateur/src/recette.mjs` | La recette : les scénarios cachés du persona, joués à la fin par le vérificateur |
 | `docs/INDUSTRIALISATION.md` | L'offre pour un hébergeur |
 | `usine.config.yml` | Le contrat (non suivi par Git, créé depuis l'exemple) |
 
@@ -31,6 +35,11 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
   (`blocSite()` dans le déployeur) ; tout nouveau secret va dans `SECRETS` (`secrets.sh`) et
   dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans l'environnement.
 
+- **Les scénarios cachés d'un persona ne sortent jamais de l'usine** : ni dans un dépôt, ni dans
+  une consigne d'agent qui code (atelier, analyste, inventaire). Seule la recette (vérificateur) les lit.
+- Tout ce qui lance le code d'un produit passe par son profil (`lireProfil()`), jamais `npm` en dur ;
+  toute branche passe par `brancheDeBase()` et `brancheDeTache()`, jamais `main` en dur. En mode direct,
+  l'usine ne pousse jamais sur la branche d'origine et ne fusionne jamais la PR de livraison.
 - Une nouvelle brique : un dossier `briques/<nom>` avec `brique.json` (surcouche de `webapp` de préférence), son `AGENTS.brique.md`, et une entrée dans `BRIQUES` ; le test `briques.test.mjs` vérifie la concordance.
 - Node ES modules, sans framework. Dépendances : `@slack/bolt`, `yaml` et `nodemailer` (orchestrateur, pour les invitations) ; aucune ailleurs.
 - **Une décision de fusion ou de mise en production est prise par du code**, jamais par un modèle.

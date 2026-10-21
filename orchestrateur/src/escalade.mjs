@@ -44,7 +44,7 @@ export async function escalader(ctx, { projetId, tacheId = null, raison, details
   const deja = db.prepare("SELECT id FROM escalades WHERE projet_id = ? AND tache_id IS ? AND raison = ? AND statut = 'ouverte'").get(projetId, tacheId, raison)
   if (deja) return deja.id
   const opts = options(raison, Boolean(tache?.pr))
-  const nomDepot = projet.depot?.split("/")[1]
+  const nomDepot = projet.depot
   const sujet = tache ? `${tache.cle} · ${tache.titre}` : projet.nom
   const corps = [
     `@${config.github.proprietaire}, l'usine a besoin de ta décision : ${RAISONS[raison] ?? raison}.`,
@@ -90,7 +90,7 @@ export async function resoudre(ctx, escaladeId, { choix, texte = "", par = "?" }
   db.prepare("UPDATE escalades SET statut = 'resolue' WHERE id = ?").run(escaladeId)
   const projet = obtenir(db, "projets", esc.projet_id)
   const tache = esc.tache_id ? obtenir(db, "taches", esc.tache_id) : null
-  const nomDepot = projet.depot?.split("/")[1]
+  const nomDepot = projet.depot
   const question = `${tache ? tache.cle : projet.nom} : ${esc.raison}`
   const reponse = `${choix} · ${opt.libelle}${texte ? ` — ${texte}` : ""}`
   db.prepare("INSERT INTO decisions (projet_id, tache_id, question, reponse, par) VALUES (?, ?, ?, ?, ?)").run(projet.id, esc.tache_id, question, reponse, par)
@@ -154,7 +154,7 @@ export function surveillerEscalades(ctx) {
     const { config, db } = ctx
     for (const esc of db.prepare("SELECT * FROM escalades WHERE statut = 'ouverte'").all()) {
       const projet = obtenir(db, "projets", esc.projet_id)
-      const nomDepot = projet.depot?.split("/")[1]
+      const nomDepot = projet.depot
       if (!esc.issue || !nomDepot) continue
       try {
         const cles = JSON.parse(esc.options).map((o) => o.cle)

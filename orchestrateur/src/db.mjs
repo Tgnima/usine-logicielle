@@ -67,6 +67,34 @@ export function ouvrirDb(chemin) {
   // Colonnes ajoutées après coup : présentes sur une base neuve comme sur une base existante.
   const colonnes = new Set(db.prepare("PRAGMA table_info(projets)").all().map((c) => c.name))
   if (!colonnes.has("production")) db.exec("ALTER TABLE projets ADD COLUMN production TEXT") // choix de production (JSON)
+  // Un dépôt repris (/usine reprendre) et le persona visé :
+  //   origine     { depot, branche_source, mode: copie | direct } (JSON), null pour un produit né dans l'usine ;
+  //   branche     la branche où l'usine intègre (main, ou usine/<slug>/integration dans le dépôt d'origine) ;
+  //   profil      les commandes du projet (profil.mjs, JSON) ; inventaire : ce que l'usine a trouvé (JSON) ;
+  //   recette     le résultat des scénarios cachés (JSON) ; pr_livraison : la PR rendue au dépôt d'origine.
+  for (const [nom, def] of [["persona_id", "INTEGER"], ["origine", "TEXT"], ["branche", "TEXT"], ["profil", "TEXT"], ["inventaire", "TEXT"], ["recette", "TEXT"], ["pr_livraison", "INTEGER"]]) {
+    if (!colonnes.has(nom)) db.exec(`ALTER TABLE projets ADD COLUMN ${nom} ${def}`)
+  }
+  // Les personas : la cible d'un produit, approfondie par une recherche, validée par un humain.
+  //   statut     recherche -> a_valider -> valide (echec si la recherche n'aboutit pas) ;
+  //   fiche      ce que lisent les agents (ICP.md dans le dépôt) ;
+  //   scenarios  les scénarios cachés : jamais écrits dans un dépôt ni montrés à l'agent qui code,
+  //              la recette les joue à la fin, sur le produit fini.
+  db.exec(`CREATE TABLE IF NOT EXISTS personas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT NOT NULL,
+    brief TEXT NOT NULL,
+    statut TEXT NOT NULL DEFAULT 'recherche',
+    fiche TEXT,
+    hors_perimetre TEXT NOT NULL DEFAULT '[]',
+    scenarios TEXT NOT NULL DEFAULT '[]',
+    consignes TEXT,
+    erreur TEXT,
+    cree_par TEXT,
+    valide_par TEXT,
+    cree_le TEXT NOT NULL DEFAULT (datetime('now')),
+    maj_le TEXT NOT NULL DEFAULT (datetime('now'))
+  )`)
   return db
 }
 

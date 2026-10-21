@@ -2,9 +2,10 @@
 # de l'agent qui a codé. Il reconstruit le produit à partir de la pull request,
 # le démarre et le teste comme un visiteur (curl, Playwright + Chromium), puis
 # Codex (une autre famille de modèles que l'atelier) rend son verdict.
+# Python : pour un dépôt repris dans cette pile. psmisc : fuser, pour libérer un port.
 FROM node:24-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps psmisc ffmpeg python3 python3-venv python3-pip \
   && rm -rf /var/lib/apt/lists/*
 RUN npm install -g @openai/codex@latest playwright@latest && npm cache clean --force
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_PATH=/usr/local/lib/node_modules

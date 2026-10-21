@@ -9,13 +9,16 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { adresses } from "./config.mjs"
 import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
-import { ecrireEtat, ecrireFichierDepot, shaPrincipal } from "./github.mjs"
+import { ecrireEtat, ecrireFichierDepot, ouvrirPR, shaPrincipal } from "./github.mjs"
 import { analyserBrief, analyserCorrections } from "./analyste.mjs"
 import { designEnMarkdown } from "./design.mjs"
 import { capturesDuLot } from "./suivi.mjs"
 import { ajouterLot } from "./creation.mjs"
 import { escalader } from "./escalade.mjs"
 import { ecrireReglage, enregistrer, lireReglage } from "./couts.mjs"
+import { brancheDeBase } from "./profil.mjs"
+import { jouerRecette, lireRecette } from "./recette.mjs"
+import { lirePersona, obtenirPersona, personaEnTexte } from "./personas.mjs"
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
@@ -116,8 +119,7 @@ async function livrerApercu(ctx, projetId, lot) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
   const plan = lirePlan(projet)
-  const nomDepot = projet.depot.split("/")[1]
-  const sha = await shaPrincipal(config, nomDepot)
+  const sha = await shaPrincipal(config, projet.depot, brancheDeBase(projet))
   const a = adresses(config, projet.slug)
   maj(db, "projets", projetId, { lot_livre: lot })
   await ctx.notifier.progres(projet, `📦 Lot ${lot} terminé (${plan.lots[lot - 1]?.nom ?? ""}) : déploiement de l'aperçu`)
@@ -176,9 +178,45 @@ export async function finaliserSiFini(ctx, projetId) {
     await demanderCorrections(ctx, projetId, texte, "l'usine (finition)")
     return true
   }
-  const sha = await shaPrincipal(config, projet.depot.split("/")[1])
+  const sha = await shaPrincipal(config, projet.depot, brancheDeBase(projet))
+  // La recette : les scénarios cachés du persona, joués sur ce qui va être livré (une fois par version).
+  if (projet.persona_id && lireRecette(projet)?.sha !== sha) await jouerRecette(ctx, projetId, sha).catch((e) => console.error("Recette :", e.message))
+  // Un dépôt repris en mode direct : l'usine rend son travail par UNE pull request vers la branche
+  // d'origine. Elle ne la fusionne jamais : c'est la personne qui décide.
+  if (projet.origine) await ouvrirPRLivraison(ctx, projetId).catch((e) => noter(db, { projet: projetId, type: "erreur", message: `Pull request de livraison impossible : ${e.message}` }))
   await ctx.notifier.rapportFinal(obtenir(db, "projets", projetId), rapport(ctx, projetId, sha))
   return true
+}
+
+async function ouvrirPRLivraison(ctx, projetId) {
+  const { config, db } = ctx
+  const projet = obtenir(db, "projets", projetId)
+  const origine = JSON.parse(projet.origine)
+  if (origine.mode !== "direct") return null
+  const plan = lirePlan(projet)
+  const recette = lireRecette(projet)
+  const tout = taches(db, projetId)
+  const corps = [
+    `L'usine logicielle a terminé **${plan.nom}** à partir de ce dépôt${plan.persona ? `, pour le persona « ${plan.persona} »` : ""}.`,
+    "",
+    plan.resume,
+    "",
+    "### Ce qui a été fait",
+    ...plan.lots.map((l, i) => `- **Lot ${i + 1} : ${l.nom}** (${tout.filter((t) => t.lot === i + 1 && t.statut === "fusionnee").length}/${tout.filter((t) => t.lot === i + 1).length} tâches) : ${l.objectif}`),
+    "",
+    `Chaque tâche a été codée par un agent, testée par un vérificateur indépendant et fusionnée sur \`${projet.branche}\` par le code de l'usine. ${projet.plancher_tests} test(s) passent.`,
+    ...(recette && !recette.erreur ? ["", `### Recette du persona : ${recette.tenus}/${recette.total} scénario(s) tenu(s)`, ...recette.scenarios.map((s) => `- ${s.tenu ? "✅" : "❌"} ${s.titre}${s.tenu ? "" : ` : ${s.ecart || s.observe}`}`)] : []),
+    "",
+    "Voir aussi : `MISSION.md`, `ICP.md`, `docs/PLAN.md`, `docs/INVENTAIRE.md`.",
+    "",
+    "_Cette pull request n'est jamais fusionnée par l'usine : relis-la, puis fusionne-la toi-même._",
+  ].join("\n")
+  const pr = await ouvrirPR(config, projet.depot, { titre: `Usine logicielle : ${plan.nom}`, corps, branche: projet.branche, base: origine.branche_source })
+  if (pr?.number && pr.number !== projet.pr_livraison) {
+    maj(db, "projets", projetId, { pr_livraison: pr.number })
+    noter(db, { projet: projetId, type: "livraison", message: `Pull request de livraison : https://github.com/${projet.depot}/pull/${pr.number} (${projet.branche} → ${origine.branche_source}), à fusionner par la personne` })
+  }
+  return pr
 }
 
 export function rapport(ctx, projetId, sha) {
@@ -203,6 +241,9 @@ export function rapport(ctx, projetId, sha) {
       taches: tout.filter((t) => t.lot === i + 1).map((t) => ({ cle: t.cle, titre: t.titre, statut: t.statut, pr: t.pr })),
     })),
     tests: projet.plancher_tests,
+    recette: lireRecette(projet),
+    origine: projet.origine ? JSON.parse(projet.origine) : null,
+    pr_livraison: projet.pr_livraison ? `https://github.com/${projet.depot}/pull/${projet.pr_livraison}` : null,
     refus: compte("refus"),
     escalades: compte("escalade"),
     decisions: compte("decision"),
@@ -217,7 +258,7 @@ export async function mettreEnProduction(ctx, projetId, par, demande = null) {
   if (!["livre", "en_production"].includes(projet.statut)) return { ok: false, message: `Le projet est « ${projet.statut} », pas encore livré.` }
   if (demande?.emails === "reels" && !process.env.SMTP_HOST) return { ok: false, message: "Emails réels demandés, mais aucun service d'envoi n'est configuré (SMTP_HOST dans .env)." }
   const choix = choixProduction(config, projet.production ? JSON.parse(projet.production) : null, demande)
-  const sha = await shaPrincipal(config, projet.depot.split("/")[1])
+  const sha = await shaPrincipal(config, projet.depot, brancheDeBase(projet))
   const a = adresses(config, projet.slug)
   maj(db, "projets", projetId, { statut: "mise_en_production", production: JSON.stringify(choix) })
   await ctx.notifier.etape(projet, `:rocket: Validé par ${par}. Mise en production de ${sha.slice(0, 7)} (bascule blue/green, sauvegarde des données avant).\nRéglages : ${decrireChoix(choix)}.`)
@@ -249,13 +290,14 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
       journaux: { production: lireJournal(config, `production-${projet.slug}`), apercu: lireJournal(config, `apercu-${projet.slug}`) },
       mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),
       echanges: echangesRecents(db, projetId),
+      persona: projet.persona_id ? personaEnTexte(lirePersona(obtenirPersona(db, projet.persona_id)) ?? { nom: "?", fiche: {} }) : null,
     }
     // Un produit fabriqué avant les briefs de design en reçoit un, d'abord (docs/DESIGN.md).
     let plan = lirePlan(projet)
     if (!plan.design) {
       try {
         plan.design = await analyserBrief(config, projet, plan, contexte.mesurer)
-        await ecrireFichierDepot(config, projet.depot.split("/")[1], "docs/DESIGN.md", designEnMarkdown(plan), "Brief de design (docs/DESIGN.md)")
+        await ecrireFichierDepot(config, projet.depot, "docs/DESIGN.md", designEnMarkdown(plan), "Brief de design (docs/DESIGN.md)", brancheDeBase(projet))
         maj(db, "projets", projetId, { plan: JSON.stringify(plan) })
         noter(db, { projet: projetId, type: "design", message: `Brief de design rédigé : ${plan.design.intention}` })
         await ctx.notifier.etape(projet, `:art: *${plan.nom}* n'avait pas de brief de design : l'analyste en a rédigé un (docs/DESIGN.md). ${plan.design.intention}`)

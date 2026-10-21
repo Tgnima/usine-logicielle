@@ -8,24 +8,51 @@ import { creerProduit } from "./creation.mjs"
 import { adresses } from "./config.mjs"
 import { enregistrer } from "./couts.mjs"
 import { demanderCorrections } from "./livraison.mjs"
+import { inventaireEnTexte, inventorier, preparerReprise } from "./reprise.mjs"
+import { lirePersona, obtenirPersona, personaEnTexte } from "./personas.mjs"
 
-export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null, avant = null }) {
-  const id = Number(ctx.db.prepare("INSERT INTO projets (prompt, demandeur, canal, fil) VALUES (?, ?, ?, ?)").run(prompt, demandeur, canal, fil).lastInsertRowid)
+// personaId : un persona validé (facultatif) ; origine : un dépôt repris (reprise.mjs).
+export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null, avant = null, personaId = null, origine = null }) {
+  const id = Number(ctx.db.prepare("INSERT INTO projets (prompt, demandeur, canal, fil, persona_id, origine) VALUES (?, ?, ?, ?, ?, ?)").run(prompt, demandeur, canal, fil, personaId, origine ? JSON.stringify(origine) : null).lastInsertRowid)
   noter(ctx.db, { projet: id, type: "demande", message: `${prompt}\n(par ${demandeur})` })
   avant?.(id)
   lancerAnalyse(ctx, id).catch((e) => console.error(e))
   return id
 }
 
+// Reprendre un dépôt existant : vérifié (visible, mode copie ou direct, persona validé), puis
+// le même chemin qu'une demande, avec l'inventaire avant le plan.
+export async function reprendreDepot(ctx, { adresse, personaId = null, mode = "auto", consigne = "", demandeur = "?", canal = null, fil = null }) {
+  const r = await preparerReprise(ctx, { adresse, personaId, mode, consigne })
+  if (!r.ok) return r
+  const id = await nouveauProjet(ctx, { prompt: r.prompt, demandeur, canal, fil, personaId: r.persona?.id ?? null, origine: r.origine })
+  return { ok: true, id, origine: r.origine, message: `Reprise de ${r.origine.depot} lancée (mode ${r.origine.mode === "direct" ? "direct : branche et pull request dans le dépôt d'origine" : "copie dans un dépôt de l'usine"}).` }
+}
+
 // L'analyse tourne en tâche de fond ; le résultat arrive par le notificateur.
 export async function lancerAnalyse(ctx, projetId, options = {}) {
   const { db } = ctx
   maj(db, "projets", projetId, { statut: "analyse" })
-  const projet = obtenir(db, "projets", projetId)
-  await ctx.notifier.etape(projet, ":brain: L'analyste étudie la demande et prépare le plan de fabrication…")
+  let projet = obtenir(db, "projets", projetId)
+  const persona = projet.persona_id ? lirePersona(obtenirPersona(db, projet.persona_id)) : null
   try {
+    // Un dépôt repris : d'abord l'inventaire (une fois ; « relancer » refait seulement le plan).
+    if (projet.origine && !projet.inventaire) {
+      const origine = JSON.parse(projet.origine)
+      await ctx.notifier.etape(projet, `:mag: L'usine fait l'inventaire de ${origine.depot} : sa pile, ses commandes, ce qui marche, et sa mise au contrat d'hébergement. Puis l'analyste fera le plan.`)
+      await inventorier(ctx, projetId)
+      projet = obtenir(db, "projets", projetId)
+    }
+    await ctx.notifier.etape(projet, ":brain: L'analyste étudie la demande et prépare le plan de fabrication…")
     const mesurer = (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s })
-    const { plan, tokens } = await analyser(ctx.config, projet, { ...options, mesurer, ctx })
+    const inventaire = projet.inventaire ? JSON.parse(projet.inventaire) : null
+    const { plan, tokens } = await analyser(ctx.config, projet, { ...options, mesurer, ctx, persona: persona ? personaEnTexte(persona) : null, inventaire: inventaire ? inventaireEnTexte(inventaire) : null, pile: inventaire?.pile })
+    // Un dépôt repris garde sa pile ; le persona est rappelé dans le plan (docs/PLAN.md).
+    if (inventaire) {
+      delete plan.brique
+      plan.pile = inventaire.pile
+    }
+    if (persona) plan.persona = persona.nom
     noter(db, { projet: projetId, type: "analyse", message: `Plan reçu (${tokens} jetons) : ${plan.lots?.length ?? 0} lot(s), ${plan.questions?.length ?? 0} question(s)` })
     if (plan.questions?.length && !plan.lots?.length) {
       maj(db, "projets", projetId, { statut: "questions", plan: JSON.stringify(plan) })
@@ -80,7 +107,12 @@ export async function validerPlan(ctx, projetId, par) {
       await creerProduit(ctx, projetId)
       const p = obtenir(db, "projets", projetId)
       const n = taches(db, projetId).length
-      await ctx.notifier.etape(p, `:building_construction: Dépôt <https://github.com/${p.depot}|${p.depot}> créé, socle vérifié, ${n} issues ouvertes. La fabrication commence ; je ne reviens vers toi que si une décision est nécessaire, puis à la livraison.\nAperçus : ${adresses(ctx.config, p.slug).apercu}`)
+      const ou = !p.origine
+        ? `Dépôt <https://github.com/${p.depot}|${p.depot}> créé`
+        : JSON.parse(p.origine).mode === "direct"
+          ? `Branche \`${p.branche}\` créée dans <https://github.com/${p.depot}|${p.depot}> (la branche d'origine n'est pas touchée)`
+          : `Dépôt repris copié dans <https://github.com/${p.depot}|${p.depot}>`
+      await ctx.notifier.etape(p, `:building_construction: ${ou}, socle vérifié, ${n} issues ouvertes. La fabrication commence ; je ne reviens vers toi que si une décision est nécessaire, puis à la livraison.\nAperçus : ${adresses(ctx.config, p.slug).apercu}`)
     } catch (error) {
       maj(db, "projets", projetId, { statut: "echec" })
       noter(db, { projet: projetId, type: "erreur", message: error.message })

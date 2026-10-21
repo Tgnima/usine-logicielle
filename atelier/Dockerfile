@@ -1,9 +1,10 @@
 # L'atelier : là où les agents codent. Claude Code (dernière version, choix
-# assumé), git, et ce qu'il faut pour installer et construire un produit Node.
+# assumé), git, et ce qu'il faut pour installer et construire un produit Node ou
+# Python (un dépôt repris garde sa pile). psmisc : fuser, pour libérer un port.
 # Construit depuis la racine du dépôt (contexte : .).
 FROM node:24-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps psmisc python3 python3-venv python3-pip \
   && rm -rf /var/lib/apt/lists/*
 RUN npm install -g @anthropic-ai/claude-code@latest && npm cache clean --force
 

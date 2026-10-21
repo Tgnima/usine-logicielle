@@ -154,3 +154,21 @@ test("l'historique dit qui a fait quoi ; l'estimation n'invente rien sans histor
   const { corps: e } = await json(await appel("/api/estimation"))
   assert.equal(e.disponible, false)
 })
+
+test("personas : création par la console, et un persona non validé ne sert à aucun projet", async () => {
+  const cree = await json(await appel("/api/personas", { methode: "POST", corps: { nom: "Commerçant de quartier", brief: "Une boulangerie de quartier sans site web, avec des avis Google." } }))
+  assert.equal(cree.statut, 200)
+  const liste = await json(await appel("/api/personas"))
+  assert.ok(liste.corps.personas.some((p) => p.id === cree.corps.id))
+  assert.equal((await appel("/api/personas", { methode: "POST", corps: { nom: "X", brief: "court" } })).status, 409)
+  const refuse = await json(await appel("/api/projets", { methode: "POST", corps: { prompt: "Une application de suivi pour les commerçants du quartier.", persona_id: cree.corps.id } }))
+  assert.equal(refuse.statut, 409)
+  assert.match(refuse.corps.erreur, /pas validé/)
+})
+
+test("reprendre un dépôt : une adresse illisible est refusée avant tout appel à GitHub", async () => {
+  const r = await json(await appel("/api/projets/reprendre", { methode: "POST", corps: { adresse: "https://gitlab.com/o/r" } }))
+  assert.equal(r.statut, 409)
+  assert.match(r.corps.erreur, /illisible/)
+  assert.equal((await appel("/api/projets/reprendre", { methode: "POST", corps: {} })).status, 400)
+})

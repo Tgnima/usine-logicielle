@@ -75,6 +75,10 @@ const etat = {
   cleCreee: null,
   invitation: null,
   planModifie: false,
+  depart: "zero", // nouveau projet : zero | depot (reprendre un dépôt existant)
+  personas: null,
+  persona: null,
+  personaScenarios: null, // les scénarios en cours d'édition (ajout, retrait)
 }
 
 function lireRoute() {
@@ -82,6 +86,9 @@ function lireRoute() {
   const m = h.match(/^\/projets\/(\d+)/)
   if (m) return { vue: "projet", id: Number(m[1]) }
   if (h.startsWith("/nouveau")) return { vue: "nouveau" }
+  const mp = h.match(/^\/personas\/(\d+)/)
+  if (mp) return { vue: "persona", id: Number(mp[1]) }
+  if (h.startsWith("/personas")) return { vue: "personas" }
   if (h.startsWith("/sante")) return { vue: "sante" }
   if (h.startsWith("/acces")) return { vue: "acces" }
   if (h.startsWith("/reglages")) return { vue: "reglages" }
@@ -146,7 +153,7 @@ function vueProjets() {
           const pct = a.total ? Math.round((a.finies / a.total) * 100) : 0
           return html`<tr>
             <td><a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a><div class="sous">${p.resume}</div></td>
-            <td>${BRIQUES[p.brique] ?? "—"}</td>
+            <td>${p.repris ? "Dépôt repris" : BRIQUES[p.brique] ?? "—"}</td>
             <td>${badgeStatut(p.statut)}${p.escalades ? html` <span class="badge orange">${p.escalades} décision</span>` : ""}</td>
             <td style="min-width:180px"><div class="rangee" style="flex-wrap:nowrap"><div class="jauge ${p.statut === "en_production" || p.statut === "livre" ? "verte" : ""}" style="flex:1"><div style="width:${pct}%"></div></div><span class="mono aide">${a.finies}/${a.total}</span></div>
               <div class="sous">${a.en_cours ? `${a.en_cours.cle} ${a.en_cours.statut === "verification" ? "en vérification" : "en cours"}` : p.apercu_vie && p.apercu_vie !== "—" ? `aperçu : ${p.apercu_vie}` : ""}</div></td>
@@ -163,6 +170,7 @@ function vueProjets() {
 }
 
 function vueNouveau() {
+  if (etat.depart === "depot") return vueReprendre()
   const choix = [
     ["webapp", "Outil métier, tableau de bord, back-office"],
     ["pwa", "Installable sur le téléphone, marche hors réseau"],
@@ -175,6 +183,7 @@ function vueNouveau() {
       <form class="colonne-large" data-form="nouveau" style="gap:22px">
         <div><a class="retour" href="#/">← Projets</a><h1 style="margin-top:8px">Que veux-tu construire ?</h1>
           <p class="chapeau">Décris le besoin comme à un collègue. L'analyste pose ses questions s'il en a, puis te propose un plan à valider.</p></div>
+        ${choixDepart()}
         ${messageGlobal()}
         <div class="pile"><label class="titre-champ" for="demande">La demande</label>
           <textarea id="demande" name="prompt" class="champ" rows="8" required minlength="20" style="resize:vertical;line-height:1.6" placeholder="Ex. : une application pour nos techniciens de maintenance : chaque matin ils voient leurs interventions du jour, sur place ils saisissent le compte rendu (photos, pièces changées, signature), même sans réseau. Le responsable suit tout depuis un tableau de bord."></textarea>
@@ -185,6 +194,7 @@ function vueNouveau() {
           ${etat.pieces.length ? html`<ul class="pieces">${etat.pieces.map((f, i) => html`<li><span class="mono">${f.name}</span><span class="aide">${Math.ceil(f.size / 1024)} Ko</span><button type="button" class="btn-icone" data-action="retirer-piece" data-id="${i}" aria-label="Retirer ${f.name}">✕</button></li>`)}</ul>` : ""}
           <div class="aide">L'analyste les lit avant de planifier ; elles sont ensuite copiées dans le dépôt (docs/maquettes/) pour les agents.</div>
         </div>
+        ${champPersona()}
         <fieldset><legend>Type de produit <span class="aide" style="font-weight:400">· une indication pour l'analyste, qui choisit en dernier ressort</span></legend>
           <div class="briques">${choix.map(([id, texte]) => html`<button type="button" class="brique" data-action="brique" data-id="${id}" aria-pressed="${String(etat.brique === id)}"><strong>${BRIQUES[id]}</strong><span>${texte}</span></button>`)}</div>
         </fieldset>
@@ -212,6 +222,196 @@ function vueNouveau() {
         </div>
       </aside>
     </div>`
+}
+
+// --- Partir d'un dépôt existant, et les personas -------------------------------------------
+const STATUTS_PERSONA = { recherche: ["Recherche en cours", "bleu"], a_valider: ["À relire et valider", "orange"], valide: ["Validé", "vert"], echec: ["Recherche en échec", "rouge"] }
+const badgePersona = (s) => html`<span class="badge ${(STATUTS_PERSONA[s] ?? ["", ""])[1]}">${(STATUTS_PERSONA[s] ?? [s])[0]}</span>`
+const personasValides = () => (etat.personas ?? []).filter((p) => p.statut === "valide")
+
+// Le choix du point de départ, en tête de « Nouveau projet ».
+const choixDepart = () => html`<fieldset><legend class="cache">Point de départ</legend>
+  <div class="briques">${[["zero", "Partir de zéro", "Décris le produit : l'usine part d'une de ses briques."], ["depot", "Partir d'un dépôt existant", "Un dépôt GitHub (un reverse engineering, une ébauche) : l'usine le reprend et le termine."]].map(([id, titre, texte]) => html`<button type="button" class="brique" data-action="depart" data-id="${id}" aria-pressed="${String(etat.depart === id)}"><strong>${titre}</strong><span>${texte}</span></button>`)}</div>
+</fieldset>`
+
+// Le choix du persona (seuls les personas validés : leur fiche a été relue).
+function champPersona(obligatoire = false) {
+  const liste = personasValides()
+  return html`<div class="pile"><label class="titre-champ" for="persona">Persona <span class="aide" style="font-weight:400">· ${obligatoire ? "pour qui l'usine termine le produit" : "facultatif : pour qui l'usine construit"}</span></label>
+    <select id="persona" name="persona_id" class="champ">
+      <option value="">${liste.length ? "Aucun persona" : "Aucun persona validé pour l'instant"}</option>
+      ${liste.map((p) => html`<option value="${p.id}">${p.nom}</option>`)}
+    </select>
+    <div class="aide">Sa fiche guide le plan et les agents (ICP.md) ; ses scénarios cachés jugeront le produit fini. <a href="#/personas">Créer ou relire un persona</a>.</div></div>`
+}
+
+function vueReprendre() {
+  return html`
+    ${barreHaut()}
+    <div class="colonnes">
+      <form class="colonne-large" data-form="reprendre" style="gap:22px">
+        <div><a class="retour" href="#/">← Projets</a><h1 style="margin-top:8px">Quel dépôt l'usine reprend-elle ?</h1>
+          <p class="chapeau">L'usine fait l'inventaire du dépôt (sa pile, ce qui marche, ce qui manque), le met au contrat d'hébergement, puis l'analyste te propose un plan pour le terminer et le spécialiser.</p></div>
+        ${choixDepart()}
+        <div class="pile"><label class="titre-champ" for="adresse">Le dépôt GitHub</label>
+          <input id="adresse" name="adresse" class="champ mono" required placeholder="https://github.com/proprietaire/depot" autocomplete="off" spellcheck="false">
+          <div class="aide">Une autre branche que la principale : …/tree/nom-de-branche. Un dépôt privé doit avoir invité le compte GitHub de l'usine.</div></div>
+        ${champPersona(true)}
+        <fieldset><legend>Où l'usine travaille</legend>
+          ${[["auto", "Automatique", "Directement dans le dépôt si l'usine y est invitée en écriture, sinon dans une copie."], ["direct", "Dans le dépôt d'origine", "Branche usine/…/integration et pull requests dans ton dépôt ; à la fin, une pull request de livraison que tu fusionnes toi-même. Jamais de push sur ta branche principale."], ["copie", "Dans une copie", "L'usine copie le dépôt chez elle et y travaille : l'original n'est jamais touché."]].map(([id, titre, texte]) => html`<label class="rangee" style="align-items:flex-start;gap:10px"><input type="radio" name="mode" value="${id}" ${id === "auto" ? "checked" : ""} style="margin-top:4px"><span><strong>${titre}</strong><span class="aide" style="display:block">${texte}</span></span></label>`)}
+        </fieldset>
+        <div class="pile"><label class="titre-champ" for="consigne">Ce que tu veux en faire <span class="aide" style="font-weight:400">· facultatif</span></label>
+          <textarea id="consigne" name="consigne" class="champ" rows="5" style="resize:vertical;line-height:1.6" placeholder="Ex. : garder l'analyse de mots-clés et l'audit de site, ajouter le suivi de la fiche Google et des avis, pour un commerce de quartier."></textarea></div>
+        <div class="rangee"><button type="submit" class="btn btn-p">Lancer l'inventaire</button><a href="#/" class="btn btn-s">Annuler</a></div>
+      </form>
+      <aside class="colonne-etroite" aria-label="Comment ça se passe">
+        <div class="sombre pile">
+          <div class="surtitre" style="color:inherit;opacity:.75">Ce qui va se passer</div>
+          <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px">
+            <li>L'usine clone le dépôt et en fait l'inventaire : pile, commandes, ce qui marche.</li>
+            <li>Elle le met au contrat d'hébergement (Dockerfile, santé, données), et le code vérifie qu'il démarre.</li>
+            <li>L'analyste propose un plan, à partir de l'inventaire et du persona.</li>
+            <li><strong>Tu valides le plan.</strong></li>
+            <li>L'usine code et vérifie sur sa branche ; à la fin, la recette joue les scénarios cachés du persona.</li>
+          </ol>
+        </div>
+      </aside>
+    </div>`
+}
+
+function vuePersonas() {
+  const liste = etat.personas
+  return html`
+    ${barreHaut()}
+    <div class="entete">
+      <div><h1>Personas</h1><p class="chapeau">Pour qui l'usine construit. Tu décris la cible en quelques lignes ; un agent l'approfondit par une recherche sourcée sur le web ; tu relis, tu corriges, tu valides.</p></div>
+    </div>
+    ${messageGlobal()}
+    <div class="colonnes">
+      <section class="colonne-large carte" aria-labelledby="liste-personas">
+        <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="liste-personas">Les personas</h2></div>
+        ${!liste ? html`<div class="chargement">Chargement…</div>` : liste.length ? html`<div class="tableau"><table style="min-width:560px">
+          <thead><tr><th>Persona</th><th>État</th><th>Sources</th><th>Scénarios cachés</th></tr></thead>
+          <tbody>${liste.map((p) => html`<tr>
+            <td><a class="lien-projet" href="#/personas/${p.id}">${p.nom}</a><div class="sous">${p.fiche?.resume ?? p.brief}</div></td>
+            <td>${badgePersona(p.statut)}</td>
+            <td class="mono">${p.fiche?.sources?.length ?? "—"}</td>
+            <td class="mono">${p.scenarios?.length || "—"}</td></tr>`)}</tbody></table></div>`
+        : html`<div class="vide">Aucun persona pour l'instant : décris le premier à droite.</div>`}
+      </section>
+      <aside class="colonne-etroite pile">
+        <form class="carte carte-p pile" data-form="persona-nouveau">
+          <strong>Nouveau persona</strong>
+          <label class="titre-champ" for="persona-nom">Son nom</label>
+          <input id="persona-nom" name="nom" class="champ" required maxlength="80" placeholder="Ex. : Commerçant de quartier">
+          <label class="titre-champ" for="persona-brief">Qui est-ce ?</label>
+          <textarea id="persona-brief" name="brief" class="champ" rows="6" required minlength="15" style="resize:vertical;line-height:1.6" placeholder="Ex. : boulangerie de quartier à Lyon, pas de site web, des avis Google, veut être trouvée par les gens du coin. Le gérant n'a pas le temps de faire du référencement."></textarea>
+          <div><button type="submit" class="btn btn-p">Lancer la recherche</button></div>
+          <div class="aide">L'agent cherche sur le web (études, forums, avis) et rend une fiche sourcée, ce qui est hors périmètre, et 3 à 5 scénarios cachés. Quelques minutes ; plus si l'atelier fabrique une tâche.</div>
+        </form>
+        <div class="sombre pile"><div class="surtitre" style="color:inherit;opacity:.75">Les scénarios cachés</div>
+          <div style="font-size:14px">Ils jugent le produit fini du point de vue du persona. L'agent qui code ne les voit jamais : il ne peut pas coder « pour le test ». La recette les joue à la fin.</div></div>
+      </aside>
+    </div>`
+}
+
+const lignes = (l) => (l ?? []).join("\n")
+function vuePersona() {
+  const p = etat.persona
+  if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement du persona…</div>`
+  const f = p.fiche ?? {}
+  const scenarios = etat.personaScenarios ?? p.scenarios ?? []
+  const zone = (nom, titre, valeur, aide, rangs = 3) => html`<div class="pile"><label class="titre-champ" for="pf-${nom}">${titre}</label><textarea id="pf-${nom}" name="${nom}" class="champ" rows="${rangs}" style="resize:vertical;line-height:1.5">${valeur}</textarea>${aide ? html`<div class="aide">${aide}</div>` : ""}</div>`
+  return html`
+    ${barreHaut()}
+    <div class="entete">
+      <div><a class="retour" href="#/personas">← Personas</a>
+        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgePersona(p.statut)}</div>
+        <p class="chapeau">${p.brief}</p></div>
+    </div>
+    ${messageGlobal()}
+    ${p.statut === "recherche" ? html`<div class="message info"><span>L'agent approfondit ce persona sur le web. Cette page se met à jour toute seule (quelques minutes ; elle attend si l'atelier fabrique une tâche).</span></div>` : ""}
+    ${p.statut === "echec" ? html`<div class="message erreur"><span style="flex:1">La recherche n'a pas abouti : ${p.erreur ?? "raison inconnue"}</span><button type="button" class="btn btn-s btn-petit" data-action="persona-approfondir">Relancer la recherche</button></div>` : ""}
+    ${p.fiche ? html`<div class="colonnes">
+      <form class="colonne-large pile" data-form="persona" style="gap:18px">
+        <section class="carte carte-p pile"><h2>La fiche</h2>
+          <div class="pile"><label class="titre-champ" for="pf-nom">Nom</label><input id="pf-nom" name="nom" class="champ" value="${p.nom}" maxlength="80"></div>
+          ${zone("resume", "Résumé", f.resume, "Deux phrases : qui il est, ce qu'il cherche à obtenir.", 3)}
+          ${zone("problemes", "Ses problèmes", lignes((f.problemes ?? []).map((x) => [x.probleme, x.preuve, x.source].filter(Boolean).join(" | "))), "Un par ligne : problème | preuve | adresse de la source.", 6)}
+          ${zone("besoins", "Ses besoins", lignes(f.besoins), "Un par ligne.", 4)}
+          ${zone("demographie", "Qui il est", lignes(f.demographie), "Un par ligne.")}
+          ${zone("psychographie", "Ce qui le motive, ce qui l'inquiète", lignes(f.psychographie), "Un par ligne.")}
+          ${zone("outils_actuels", "Ce qu'il utilise aujourd'hui", lignes(f.outils_actuels), "Un par ligne.")}
+          <div class="pile"><label class="titre-champ" for="pf-prix">Ce qu'il est prêt à payer</label><input id="pf-prix" name="prix_acceptable" class="champ" value="${f.prix_acceptable ?? ""}"></div>
+          ${zone("objections", "Ce qui le ferait renoncer", lignes(f.objections), "Un par ligne.")}
+          ${zone("canaux", "Où le trouver", lignes(f.canaux), "Un par ligne.")}
+          ${zone("sources", "Sources", lignes((f.sources ?? []).map((s) => (s.titre ? `${s.titre} | ${s.url}` : s.url))), "Une par ligne : titre | adresse.", 4)}
+        </section>
+        <section class="carte carte-p pile"><h2>Hors périmètre</h2>
+          ${zone("hors_perimetre", "Ce qu'on ne construit pas pour ce persona", lignes(p.hors_perimetre), "Un par ligne. Il rejoint MISSION.md et le plan de chaque projet.", 4)}
+        </section>
+        <section class="carte carte-p pile"><h2>Scénarios cachés · ${scenarios.length}</h2>
+          <div class="aide">De 3 à 5. Jamais écrits dans un dépôt ni montrés à l'agent qui code : la recette les joue à la fin, dans la peau du persona.</div>
+          ${scenarios.map((s, i) => html`<fieldset class="carte carte-p pile" data-scenario="${i}" style="background:var(--fond)">
+            <div class="rangee" style="justify-content:space-between"><strong>Scénario ${i + 1}</strong><button type="button" class="btn btn-s btn-petit" data-action="persona-retirer-scenario" data-id="${i}">Retirer</button></div>
+            <label class="titre-champ" for="ps-titre-${i}">Titre</label><input id="ps-titre-${i}" class="champ" data-champ="titre" value="${s.titre}">
+            <label class="titre-champ" for="ps-situation-${i}">Situation</label><textarea id="ps-situation-${i}" class="champ" data-champ="situation" rows="2">${s.situation}</textarea>
+            <label class="titre-champ" for="ps-etapes-${i}">Étapes probables <span class="aide" style="font-weight:400">· une par ligne</span></label><textarea id="ps-etapes-${i}" class="champ" data-champ="etapes" rows="3">${lignes(s.etapes)}</textarea>
+            <label class="titre-champ" for="ps-attendu-${i}">Résultat attendu</label><textarea id="ps-attendu-${i}" class="champ" data-champ="attendu" rows="2">${s.attendu}</textarea>
+          </fieldset>`)}
+          ${scenarios.length < 5 ? html`<div><button type="button" class="btn btn-s btn-petit" data-action="persona-ajouter-scenario">+ Ajouter un scénario</button></div>` : ""}
+        </section>
+        <div class="rangee"><button type="submit" class="btn btn-p">Enregistrer la fiche</button>${p.statut === "a_valider" ? html`<button type="button" class="btn btn-s" data-action="persona-valider">Valider ce persona</button>` : ""}</div>
+      </form>
+      <aside class="colonne-etroite pile">
+        ${p.statut === "valide" ? html`<div class="message ok"><span>Validé${p.valide_par ? ` par ${p.valide_par}` : ""} : il se choisit à la création d'un projet. Une modification le repasse « à valider ».</span></div>` : ""}
+        <div class="carte carte-p pile"><strong>Approfondir</strong>
+          <label class="cache" for="consignes-persona">Ce que la recherche doit creuser</label>
+          <textarea id="consignes-persona" class="champ" rows="4" placeholder="Ex. : creuse les commerces alimentaires, et ce qu'ils paient déjà pour leur visibilité."></textarea>
+          <div><button type="button" class="btn btn-s" data-action="persona-approfondir" ${p.statut === "recherche" ? "disabled" : ""}>Relancer la recherche</button></div>
+          <div class="aide">L'agent repart de la fiche actuelle et l'améliore.</div></div>
+        <div class="carte carte-p pile"><strong>Projets</strong>
+          ${p.projets?.length ? html`<ul style="margin:0;padding-left:18px">${p.projets.map((x) => html`<li><a href="#/projets/${x.id}">${x.nom ?? `Projet ${x.id}`}</a> ${badgeStatut(x.statut)}</li>`)}</ul>` : html`<div class="aide">Aucun projet ne l'utilise encore.</div>`}
+          ${p.projets?.length ? "" : html`<div><button type="button" class="btn btn-d btn-petit" data-action="persona-supprimer">Supprimer ce persona</button></div>`}</div>
+      </aside>
+    </div>` : ""}`
+}
+
+// La reprise d'un dépôt, dans la page d'un projet : d'où il vient, où l'usine travaille, ce qu'elle a trouvé.
+function blocReprise(p) {
+  const o = p.origine
+  if (!o) return ""
+  const inv = p.inventaire
+  const ETAT = { marche: ["marche", "vert"], partiel: ["partiel", "orange"], casse: ["cassé", "rouge"] }
+  return html`<section class="carte carte-p pile" aria-labelledby="reprise"><h2 id="reprise">Dépôt repris</h2>
+    <div class="rangee" style="gap:14px"><a class="mono" href="${o.url}" target="_blank" rel="noopener">${o.depot}</a><span class="aide">branche ${o.branche_source}</span>
+      <span class="badge">${o.mode === "direct" ? "travail direct dans le dépôt" : "copie dans un dépôt de l'usine"}</span>${p.profil ? html`<span class="badge">pile ${p.profil.pile}</span>` : ""}</div>
+    ${o.mode === "direct" ? html`<div class="aide">L'usine intègre sur <span class="mono">${p.branche}</span> ; elle ne pousse jamais sur ${o.branche_source}.${p.pr_livraison ? "" : " La pull request de livraison s'ouvrira à la fin."}</div>` : ""}
+    ${p.pr_livraison ? html`<div class="message ok"><span style="flex:1">Pull request de livraison ouverte : relis-la, puis fusionne-la toi-même.</span><a class="btn btn-s btn-petit" href="${p.pr_livraison}" target="_blank" rel="noopener">Ouvrir la pull request</a></div>` : ""}
+    ${inv ? html`<details ${p.statut === "plan_a_valider" ? "open" : ""}><summary style="cursor:pointer;font-weight:600">L'inventaire · ${inv.fonctionnalites.filter((f) => f.etat === "marche").length}/${inv.fonctionnalites.length} fonctionnalité(s) qui marchent, ${inv.tests} test(s)</summary>
+      <div class="pile" style="margin-top:10px">
+        <p style="margin:0">${inv.resume}</p>
+        ${inv.fonctionnalites.length ? html`<ul style="margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:6px">${inv.fonctionnalites.map((f) => html`<li class="rangee" style="flex-wrap:nowrap;align-items:flex-start"><span class="badge ${(ETAT[f.etat] ?? ["", ""])[1]}">${(ETAT[f.etat] ?? [f.etat])[0]}</span><span><strong>${f.nom}</strong>${f.detail ? html`<span class="aide"> · ${f.detail}</span>` : ""}</span></li>`)}</ul>` : ""}
+        ${inv.manques.length ? html`<div><strong>Ce qui manque</strong><ul style="margin:4px 0 0;padding-left:18px">${inv.manques.map((x) => html`<li>${x}</li>`)}</ul></div>` : ""}
+        ${inv.changements.length ? html`<div><strong>Mise au contrat d'hébergement</strong><ul style="margin:4px 0 0;padding-left:18px">${inv.changements.map((x) => html`<li>${x}</li>`)}</ul></div>` : ""}
+        ${p.profil ? html`<div class="aide mono">installer : ${p.profil.installer} · construire : ${p.profil.construire} · tester : ${p.profil.tester} · démarrer : ${p.profil.demarrer}</div>` : ""}
+      </div></details>` : p.statut === "analyse" ? html`<div class="aide">Inventaire en cours…</div>` : ""}
+  </section>`
+}
+
+// La recette : les scénarios cachés du persona, joués sur le produit fini.
+function blocRecette(p) {
+  const r = p.recette
+  if (!r) return ""
+  const ecarts = (r.scenarios ?? []).filter((s) => !s.tenu).length
+  return html`<section class="carte carte-p pile" aria-labelledby="recette"><div class="rangee" style="justify-content:space-between"><h2 id="recette">Recette du persona « ${r.persona} »</h2>
+    ${r.erreur ? html`<span class="badge rouge">impossible</span>` : html`<span class="badge ${r.tenus === r.total ? "vert" : "orange"}">${r.tenus}/${r.total} scénario(s) tenu(s)</span>`}</div>
+    ${r.erreur ? html`<div class="aide">La recette n'a pas pu être jouée : ${r.erreur}</div>` : html`
+      ${r.resume ? html`<p style="margin:0">${r.resume}</p>` : ""}
+      <ul style="margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:8px">${r.scenarios.map((s) => html`<li class="rangee" style="flex-wrap:nowrap;align-items:flex-start"><span class="badge ${s.tenu ? "vert" : "rouge"}">${s.tenu ? "tenu" : "écart"}</span><span><strong>${s.titre}</strong><span class="aide" style="display:block">${s.tenu ? s.observe : s.ecart || s.observe}</span></span></li>`)}</ul>
+      ${ecarts && ["livre", "en_production"].includes(p.statut) ? html`<div><button type="button" class="btn btn-s" data-action="corriger-recette">Corriger les ${ecarts} écart(s)</button></div>` : ""}`}
+    <div class="aide">Jouée sur ${String(r.sha ?? "").slice(0, 7)} par le vérificateur, dans la peau du persona. L'agent qui code n'a jamais vu ces scénarios.</div>
+  </section>`
 }
 
 // Les étapes d'une tâche, d'après son statut.
@@ -431,7 +631,7 @@ function vueProjet() {
     ${barreHaut()}
     <div class="entete">
       <div><a class="retour" href="#/">← Projets</a>
-        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgeStatut(p.statut)}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.cout ? html`<span class="badge mono">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
+        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgeStatut(p.statut)}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.repris ? html`<span class="badge">Dépôt repris</span>` : ""}${p.persona ? html`<a class="badge bleu" href="#/personas/${p.persona_id}" style="text-decoration:none">Persona : ${p.persona}</a>` : ""}${p.cout ? html`<span class="badge mono">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
         <p class="chapeau">${p.resume}</p></div>
       <div class="rangee">
         ${p.apercu ? html`<a class="btn btn-s" href="${p.apercu}" target="_blank" rel="noopener">Ouvrir l'aperçu</a>` : ""}
@@ -439,13 +639,15 @@ function vueProjet() {
       </div>
     </div>
     ${messageGlobal()}
-    ${p.statut === "analyse" ? html`<div class="message info"><span>L'analyste étudie la demande et prépare le plan. Cette page se met à jour toute seule.</span></div>` : ""}
+    ${p.statut === "analyse" ? html`<div class="message info"><span>${p.repris && !p.inventaire ? "L'usine fait l'inventaire du dépôt (pile, commandes, ce qui marche) et le met au contrat d'hébergement ; puis l'analyste prépare le plan." : "L'analyste étudie la demande et prépare le plan."} Cette page se met à jour toute seule.</span></div>` : ""}
+    ${blocReprise(p)}
     ${p.statut === "questions" ? html`<section class="carte carte-p pile"><h2>L'analyste a des questions</h2>
       <ol style="margin:0;padding-left:20px">${(p.plan?.questions ?? []).map((q) => html`<li>${q}</li>`)}</ol>
       <label class="cache" for="reponses">Tes réponses</label><textarea id="reponses" class="champ" rows="5" placeholder="Réponds librement, dans l'ordre des questions."></textarea>
       <div><button type="button" class="btn btn-p" data-action="message" data-source="reponses">Envoyer les réponses</button></div></section>` : ""}
     ${enPlan ? blocPlan(p) : ""}
     ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
+    ${blocRecette(p)}
     ${blocProduction(p)}
     ${blocVideo(p)}
     <details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine et la zone sensible</summary>
@@ -645,7 +847,7 @@ function vueHistorique() {
 
 // --- Rendu et chargement ------------------------------------------------------------------
 function rendre() {
-  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages, historique: vueHistorique }[etat.route.vue]
+  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages, historique: vueHistorique, personas: vuePersonas, persona: vuePersona }[etat.route.vue]
   const m = $("#principal")
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
@@ -666,7 +868,7 @@ function rendre() {
     if (!etat.direct || etat.direct.projet !== etat.route.id) suivreDirect()
   }
   for (const a of document.querySelectorAll(".nav a")) {
-    const actif = a.dataset.nav === (etat.route.vue === "projet" ? "projets" : etat.route.vue)
+    const actif = a.dataset.nav === ({ projet: "projets", persona: "personas" }[etat.route.vue] ?? etat.route.vue)
     if (actif) a.setAttribute("aria-current", "page")
     else a.removeAttribute("aria-current")
   }
@@ -689,6 +891,8 @@ async function charger({ silencieux = false } = {}) {
     // Chaque partie s'affiche dès qu'elle arrive : une page lente ne bloque pas le reste.
     const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; prevenir(x); rendre() } })]
     if (r.vue === "nouveau" && !etat.estimation) taches.push(api("GET", "estimation").then((x) => { etat.estimation = x; rendre() }))
+    if (["nouveau", "personas"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
+    if (r.vue === "persona") taches.push(api("GET", `personas/${r.id}`).then((x) => { if (frais()) { etat.persona = x; rendre() } }))
     if (r.vue === "historique") taches.push(api("GET", `historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`).then((x) => { if (frais()) { etat.historique = x; rendre() } }))
     if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => {
       if (!frais()) return
@@ -747,6 +951,28 @@ async function agir(fonction, { succes } = {}) {
   }
 }
 const confirmer = (texte) => window.confirm(texte)
+
+// La fiche d'un persona, lue dans son formulaire (une liste = une entrée par ligne).
+function lireFichePersona(f) {
+  const d = new FormData(f)
+  const liste = (nom) => String(d.get(nom) ?? "").split("\n").map((x) => x.trim()).filter(Boolean)
+  const parties = (l) => l.split("|").map((x) => x.trim())
+  return {
+    nom: String(d.get("nom") ?? "").trim(),
+    fiche: {
+      resume: String(d.get("resume") ?? "").trim(),
+      problemes: liste("problemes").map((l) => { const [probleme, preuve = "", source = ""] = parties(l); return { probleme, preuve, source } }),
+      besoins: liste("besoins"), demographie: liste("demographie"), psychographie: liste("psychographie"), outils_actuels: liste("outils_actuels"),
+      prix_acceptable: String(d.get("prix_acceptable") ?? "").trim(), objections: liste("objections"), canaux: liste("canaux"),
+      sources: liste("sources").map((l) => { const p = parties(l); return p.length > 1 ? { titre: p[0], url: p.slice(1).join("|") } : { titre: "", url: p[0] } }),
+    },
+    hors_perimetre: liste("hors_perimetre"),
+    scenarios: [...f.querySelectorAll("[data-scenario]")].map((s) => {
+      const v = (champ) => s.querySelector(`[data-champ=${champ}]`)?.value.trim() ?? ""
+      return { titre: v("titre"), situation: v("situation"), etapes: v("etapes").split("\n").map((x) => x.trim()).filter(Boolean), attendu: v("attendu") }
+    }),
+  }
+}
 
 // Un fichier en base64, par morceaux (un gros fichier dépasserait la pile d'appels).
 function enBase64(tampon) {
@@ -982,6 +1208,24 @@ const ACTIONS = {
     afficherMessages()
   },
   "fermer-cle": () => { etat.cleCreee = null; rendre() },
+  depart: (el) => { etat.depart = el.dataset.id; rendre() },
+  "corriger-recette": () => confirmer("Envoyer les écarts de la recette à l'analyste ? Il en fera un lot de corrections.") && agir(() => api("POST", `projets/${etat.projet.id}/corriger-recette`, {}), { succes: "Écarts transmis : l'analyste prépare un lot de corrections." }),
+  "persona-valider": () => agir(() => api("POST", `personas/${etat.persona.id}/valider`, {})),
+  "persona-approfondir": () => agir(() => api("POST", `personas/${etat.persona.id}/approfondir`, { consignes: $("#consignes-persona")?.value ?? "" })),
+  "persona-supprimer": async () => {
+    if (!confirmer(`Supprimer le persona « ${etat.persona.nom} » ?`)) return
+    const r = await agir(() => api("DELETE", `personas/${etat.persona.id}`, {}))
+    if (r?.ok) location.hash = "#/personas"
+  },
+  // Ajouter ou retirer un scénario : on garde ce qui a été saisi dans le formulaire.
+  "persona-ajouter-scenario": () => {
+    etat.personaScenarios = lireFichePersona($("[data-form=persona]")).scenarios.concat([{ titre: "", situation: "", etapes: [], attendu: "" }])
+    rendre()
+  },
+  "persona-retirer-scenario": (el) => {
+    etat.personaScenarios = lireFichePersona($("[data-form=persona]")).scenarios.filter((_, i) => i !== Number(el.dataset.id))
+    rendre()
+  },
 }
 
 document.addEventListener("click", (e) => {
@@ -1019,12 +1263,24 @@ document.addEventListener("submit", async (e) => {
     const indication = etat.brique !== "webapp" ? `\n\n(Type de produit souhaité : ${BRIQUES[etat.brique]}.)` : ""
     const r = await agir(async () => {
       const pieces = await Promise.all(etat.pieces.map(async (f) => ({ nom: f.name, type: f.type, base64: enBase64(await f.arrayBuffer()) })))
-      return api("POST", "projets", { prompt: prompt + indication, pieces })
+      return api("POST", "projets", { prompt: prompt + indication, pieces, persona_id: d.get("persona_id") || null })
     }, { succes: "Demande envoyée : l'analyste prépare le plan." })
     if (r?.id) {
       etat.pieces = []
       location.hash = `#/projets/${r.id}`
     }
+  }
+  if (type === "reprendre") {
+    const r = await agir(() => api("POST", "projets/reprendre", { adresse: d.get("adresse"), persona_id: d.get("persona_id") || null, mode: d.get("mode"), consigne: d.get("consigne") ?? "" }))
+    if (r?.id) location.hash = `#/projets/${r.id}`
+  }
+  if (type === "persona-nouveau") {
+    const r = await agir(() => api("POST", "personas", { nom: d.get("nom"), brief: d.get("brief") }), { succes: "Recherche lancée : la fiche arrive dans quelques minutes." })
+    if (r?.id) location.hash = `#/personas/${r.id}`
+  }
+  if (type === "persona") {
+    const r = await agir(() => api("PUT", `personas/${etat.persona.id}`, lireFichePersona(f)))
+    if (r) etat.personaScenarios = null
   }
   if (type === "plan") {
     const plan = normaliserPlan(syncPlan(planCourant()))
@@ -1139,6 +1395,7 @@ window.addEventListener("hashchange", () => {
   etat.planEdition = null
   etat.cleCreee = null
   etat.invitation = null
+  etat.personaScenarios = null
   if (etat.route.vue !== "projet") etat.onglet = null
   etat.direct = null
   rendre()
@@ -1151,7 +1408,7 @@ charger()
 // La page se met à jour toute seule (toutes les 5 s sur un projet, 15 s ailleurs), sauf pendant une saisie.
 let dernier = 0
 setInterval(() => {
-  const pas = etat.route.vue === "projet" ? 5000 : 15000
+  const pas = ["projet", "persona"].includes(etat.route.vue) ? 5000 : 15000
   if (Date.now() - dernier < pas || document.hidden || enSaisie() || $("#palette").open) return
   dernier = Date.now()
   charger({ silencieux: true })

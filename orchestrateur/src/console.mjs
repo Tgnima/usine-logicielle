@@ -32,6 +32,10 @@ import { etatVideo, fichierVideo, genererVideo } from "./video.mjs"
 import { enregistrerPieces, listerPieces, verifierPieces } from "./pieces.mjs"
 import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
+import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
+import { MODES_REPRISE } from "./reprise.mjs"
+import { ecartsEnCorrections, lireRecette } from "./recette.mjs"
+import { proteges } from "./profil.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" }
@@ -72,7 +76,7 @@ function resumeProjet(ctx, p) {
     id: p.id,
     nom: p.nom ?? p.prompt.slice(0, 60),
     resume: plan?.resume ?? p.prompt.slice(0, 160),
-    brique: plan?.brique ?? (plan ? "webapp" : null),
+    brique: plan?.pile ? null : plan?.brique ?? (plan ? "webapp" : null),
     statut: p.statut,
     lot_livre: p.lot_livre,
     lots: plan?.lots?.length ?? 0,
@@ -82,6 +86,8 @@ function resumeProjet(ctx, p) {
     apercu: a && p.lot_livre && !p.apercu_retire ? a.apercu : null,
     production: a && p.statut === "en_production" ? a.production : null,
     apercu_vie: decrireApercu(p),
+    repris: Boolean(p.origine),
+    persona: p.persona_id ? (db.prepare("SELECT nom FROM personas WHERE id = ?").get(p.persona_id)?.nom ?? null) : null,
     maj_le: p.maj_le,
   }
 }
@@ -160,6 +166,13 @@ async function detailProjet(ctx, id) {
     video: etatVideo(ctx, id),
     estimation: plan?.lots?.length ? estimation(ctx, plan.lots.reduce((n, l) => n + l.taches.length, 0)) : null,
     apercu_garde: !!p.apercu_garde,
+    origine: p.origine ? { ...JSON.parse(p.origine), url: `https://github.com/${JSON.parse(p.origine).depot}` } : null,
+    branche: p.branche ?? "main",
+    persona_id: p.persona_id ?? null,
+    inventaire: p.inventaire ? JSON.parse(p.inventaire) : null,
+    profil: p.profil ? JSON.parse(p.profil) : null,
+    recette: lireRecette(p),
+    pr_livraison: p.pr_livraison && p.depot ? `https://github.com/${p.depot}/pull/${p.pr_livraison}` : null,
     budget: (() => {
       const rc = reglagesCouts(db, config)
       const bp = budgetProjet(db, rc, p)
@@ -310,6 +323,15 @@ function demandeProduction(corps) {
 
 const productionsEnCours = new Set()
 
+// Un persona choisi pour un projet : il doit exister et être validé (sa fiche a été relue).
+function personaValide(ctx, id) {
+  if (id === undefined || id === null || id === "") return null
+  const p = obtenirPersona(ctx.db, Number(id))
+  if (!p) throw erreur(400, "Persona introuvable.")
+  if (p.statut !== "valide") throw erreur(409, `Le persona « ${p.nom} » n'est pas validé : relis sa fiche et valide-la d'abord.`)
+  return p.id
+}
+
 // Les routes : [méthode, motif, gestionnaire(ctx, params, corps, qui)].
 const ROUTES = [
   ["GET", /^\/api\/moi$/, (_ctx, _p, _c, qui) => ({ email: qui.email, role: qui.role })],
@@ -331,17 +353,53 @@ const ROUTES = [
     } catch (e) {
       throw erreur(400, e.message)
     }
+    const personaId = personaValide(ctx, c.persona_id)
     // Les pièces sont posées avant le lancement de l'analyse, qui les lit.
-    const id = await actions.nouveauProjet(ctx, { prompt, demandeur: qui.email, avant: (projetId) => enregistrerPieces(ctx.config, projetId, fichiers) })
+    const id = await actions.nouveauProjet(ctx, { prompt, demandeur: qui.email, personaId, avant: (projetId) => enregistrerPieces(ctx.config, projetId, fichiers) })
     return { ok: true, id }
   }],
+  // Reprendre un dépôt existant (un reverse engineering, par exemple) pour un persona.
+  ["POST", /^\/api\/projets\/reprendre$/, async (ctx, _p, c, qui) => {
+    const adresse = String(c.adresse ?? "").trim()
+    if (!adresse) throw erreur(400, "Donne l'adresse du dépôt GitHub.")
+    const mode = MODES_REPRISE.includes(c.mode) ? c.mode : "auto"
+    const consigne = String(c.consigne ?? "").trim()
+    if (consigne.length > 6000) throw erreur(400, "La consigne est trop longue (6 000 caractères au plus).")
+    const r = await actions.reprendreDepot(ctx, { adresse, personaId: personaValide(ctx, c.persona_id), mode, consigne, demandeur: qui.email })
+    if (!r.ok) throw erreur(409, r.message)
+    return r
+  }],
+  ["POST", /^\/api\/projets\/(\d+)\/corriger-recette$/, (ctx, [id], _c, qui) => {
+    const p = obtenir(ctx.db, "projets", Number(id))
+    const texte = ecartsEnCorrections(lireRecette(p))
+    if (!texte) throw erreur(409, "La recette n'a relevé aucun écart.")
+    return demanderCorrections(ctx, Number(id), texte, qui.email)
+  }],
+
+  ["GET", /^\/api\/personas$/, (ctx) => ({ personas: listerPersonas(ctx.db) })],
+  ["GET", /^\/api\/personas\/(\d+)$/, (ctx, [id]) => {
+    const p = lirePersona(obtenirPersona(ctx.db, Number(id)))
+    if (!p) throw erreur(404, "Persona introuvable.")
+    return { ...p, projets: ctx.db.prepare("SELECT id, nom, statut FROM projets WHERE persona_id = ? AND statut != 'supprime' ORDER BY id DESC").all(p.id) }
+  }],
+  ["POST", /^\/api\/personas$/, (ctx, _p, c, qui) => creerPersona(ctx, { nom: c.nom, brief: c.brief, par: qui.email })],
+  ["PUT", /^\/api\/personas\/(\d+)$/, (ctx, [id], c, qui) => modifierPersona(ctx, Number(id), c, qui.email)],
+  ["POST", /^\/api\/personas\/(\d+)\/approfondir$/, (ctx, [id], c, qui) => {
+    const p = obtenirPersona(ctx.db, Number(id))
+    if (!p) throw erreur(404, "Persona introuvable.")
+    if (p.statut === "recherche") throw erreur(409, "Une recherche est déjà en cours.")
+    lancerRecherche(ctx, p.id, { consignes: String(c.consignes ?? "").trim().slice(0, 3000), par: qui.email })
+    return { ok: true, message: "Recherche relancée : la fiche approfondie arrive ici dans quelques minutes." }
+  }],
+  ["POST", /^\/api\/personas\/(\d+)\/valider$/, (ctx, [id], _c, qui) => validerPersona(ctx, Number(id), qui.email)],
+  ["DELETE", /^\/api\/personas\/(\d+)$/, (ctx, [id]) => supprimerPersona(ctx, Number(id))],
   ["PUT", /^\/api\/projets\/(\d+)\/plan$/, (ctx, [id], c, qui) => {
     const p = obtenir(ctx.db, "projets", Number(id))
     if (p?.statut !== "plan_a_valider") throw erreur(409, "Le plan ne se modifie qu'avant sa validation.")
     const avant = lirePlan(p)
     // Seuls les champs qu'on édite dans la console changent ; le reste du plan est gardé tel quel.
     const plan = { ...avant, lots: c.plan?.lots ?? avant.lots }
-    const problemes = verifierPlan(plan, { protege: ctx.config.perimetre_protege?.filter((f) => !f.includes("*")) })
+    const problemes = verifierPlan(plan, { protege: proteges(ctx.config, p).filter((f) => !f.includes("*")), repris: Boolean(p.origine) })
     if (problemes.length) throw erreur(400, `Plan refusé : ${problemes.slice(0, 3).join(" ; ")}`)
     maj(ctx.db, "projets", p.id, { plan: JSON.stringify(plan) })
     noter(ctx.db, { projet: p.id, type: "plan", message: `Plan modifié dans la console par ${qui.email}` })

@@ -27,7 +27,10 @@ async function gh(config, chemin, { method = "GET", corps, accepter = [] } = {})
   return { statut: res.status, json }
 }
 
-const depot = (config, nom) => `/repos/${config.github.proprietaire}/${nom}`
+// Un dépôt : son nom seul (un dépôt de l'usine, chez github.proprietaire) ou « propriétaire/nom »
+// (un dépôt repris, qui peut appartenir à quelqu'un d'autre).
+const complet = (config, nom) => (String(nom).includes("/") ? String(nom) : `${config.github.proprietaire}/${nom}`)
+const depot = (config, nom) => `/repos/${complet(config, nom)}`
 
 export async function creerDepot(config, nom, description) {
   const existe = await gh(config, depot(config, nom), { accepter: [404] })
@@ -44,7 +47,7 @@ export async function creerEtiquettes(config, nom, etiquettes) {
 }
 
 export const creerIssue = async (config, nom, { titre, corps, etiquettes = [], assigne = true }) =>
-  (await gh(config, `${depot(config, nom)}/issues`, { method: "POST", corps: { title: titre, body: corps, labels: etiquettes, assignees: assigne ? [config.github.proprietaire] : [] } })).json
+  (await gh(config, `${depot(config, nom)}/issues`, { method: "POST", corps: { title: titre, body: corps, labels: etiquettes, assignees: assigne && complet(config, nom).split("/")[0] === config.github.proprietaire ? [config.github.proprietaire] : [] } })).json
 
 export const commenter = (config, nom, numero, texte) => gh(config, `${depot(config, nom)}/issues/${numero}/comments`, { method: "POST", corps: { body: `${texte}\n\n${MARQUE}` } })
 export const lireIssue = async (config, nom, numero) => (await gh(config, `${depot(config, nom)}/issues/${numero}`)).json
@@ -53,13 +56,14 @@ export const ajouterEtiquettes = (config, nom, numero, etiquettes) => gh(config,
 export const retirerEtiquette = (config, nom, numero, etiquette) => gh(config, `${depot(config, nom)}/issues/${numero}/labels/${encodeURIComponent(etiquette)}`, { method: "DELETE", accepter: [404] })
 export const fermerIssue = (config, nom, numero) => gh(config, `${depot(config, nom)}/issues/${numero}`, { method: "PATCH", corps: { state: "closed" } })
 
-export async function ouvrirPR(config, nom, { titre, corps, branche }) {
-  const ouvertes = (await gh(config, `${depot(config, nom)}/pulls?head=${config.github.proprietaire}:${branche}&state=open`)).json
+export async function ouvrirPR(config, nom, { titre, corps, branche, base = "main" }) {
+  const proprietaire = complet(config, nom).split("/")[0]
+  const ouvertes = (await gh(config, `${depot(config, nom)}/pulls?head=${proprietaire}:${encodeURIComponent(branche)}&base=${encodeURIComponent(base)}&state=open`)).json
   if (ouvertes.length) {
     await gh(config, `${depot(config, nom)}/pulls/${ouvertes[0].number}`, { method: "PATCH", corps: { title: titre, body: corps } })
     return ouvertes[0]
   }
-  return (await gh(config, `${depot(config, nom)}/pulls`, { method: "POST", corps: { title: titre, body: corps, head: branche, base: "main" } })).json
+  return (await gh(config, `${depot(config, nom)}/pulls`, { method: "POST", corps: { title: titre, body: corps, head: branche, base } })).json
 }
 
 export const lirePR = async (config, nom, numero) => (await gh(config, `${depot(config, nom)}/pulls/${numero}`)).json
@@ -71,12 +75,30 @@ export const fusionnerPR = async (config, nom, numero, { titre, sha }) =>
 
 export const commentairePR = (config, nom, numero, texte) => commenter(config, nom, numero, texte)
 
-// Écrit un fichier sur main d'un dépôt de produit (le plan, quand un lot s'ajoute).
-export async function ecrireFichierDepot(config, nom, chemin, contenu, message) {
-  const actuel = await gh(config, `${depot(config, nom)}/contents/${chemin}?ref=main`, { accepter: [404] })
-  await gh(config, `${depot(config, nom)}/contents/${chemin}`, { method: "PUT", corps: { message, content: Buffer.from(contenu).toString("base64"), ...(actuel.statut === 200 ? { sha: actuel.json.sha } : {}) } })
+// Écrit un fichier sur la branche de base d'un dépôt de produit (le plan, quand un lot s'ajoute).
+export async function ecrireFichierDepot(config, nom, chemin, contenu, message, branche = "main") {
+  const actuel = await gh(config, `${depot(config, nom)}/contents/${chemin}?ref=${encodeURIComponent(branche)}`, { accepter: [404] })
+  await gh(config, `${depot(config, nom)}/contents/${chemin}`, { method: "PUT", corps: { message, branch: branche, content: Buffer.from(contenu).toString("base64"), ...(actuel.statut === 200 ? { sha: actuel.json.sha } : {}) } })
 }
-export const shaPrincipal = async (config, nom) => (await gh(config, `${depot(config, nom)}/git/ref/heads/main`)).json.object.sha
+export const shaPrincipal = async (config, nom, branche = "main") => (await gh(config, `${depot(config, nom)}/git/ref/heads/${branche}`)).json.object.sha
+
+// Ce que l'usine peut faire sur un dépôt, avant de le reprendre : null s'il est introuvable
+// ou invisible pour son jeton. pousser : le compte de l'usine y écrit (collaborateur invité).
+export async function infosDepot(config, nom) {
+  const r = await gh(config, depot(config, nom), { accepter: [401, 403, 404] })
+  if (r.statut !== 200) return null
+  const j = r.json
+  return { nom: j.full_name, prive: Boolean(j.private), branche_defaut: j.default_branch, pousser: Boolean(j.permissions?.push), archive: Boolean(j.archived), taille_ko: Number(j.size ?? 0), description: j.description ?? "" }
+}
+
+// Une branche créée à partir d'une autre (la branche d'intégration d'un dépôt repris).
+export async function creerBranche(config, nom, branche, depuis) {
+  const existe = await gh(config, `${depot(config, nom)}/git/ref/heads/${branche}`, { accepter: [404] })
+  if (existe.statut === 200) return existe.json.object.sha
+  const sha = await shaPrincipal(config, nom, depuis)
+  await gh(config, `${depot(config, nom)}/git/refs`, { method: "POST", corps: { ref: `refs/heads/${branche}`, sha } })
+  return sha
+}
 
 // --- Le dépôt d'état (lu par le déployeur) ------------------------------------
 

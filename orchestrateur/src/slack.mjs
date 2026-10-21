@@ -20,6 +20,7 @@ import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
 import { adresses } from "./config.mjs"
+import { listerPersonas, trouverPersona } from "./personas.mjs"
 
 const tronquer = (t, n = 2900) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const section = (texte) => ({ type: "section", text: { type: "mrkdwn", text: tronquer(texte) } })
@@ -82,7 +83,7 @@ export async function demarrerSlack(ctx) {
       const nb = plan.lots.reduce((n, l) => n + l.taches.length, 0)
       const blocs = [
         { type: "header", text: { type: "plain_text", text: tronquer(`Plan : ${plan.nom}`, 150) } },
-        section(`${plan.resume}\n_Brique : ${{ webapp: "application web", site: "site vitrine", api: "API", pwa: "application mobile (PWA)" }[plan.brique ?? "webapp"] ?? plan.brique} · ${plan.lots.length} lots, ${nb} tâches. Chaque tâche est codée par un agent, testée par un vérificateur indépendant sur l'application en marche, et fusionnée seulement si tous ses critères passent._`),
+        section(`${plan.resume}\n_${plan.pile ? `Dépôt repris, pile ${plan.pile}` : `Brique : ${{ webapp: "application web", site: "site vitrine", api: "API", pwa: "application mobile (PWA)" }[plan.brique ?? "webapp"] ?? plan.brique}`}${plan.persona ? ` · persona « ${plan.persona} »` : ""} · ${plan.lots.length} lots, ${nb} tâches. Chaque tâche est codée par un agent, testée par un vérificateur indépendant sur l'application en marche, et fusionnée seulement si tous ses critères passent._`),
         ...plan.lots.slice(0, 8).map((l, i) => section(`*Lot ${i + 1} : ${l.nom}*\n_${l.objectif}_\n${l.taches.map((t) => `• *${t.cle}* ${t.titre}\n${t.criteres.map((c) => `      ◦ ${c}`).join("\n")}`).join("\n")}`)),
         ...(plan.hors_perimetre?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Hors périmètre :* ${plan.hors_perimetre.join(" · ")}`) }] }] : []),
         ...(plan.risques?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Risques :* ${plan.risques.join(" · ")}`) }] }] : []),
@@ -147,6 +148,8 @@ export async function demarrerSlack(ctx) {
         { type: "header", text: { type: "plain_text", text: tronquer(`Livré : ${r.nom}`, 150) } },
         section(`${r.resume}\n\n:globe_with_meridians: *Essayer :* ${r.apercu}${r.mails ? `\n:email: *Emails envoyés (capturés) :* ${r.mails}` : ""}\n:octocat: *Code :* <${r.depot}|${r.depot.replace("https://github.com/", "")}> (${r.sha.slice(0, 7)})`),
         section(r.lots.map((l, i) => `*Lot ${i + 1} : ${l.nom}*\n${l.taches.map((t) => `${t.statut === "fusionnee" ? ":white_check_mark:" : ":heavy_minus_sign:"} ${t.cle} ${t.titre}${t.pr ? ` <${r.depot}/pull/${t.pr}|#${t.pr}>` : ""}${t.statut === "abandonnee" ? " _(abandonnée)_" : ""}`).join("\n")}`).join("\n")),
+        ...(r.recette ? [section(tronquer(r.recette.erreur ? `:performing_arts: *Recette du persona « ${r.recette.persona} »* : impossible (${r.recette.erreur}).` : `:performing_arts: *Recette du persona « ${r.recette.persona} » : ${r.recette.tenus}/${r.recette.total} scénario(s) caché(s) tenu(s)*\n${r.recette.scenarios.map((s) => `${s.tenu ? ":white_check_mark:" : ":x:"} ${s.titre}${s.tenu ? "" : ` : ${s.ecart || s.observe}`}`).join("\n")}${r.recette.tenus < r.recette.total ? "\n_« Corriger » dans la console envoie ces écarts à l'analyste._" : ""}`, 2900))] : []),
+        ...(r.pr_livraison ? [section(`:arrows_counterclockwise: *Pull request de livraison* vers ${r.origine?.depot ?? "le dépôt d'origine"} : <${r.pr_livraison}|à relire et fusionner toi-même>. L'usine ne la fusionne jamais.`)] : []),
         ...(ligneCoutProjet(ctx, projet.id) ? [{ type: "context", elements: [{ type: "mrkdwn", text: `:moneybag: ${ligneCoutProjet(ctx, projet.id)} · \`/usine couts ${projet.id}\` pour le détail` }] }] : []),
         { type: "context", elements: [{ type: "mrkdwn", text: `${r.tests} tests automatisés · ${r.refus} refus du vérificateur corrigés en autonomie · ${r.escalades} escalade(s) · ${r.decisions} décision(s) humaine(s)${r.duree_min ? ` · ${Math.floor(r.duree_min / 60)} h ${r.duree_min % 60} min de fabrication` : ""}` }] },
         { type: "actions", elements: [bouton("Valider : mettre en production", "livraison_valider", projet.id, "primary"), bouton("Corriger", "livraison_corriger", projet.id), versConsole(projet, "rapport")] },
@@ -169,7 +172,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine reprendre <dépôt GitHub> persona <nom> [mode copie|direct] [: ce que tu veux en faire]` : l'usine reprend un dépôt existant (un reverse engineering, par exemple) et le termine pour ce persona · `/usine personas` : les personas (création et relecture dans la console).\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
     }
     if (mot === "tableau" || mot === "dashboard") {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Console de l'usine* : projets en direct, décisions, production, santé, coûts et accès."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
@@ -188,6 +191,31 @@ export async function demarrerSlack(ctx) {
       const p = obtenir(db, "projets", Number(arg))
       if (!p) return repondre(`Pas de projet ${arg}.`)
       return app.client.views.open({ trigger_id: command.trigger_id, view: vueDetail(p.id) })
+    }
+    if (mot === "personas") {
+      const liste = listerPersonas(db)
+      const ETAT = { recherche: "recherche en cours", a_valider: "à relire et valider", valide: "validé", echec: "recherche en échec" }
+      return repondre(`${liste.length ? liste.map((p) => `*${p.id}. ${p.nom}* · ${ETAT[p.statut] ?? p.statut}${p.scenarios?.length ? ` · ${p.scenarios.length} scénario(s) caché(s)` : ""}`).join("\n") : "Aucun persona pour l'instant."}\nCréation et relecture : ${adresseTableau(config)}/#/personas`)
+    }
+    if (mot === "reprendre" && arg) {
+      // /usine reprendre <dépôt> [persona <nom>] [mode copie|direct] [: consigne]
+      const corpsCommande = texte.replace(/^reprendre\s+/, "")
+      const [avant, ...reste] = corpsCommande.split(/\s:\s|\s:$/)
+      const consigne = reste.join(" : ").trim()
+      const adresse = avant.trim().split(/\s+/)[0]
+      const mode = /\bmode\s+(auto|copie|direct)\b/i.exec(avant)?.[1]?.toLowerCase() ?? "auto"
+      const nomPersona = /\bpersona\s+(.+?)(?=\s+mode\s+|$)/i.exec(avant)?.[1]?.trim()
+      let personaId = null
+      if (nomPersona) {
+        const p = trouverPersona(db, nomPersona)
+        if (!p) return repondre(`Je ne trouve pas le persona « ${nomPersona} ». \`/usine personas\` pour la liste.`)
+        personaId = p.id
+      }
+      const canal = config.slack.canal || command.channel_id
+      const message = await app.client.chat.postMessage({ channel: canal, text: `:factory: *Reprise d'un dépôt* demandée par <@${command.user_id}> : ${adresse}${nomPersona ? ` · persona « ${nomPersona} »` : ""}${consigne ? `\n>${consigne.replace(/\n/g, "\n>")}` : ""}` })
+      const r = await actions.reprendreDepot(ctx, { adresse, personaId, mode, consigne, demandeur: command.user_id, canal, fil: message.ts })
+      if (!r.ok) await app.client.chat.postMessage({ channel: canal, thread_ts: message.ts, text: `:x: ${r.message}` })
+      return repondre(r.message)
     }
     if (mot === "stop") return repondre(actions.arreter(ctx, command.user_name).message)
     if (mot === "reprendre") return repondre(actions.reprendre(ctx).message)

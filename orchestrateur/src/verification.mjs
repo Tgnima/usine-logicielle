@@ -11,7 +11,7 @@
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
 import { noterLimites, scriptCodex } from "./moteurs.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
-import { COMPTER_TESTS } from "./creation.mjs"
+import { COMPTER_TESTS, VERROUS, brancheDeBase, libererPort, lireProfil, proteges } from "./profil.mjs"
 import { extraireJson } from "./analyste.mjs"
 import { ecrireReglage, enregistrer, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
@@ -19,7 +19,7 @@ import { grilleEnTexte } from "./design.mjs"
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
 
-function consigneVerificateur(projet, tache) {
+function consigneVerificateur(projet, tache, profil) {
   const criteres = JSON.parse(tache.criteres)
   return `Tu es le vérificateur indépendant d'une usine logicielle. Tu juges si une tâche est réellement faite, sans complaisance.
 
@@ -33,10 +33,10 @@ ${criteres.map((c, i) => `${i + 1}. ${c}`).join("\n")}
 
 Méthode :
 - Teste toi-même : appels HTTP avec curl, et pour l'interface un script Node avec Playwright (\`const { chromium } = require('playwright')\`, Chromium est installé). Ne te fie pas aux tests existants.
-- Les tests automatisés (npm test) ont déjà été lancés par l'usine, dans un environnement propre : ne les relance pas, juge l'application en marche.
+- Les tests automatisés (${profil.tester}) ont déjà été lancés par l'usine, dans un environnement propre : ne les relance pas, juge l'application en marche.
 - Tu peux lire le code pour trouver les routes, mais ne le modifie pas.
 - Adresse publique : ici PUBLIC_URL=http://localhost:4100. Des liens absolus en http://localhost:4100 (dans les emails, par exemple) sont donc NORMAUX pendant la vérification : en ligne, l'usine fixe PUBLIC_URL à la vraie adresse. Pour juger une exigence d'URL absolues, relance l'application avec PUBLIC_URL=https://exemple.test et vérifie que les nouveaux liens l'utilisent.
-- Environnement de l'application : DEMO=1, emails capturés par Mailpit (SMTP_HOST=mailpit, interface web sur http://mailpit:8025, API /api/v1/messages), aucune liste de destinataires autorisés. Si un critère dépend d'une variable d'environnement (voir le tableau d'AGENTS.md, par exemple EMAIL_DESTINATAIRES_AUTORISES), arrête l'application et relance-la toi-même avec cette variable (\`PORT=4100 DATA_DIR=… npm start\`), puis remets-la comme avant.
+- Environnement de l'application : DEMO=1, emails capturés par Mailpit (SMTP_HOST=mailpit, interface web sur http://mailpit:8025, API /api/v1/messages), aucune liste de destinataires autorisés. Si un critère dépend d'une variable d'environnement (voir le tableau d'AGENTS.md, par exemple EMAIL_DESTINATAIRES_AUTORISES), arrête l'application et relance-la toi-même avec cette variable (\`PORT=4100 DATA_DIR=… ${profil.demarrer}\`), puis remets-la comme avant.
 - Un critère est validé seulement si tu l'as observé. Dans le doute, il est refusé.
 - Note aussi un défaut grave hors critères (page blanche, erreur 500, donnée incohérente).
 
@@ -45,7 +45,7 @@ Non-régression :
 - Pour chaque critère que tu valides et qui s'observe par HTTP ou dans le navigateur, écris un test autonome /tmp/sorties/verif/e2e/${tache.cle}-<n>.cjs : un script Node CommonJS qui lit process.env.BASE (ex. http://localhost:4100), utilise fetch ou require('playwright') (Chromium), vérifie le critère et termine par process.exit(1) s'il n'est plus tenu (process.exit(0) sinon). Il doit être robuste : données de démo seulement en lecture, ou ses propres données avec un nom unique ; pas de dépendance à l'heure exacte ; 60 secondes au plus.
 
 Captures d'écran (pour le relecteur design) :
-- Si le produit a une interface (dossier client/), enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…). Une API sans interface : pas de capture, mais vérifie que chaque route de la tâche est décrite dans docs/API.md.
+- Si le produit a une interface web, enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…). Une API sans interface : pas de capture, mais vérifie que chaque route de la tâche est décrite dans docs/API.md.
 
 Réponds UNIQUEMENT par ce JSON, sans rien autour :
 {"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "regressions": ["test : ce qui est cassé"], "problemes": ["…"], "resume": "une phrase"}`
@@ -119,13 +119,15 @@ const PAGES = JSON.parse(process.env.PAGES || '["/"]')
 `
 
 // Arrête tout serveur d'application encore en vie dans le vérificateur, puis attend que le port se libère.
-const LIBERER_PORT = "pkill -f 'node server/index.js' 2>/dev/null; pkill -f 'npm start' 2>/dev/null; for i in 1 2 3 4 5 6; do curl -s -o /dev/null http://localhost:4100/ || break; sleep 1; done"
+const LIBERER_PORT = libererPort(4100)
 
 export async function verifier(ctx, projet, tache, sha) {
   const { config } = ctx
   const serveur = config.verificateur.url
   const jeton = config.secrets.worker
-  const protege = pathspec(config.perimetre_protege ?? [])
+  const protege = pathspec(proteges(config, projet))
+  const profil = lireProfil(projet)
+  const B = q(`origin/${brancheDeBase(projet)}`)
 
   // 1. Clone neuf de la PR (seule étape qui voit le jeton GitHub).
   const clone = await executer(serveur, jeton, [
@@ -135,9 +137,9 @@ export async function verifier(ctx, projet, tache, sha) {
     `cloner "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
     "cd depot && git remote set-url origin https://github.com/" + projet.depot + ".git",
     `git checkout -q ${q(sha)}`,
-    // Les règles qui jugent la PR sont lues sur main : tout fichier protégé
-    // modifié par la PR est remis tel qu'il est sur main (ou retiré s'il n'y existe pas).
-    `for f in $(git diff --name-only origin/main HEAD -- ${protege}); do if git cat-file -e "origin/main:$f" 2>/dev/null; then git checkout -q origin/main -- "$f"; else rm -f "$f"; fi; done`,
+    // Les règles qui jugent la PR sont lues sur la branche de base : tout fichier protégé
+    // modifié par la PR est remis tel qu'il y est (ou retiré s'il n'y existe pas).
+    `for f in $(git diff --name-only ${B} HEAD -- ${protege}); do if git cat-file -e ${B}":$f" 2>/dev/null; then git checkout -q ${B} -- "$f"; else rm -f "$f"; fi; done`,
     "echo '@@ CLONE_OK'",
   ].join("\n"), { env: { JETON: config.secrets.github }, minutes: 5 })
   if (!("CLONE_OK" in clone.marqueurs)) return { ok: false, infra: true, raisons: [`clone impossible : ${clone.journal.slice(-400)}`] }
@@ -151,20 +153,20 @@ export async function verifier(ctx, projet, tache, sha) {
   const r = await executer(serveur, jeton, [
     "set -o pipefail",
     "cd /travail/verif/depot",
-    ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache)),
+    ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache, profil)),
     // Les journaux suivis en direct par la console repartent de zéro.
     "rm -f /tmp/sorties/verif/design.log; : > /tmp/sorties/verif/codex.log",
-    "npm ci --no-audit --no-fund > /tmp/sorties/verif/npm.log 2>&1 && echo '@@ INSTALL_OK'",
-    // Failles graves (high, critical) des dépendances de production : la PR, puis main pour comparer.
+    `bash -c ${q(profil.installer)} > /tmp/sorties/verif/npm.log 2>&1 && echo '@@ INSTALL_OK'`,
+    // Failles graves (high, critical) des dépendances de production (npm) : la PR, puis la base pour comparer.
     `AUDIT='const j=JSON.parse(require("fs").readFileSync(0,"utf8")||"{}");const v=(j.metadata||{}).vulnerabilities;console.log(v?(v.high||0)+(v.critical||0):"?")'`,
-    "echo \"@@ VULN_GRAVES $(npm audit --omit=dev --json 2>/dev/null | node -e \"$AUDIT\")\"",
-    "mkdir -p /tmp/audit-main && git show origin/main:package.json > /tmp/audit-main/package.json 2>/dev/null && git show origin/main:package-lock.json > /tmp/audit-main/package-lock.json 2>/dev/null && echo \"@@ VULN_GRAVES_MAIN $(cd /tmp/audit-main && npm audit --package-lock-only --omit=dev --json 2>/dev/null | node -e \"$AUDIT\")\"",
+    "if [ -f package-lock.json ]; then echo \"@@ VULN_GRAVES $(npm audit --omit=dev --json 2>/dev/null | node -e \"$AUDIT\")\"; fi",
+    `rm -rf /tmp/audit-main && mkdir -p /tmp/audit-main && git show ${B}:package.json > /tmp/audit-main/package.json 2>/dev/null && git show ${B}:package-lock.json > /tmp/audit-main/package-lock.json 2>/dev/null && echo "@@ VULN_GRAVES_MAIN $(cd /tmp/audit-main && npm audit --package-lock-only --omit=dev --json 2>/dev/null | node -e "$AUDIT")"`,
     // Des secrets dans les lignes ajoutées par la PR (jamais affichés : seulement les fichiers).
     "SECRETS='(xox[abprs]-[0-9A-Za-z-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'",
-    "echo \"@@ SECRETS_TROUVES $(git diff origin/main...HEAD --unified=0 -- . ':(exclude)package-lock.json' | grep -E '^\\+' | grep -cE \"$SECRETS\")\"",
-    "echo \"@@ SECRETS_FICHIERS $(git diff origin/main...HEAD -G\"$SECRETS\" --name-only -- . ':(exclude)package-lock.json' | tr '\\n' ' ')\"",
-    "npm run build > /tmp/sorties/verif/build.log 2>&1 && echo '@@ BUILD_OK' || tail -20 /tmp/sorties/verif/build.log",
-    `npm test 2>&1 | tee /tmp/sorties/verif/tests.log | tail -8; ${COMPTER_TESTS} /tmp/sorties/verif/tests.log`,
+    `echo "@@ SECRETS_TROUVES $(git diff ${B}...HEAD --unified=0 -- . ${VERROUS} | grep -E '^\\+' | grep -cE "$SECRETS")"`,
+    `echo "@@ SECRETS_FICHIERS $(git diff ${B}...HEAD -G"$SECRETS" --name-only -- . ${VERROUS} | tr '\\n' ' ')"`,
+    `bash -c ${q(profil.construire)} > /tmp/sorties/verif/build.log 2>&1 && echo '@@ BUILD_OK' || tail -20 /tmp/sorties/verif/build.log`,
+    `bash -c ${q(profil.tester)} 2>&1 | tee /tmp/sorties/verif/tests.log | tail -8; ${COMPTER_TESTS} /tmp/sorties/verif/tests.log`,
     env,
     "rm -rf $DATA_DIR",
     // Un serveur resté d'une vérification précédente (Codex peut relancer l'application hors du
@@ -172,10 +174,10 @@ export async function verifier(ctx, projet, tache, sha) {
     LIBERER_PORT,
     "if curl -s -o /dev/null http://localhost:4100/; then echo '@@ PORT_OCCUPE'; fi",
     "touch /tmp/sorties/verif/avant-demarrage; sleep 1",
-    "(npm start > /tmp/sorties/verif/app.log 2>&1 &)",
+    `(setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/verif/app.log 2>&1 &)`,
     "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
     // En ligne, le code est en lecture seule : l'application n'écrit que dans DATA_DIR.
-    "sleep 2; echo \"@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/verif/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null | head -5 | tr '\\n' ' ')\"",
+    "sleep 2; echo \"@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/verif/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' -not -path '*/__pycache__/*' 2>/dev/null | head -5 | tr '\\n' ' ')\"",
     // Le cliquet : les tests des critères déjà validés (.usine/e2e, protégé) sont rejoués.
     "mkdir -p /tmp/sorties/verif/e2e /tmp/sorties/verif/captures && : > /tmp/sorties/verif/e2e-echecs.txt",
     "E2E_T=0; E2E_E=0; for f in .usine/e2e/*.cjs; do [ -f \"$f\" ] || continue; E2E_T=$((E2E_T+1)); if ! BASE=http://localhost:4100 timeout 90 node \"$f\" > /tmp/e2e.out 2>&1; then E2E_E=$((E2E_E+1)); echo \"== $(basename $f)\" >> /tmp/sorties/verif/e2e-echecs.txt; tail -5 /tmp/e2e.out >> /tmp/sorties/verif/e2e-echecs.txt; fi; done",
@@ -240,7 +242,7 @@ export async function verifier(ctx, projet, tache, sha) {
 // renvoyée est un motif de refus. Aucune raison = la tâche peut être fusionnée.
 export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "" }) {
   const raisons = []
-  if (!("INSTALL_OK" in m)) return ["l'installation des dépendances (npm ci) échoue"]
+  if (!("INSTALL_OK" in m)) return ["l'installation des dépendances échoue"]
   // La sécurité d'abord : un secret dans le code, ou une faille grave ajoutée.
   if (Number(m.SECRETS_TROUVES ?? 0) > 0) raisons.push(`un secret (clé, jeton ou clé privée) est écrit dans le code : ${m.SECRETS_FICHIERS || "voir le diff"}. Retire-le et lis-le depuis une variable d'environnement.`)
   const vuln = Number(m.VULN_GRAVES)
