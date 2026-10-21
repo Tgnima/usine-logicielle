@@ -40,4 +40,7 @@ test("les pages photographiées : l'accueil et les pages de la tâche, jamais l'
   const t = { titre: "Écrans", description: "Sur /campagnes et /campagnes/:id ; voir docs/DESIGN.md", criteres: JSON.stringify(["La page /contacts liste 50 contacts", "POST /api/segments renvoie 201"]) }
   assert.deepEqual(pagesDeLaTache(t), ["/", "/campagnes", "/campagnes/1"])
   assert.deepEqual(pagesDeLaTache({ titre: "API", description: "GET /api/x", criteres: "[]" }), ["/"])
+  // Next.js : /avis/[id]/proposition est UN chemin (avant, l'usine photographiait /proposition, une page 404).
+  assert.deepEqual(pagesDeLaTache({ titre: "Réponses", description: "Depuis /avis, l'écran /avis/[id]/proposition", criteres: "[]" }), ["/", "/avis", "/avis/1/proposition"])
+  assert.deepEqual(pagesDeLaTache({ titre: "Docs", description: "Sur /docs/[...slug]", criteres: "[]" }), ["/", "/docs/1"])
 })

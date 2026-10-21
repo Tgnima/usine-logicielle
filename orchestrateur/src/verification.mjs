@@ -81,10 +81,12 @@ export function pagesDeLaTache(tache) {
   try {
     criteres = JSON.parse(tache.criteres ?? "[]")
   } catch {}
-  const texte = `${tache.titre ?? ""}\n${tache.description ?? ""}\n${criteres.join("\n")}`
+  // [...slug] et [[...slug]] (Next.js, routes attrape-tout) : lus comme un paramètre simple.
+  const texte = `${tache.titre ?? ""}\n${tache.description ?? ""}\n${criteres.join("\n")}`.replace(/\[{1,2}\.\.\.([a-z_]+)\]{1,2}/gi, "[$1]")
   const pages = new Set(["/"])
-  for (const m of texte.matchAll(/(?<![\w./-])\/[a-z][a-z0-9_\-/:]*/gi)) {
-    const chemin = m[0].replace(/\/:[a-z_]+/gi, "/1").replace(/\/+$/, "")
+  // Un paramètre d'adresse s'écrit /:id (Express) ou /[id] (Next.js) : il fait partie du chemin.
+  for (const m of texte.matchAll(/(?<![\w./\]-])\/[a-z][a-z0-9_\-/:[\]]*/gi)) {
+    const chemin = m[0].replace(/\/:[a-z_]+/gi, "/1").replace(/\/\[{1,2}\.{0,3}[a-z_]+\]{1,2}/gi, "/1").replace(/\/+$/, "")
     if (/^\/(api|_portier|tmp|travail|public)\b/i.test(chemin) || /\.[a-z]{2,4}$/i.test(chemin) || chemin.length < 2) continue
     pages.add(chemin)
     if (pages.size >= 3) break
@@ -104,7 +106,12 @@ const PAGES = JSON.parse(process.env.PAGES || '["/"]')
     const page = await contexte.newPage()
     for (const [i, chemin] of PAGES.entries()) {
       try {
-        await page.goto(BASE + chemin, { waitUntil: "networkidle", timeout: 20000 })
+        const reponse = await page.goto(BASE + chemin, { waitUntil: "networkidle", timeout: 20000 })
+        // Une page en erreur (un identifiant deviné qui n'existe pas en démo) n'est pas jugée sur capture.
+        if (reponse && reponse.status() >= 400) {
+          console.log(\`page non photographiée : \${chemin} (HTTP \${reponse.status()})\`)
+          continue
+        }
         await page.waitForTimeout(800)
         const nom = (chemin.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "accueil").slice(0, 40)
         await page.screenshot({ path: \`/tmp/sorties/verif/captures/\${i + 1}-\${nom}-\${format}.png\` })
