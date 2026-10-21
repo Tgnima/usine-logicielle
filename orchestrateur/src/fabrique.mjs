@@ -146,7 +146,11 @@ async function fabriquer(ctx, projet, tache) {
     `D=/travail/${projet.slug}; rm -rf "$D" && mkdir -p "$D" /tmp/sorties/tache && cd "$D"`,
     `cloner "https://x-access-token:$JETON@github.com/${projet.depot}.git" depot 2>&1 | sed "s/$JETON/***/g"`,
     `cd depot && git remote set-url origin https://github.com/${projet.depot}.git`,
-    reprendre ? `git checkout -q -B ${q(branche)} origin/${q(branche)} 2>/dev/null || git checkout -q -B ${q(branche)} origin/${q(base)}` : `git checkout -q -B ${q(branche)} origin/${q(base)}`,
+    // Un nouvel essai reprend sa branche, mais la base a pu avancer depuis (une autre tâche fusionnée,
+    // une tâche acceptée par un humain) : la branche l'intègre d'abord ; en cas de conflit, on repart de la base.
+    reprendre
+      ? `if git checkout -q -B ${q(branche)} origin/${q(branche)} 2>/dev/null; then git merge -q --no-edit origin/${q(base)} > /tmp/sorties/tache/integration.log 2>&1 || { git merge --abort; git checkout -q -B ${q(branche)} origin/${q(base)}; echo '@@ REPART_DE_LA_BASE'; }; else git checkout -q -B ${q(branche)} origin/${q(base)}; fi`
+      : `git checkout -q -B ${q(branche)} origin/${q(base)}`,
     // Dans l'atelier, un verrou en retard ne bloque pas l'agent (il le remettra d'aplomb).
     `bash -c ${q(profil.installer)} > /tmp/sorties/tache/installation.log 2>&1 || { [ -f package.json ] && npm install --no-audit --no-fund >> /tmp/sorties/tache/installation.log 2>&1; }`,
     "echo '@@ PREPARATION_OK'",
@@ -282,7 +286,18 @@ async function fabriquer(ctx, projet, tache) {
   const bilan = (v.verdict.criteres ?? []).map((c) => `- :white_check_mark: ${c.critere}${c.preuve ? ` — ${c.preuve}` : ""}`).join("\n")
   const designPR = v.design ? `\n\n### :art: Design : ${v.design.note ?? "?"}/10\n${v.design.resume ?? ""}${(v.design.mineurs ?? []).length ? `\n\nÀ polir (lot de finition) :\n${v.design.mineurs.map((d) => `- ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}`).join("\n")}` : ""}` : ""
   await commentairePR(config, nomDepot, pr.number, `### :white_check_mark: Validée par le vérificateur\n\n${v.verdict.resume ?? ""}\n\n${bilan}\n\n${v.tests} test(s) passé(s).${designPR}`).catch(() => {})
-  await fusionnerPR(config, nomDepot, pr.number, { titre: `${tache.cle} · ${tache.titre} (#${pr.number})`, sha })
+  try {
+    await fusionnerPR(config, nomDepot, pr.number, { titre: `${tache.cle} · ${tache.titre} (#${pr.number})`, sha })
+  } catch (error) {
+    // La base a avancé pendant la vérification et la PR est en conflit (ou sa branche a bougé) :
+    // ce n'est pas une panne. La tâche repasse, sans tentative consommée, et intégrera la base.
+    if (![405, 409].includes(error.statut)) throw error
+    maj(db, "taches", tache.id, { statut: "prete", retours: `${tache.retours ? `${tache.retours}\n` : ""}- La branche de base a avancé pendant la vérification (conflit à la fusion) : la tâche intègre ses derniers changements et repasse la vérification.` })
+    noter(db, { projet: projet.id, tache: tache.id, type: "conflit", message: `${tache.cle} : validée, mais en conflit avec ${base} au moment de la fusion (PR #${pr.number}). Elle intègre la base et repasse, sans tentative consommée.` })
+    await commentairePR(config, nomDepot, pr.number, `### :twisted_rightwards_arrows: Conflit avec \`${base}\` au moment de la fusion\n\nLa base a avancé pendant la vérification. La tâche intègre ses derniers changements et repasse la vérification.`).catch(() => {})
+    await retirerEtiquette(config, nomDepot, tache.issue, "usine:verification").catch(() => {})
+    return ctx.notifier.progres(projet, `🔀 ${tache.cle} : validée mais en conflit avec la base (une autre tâche a été fusionnée entre-temps) ; elle intègre la base et repasse`)
+  }
   const p = obtenir(db, "projets", projet.id)
   maj(db, "projets", projet.id, { plancher_tests: Math.max(p.plancher_tests, v.tests) })
   maj(db, "taches", tache.id, { statut: "fusionnee" })
