@@ -9,7 +9,7 @@
 // un test de non-régression (.usine/e2e/), rejoué à chaque tâche suivante.
 //
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
-import { noterLimites, scriptCodex } from "./moteurs.mjs"
+import { noterLimites, scriptCodex, signalerFacturation } from "./moteurs.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS, VERROUS, brancheDeBase, libererPort, lireProfil, proteges } from "./profil.mjs"
 import { extraireJson } from "./analyste.mjs"
@@ -213,6 +213,7 @@ export async function verifier(ctx, projet, tache, sha) {
   const m = r.marqueurs
   if ("PORT_OCCUPE" in m) return { ok: false, infra: true, raisons: ["le port 4100 du vérificateur est occupé par un ancien serveur impossible à arrêter"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
   const accesCodex = noterLimites(ctx, "codex", m)
+  await signalerFacturation(ctx, "codex", accesCodex)
   if (accesCodex.epuise) return { ok: false, infra: true, limite: true, reprise: accesCodex.reprise, raisons: ["Codex à sa limite d'usage (abonnement et secours)"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
   // La consommation de Codex, même quand il refuse ou échoue.
   if ("CODEX_CODE" in m) {

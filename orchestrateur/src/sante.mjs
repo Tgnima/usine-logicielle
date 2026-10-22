@@ -5,7 +5,7 @@
 // Sources : /app/etat/sante.json (écrit par le déployeur : disque, mémoire,
 // conteneurs, place des produits, mise à jour), les serveurs de travaux, le
 // portier, GitHub, et un contrôle des connexions Claude et Codex toutes les 6 h.
-import { limitesEnCours, nomMode } from "./moteurs.mjs"
+import { facturationsEnCours, limitesEnCours, nomMode } from "./moteurs.mjs"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { sante as santeServeurTravaux, executer, lireFichier } from "./travaux.mjs"
@@ -121,9 +121,11 @@ export async function etatUsine(ctx) {
     ajouter(nom, !x ? "inconnu" : x.ok ? "ok" : "panne", !x ? "pas encore contrôlé" : `${x.detail} · ${new Date(x.le).toLocaleString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}`)
   }
   // Les limites d'usage en cours (abonnements, clés) : l'usine bascule seule, on le montre.
+  const sansCredit = new Set(facturationsEnCours(ctx.db).map((f) => `${f.moteur}_${f.mode}`))
   for (const l of limitesEnCours(ctx.db)) {
     const heure = new Date(l.jusqua).toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" })
-    ajouter(`${l.moteur === "codex" ? "Codex" : "Claude"} · ${nomMode(l.mode)}`, "alerte", `limite d'usage atteinte jusqu'à ${heure} : l'usine passe par la façon suivante (clé API ou passerelle)`)
+    const pourquoi = sansCredit.has(`${l.moteur}_${l.mode}`) ? `refusée faute de crédit, retentée vers ${heure} : ajoute du crédit sur le compte` : `limite d'usage atteinte jusqu'à ${heure}`
+    ajouter(`${l.moteur === "codex" ? "Codex" : "Claude"} · ${nomMode(l.mode)}`, "alerte", `${pourquoi} ; l'usine passe par la façon suivante, ou se met en pause sans consommer de tentative`)
   }
   return { composants: c, serveur: s }
 }

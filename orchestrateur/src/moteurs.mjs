@@ -10,6 +10,12 @@
 // réinitialisation lue dans le message, sinon 30 min) : les travaux suivants ne la tentent
 // plus d'ici là. Si toutes sont épuisées, la fabrication se met en pause, sans consommer de
 // tentative, et reprend seule. Les coûts sont mesurés quelle que soit la façon.
+//
+// Un refus de facturation (crédit épuisé, paiement requis : 402) est traité comme une limite :
+// la façon est écartée pendant une heure, puis retentée (le crédit a pu être ajouté), et
+// l'usine le signale dans Slack. Sans cela, l'agent rendait un travail vide et la tentative
+// était consommée.
+const FACTURATION_PAUSE = 60 * 60_000
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { q } from "./travaux.mjs"
 
@@ -19,6 +25,7 @@ const NOMS = { abonnement: "abonnement", cle: "clé API", passerelle: "passerell
 export const nomMode = (m) => NOMS[m] ?? m
 
 const cleLimite = (moteur, mode) => `limite_${moteur}_${mode}`
+const cleFacturation = (moteur, mode) => `facturation_${moteur}_${mode}`
 
 // L'heure de reprise annoncée (« resets 12:40pm (UTC) », « try again at 3pm », « in 2 hours »…).
 export function heureDeReprise(texte, maintenant = new Date()) {
@@ -53,22 +60,65 @@ export function limitesEnCours(db) {
     .filter((l) => new Date(l.jusqua) > maintenant)
 }
 
-// Après un travail : les façons épuisées (marqueurs @@ LIMITE_<MODE> …) sont retenues.
-// Renvoie { mode : la façon qui a servi, epuise : toutes étaient épuisées, reprise : la plus proche }.
+// Les refus de facturation en cours : [{ moteur, mode, message, jusqua }].
+export function facturationsEnCours(db) {
+  const maintenant = new Date()
+  return db.prepare("SELECT cle, valeur FROM reglages WHERE cle LIKE 'facturation_%'").all()
+    .map((r) => {
+      try {
+        return { moteur: r.cle.split("_")[1], mode: r.cle.split("_").slice(2).join("_"), ...JSON.parse(r.valeur) }
+      } catch {
+        return null
+      }
+    })
+    .filter((f) => f && new Date(f.jusqua) > maintenant)
+}
+
+// Après un travail : les façons épuisées (marqueurs @@ LIMITE_<MODE> … et @@ FACTURATION_<MODE> …)
+// sont retenues. Renvoie { mode : la façon qui a servi, epuise : toutes étaient épuisées,
+// reprise : la plus proche, facturation : les refus de facturation APPARUS à ce travail }.
 export function noterLimites(ctx, moteur, marqueurs = {}) {
+  const facturation = []
+  const enCours = new Set(facturationsEnCours(ctx.db).filter((f) => f.moteur === moteur).map((f) => f.mode))
   for (const mode of MODES) {
     const texte = marqueurs[`LIMITE_${mode.toUpperCase()}`]
     if (texte !== undefined) ecrireReglage(ctx.db, cleLimite(moteur, mode), heureDeReprise(texte).toISOString())
+    const refus = marqueurs[`FACTURATION_${mode.toUpperCase()}`]
+    if (refus !== undefined) {
+      const jusqua = new Date(Date.now() + FACTURATION_PAUSE).toISOString()
+      ecrireReglage(ctx.db, cleLimite(moteur, mode), jusqua)
+      ecrireReglage(ctx.db, cleFacturation(moteur, mode), JSON.stringify({ message: refus.slice(0, 300), jusqua }))
+      if (!enCours.has(mode)) facturation.push({ mode, message: refus.slice(0, 300) })
+    }
   }
   const mode = marqueurs[`MODE_${moteur === "codex" ? "CODEX" : "CLAUDE"}`] ?? null
+  // Une façon qui a de nouveau servi a retrouvé son crédit.
+  if (mode) ctx.db.prepare("DELETE FROM reglages WHERE cle = ?").run(cleFacturation(moteur, mode))
   const epuise = `EPUISE_${moteur === "codex" ? "CODEX" : "CLAUDE"}` in marqueurs
   const reprises = MODES.map((m) => lireReglage(ctx.db, cleLimite(moteur, m), "")).filter(Boolean).map((x) => new Date(x)).filter((d) => d > new Date())
-  return { mode, epuise, reprise: reprises.length ? new Date(Math.min(...reprises)) : null }
+  return { mode, epuise, reprise: reprises.length ? new Date(Math.min(...reprises)) : null, facturation }
+}
+
+// Le signal dans Slack d'un refus de facturation, une fois par façon (pas à chaque travail).
+export async function signalerFacturation(ctx, moteur, acces) {
+  for (const f of acces.facturation ?? []) {
+    const qui = moteur === "codex" ? "Codex (vérificateur)" : "Claude (agents)"
+    const ou = { passerelle: "le compte Vercel AI Gateway", cle: moteur === "codex" ? "le compte OpenAI de la clé API" : "le compte Anthropic de la clé API", abonnement: "l'abonnement" }[f.mode]
+    const suite = acces.epuise
+      ? "Aucune autre façon n'est disponible : la fabrication se met en pause, sans consommer de tentative, et reprend seule."
+      : "L'usine passe à la façon suivante, sans consommer de tentative."
+    await ctx.notifier?.alerte?.(`:credit_card: *${qui} : la ${nomMode(f.mode)} refuse les appels, faute de crédit.* ${suite} Ajoute du crédit sur ${ou} : l'usine la retente toute seule dans une heure.\n> ${f.message}`)?.catch?.(() => {})
+  }
 }
 
 // Le nom du modèle pour Claude Code via la passerelle : le même nom qu'avec l'abonnement
 // (vérifié sur Vercel AI Gateway ; Claude Code refuse « anthropic/… »). Surchargeable.
 export const modelePasserelle = (config, modele) => config.secours?.modeles_passerelle?.[modele] ?? modele.replace(/^anthropic\//, "")
+
+// Les refus de facturation, tels que les renvoient Anthropic, la passerelle et OpenAI
+// (« API Error: 402 A positive credit balance is required… », « insufficient_quota »…).
+const FACTURATION_CLAUDE = `"api_error_status":402|API Error: 402|credit balance|insufficient (credit|funds|balance)|out of credits|payment required|billing`
+const FACTURATION_CODEX = `[^0-9]402[^0-9]|insufficient_quota|credit balance|insufficient (credit|funds|balance)|payment required|billing`
 
 // Ce qu'il faut pour qu'une façon soit tentée (une façon non configurée est sautée, sans alerte).
 const PREALABLE = { abonnement: "true", cle: null, passerelle: '[ -n "$AI_GATEWAY_API_KEY" ]' }
@@ -91,7 +141,8 @@ export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null" 
   if ${lancer} < /dev/null > ${q(sortie)} 2> ${q(erreurs)}; then CODE=0; else CODE=$?; fi
   # Seul le résultat final compte (le travail de l'agent peut parler de « rate limit »).
   R=$(grep '"type":"result"' ${q(sortie)} 2>/dev/null | tail -1)
-  if echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '"api_error_status":429|(session|usage|rate) limit|limite d.usage'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$R" | grep -oiE 'resets? [^"\\\\]{0,30}|try again [^"\\\\]{0,30}' | head -1)"
+  if echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '${FACTURATION_CLAUDE}'; then echo "@@ FACTURATION_${mode.toUpperCase()} $(echo "$R" | grep -oE '"result":"[^"]{0,200}' | cut -c11-)"
+  elif echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '"api_error_status":429|(session|usage|rate) limit|limite d.usage'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$R" | grep -oiE 'resets? [^"\\\\]{0,30}|try again [^"\\\\]{0,30}' | head -1)"
   elif [ -s ${q(sortie)} ]; then FAIT=1; echo "@@ MODE_CLAUDE ${mode}"; fi
 fi`
   })
@@ -119,7 +170,8 @@ export function scriptCodex(ctx, { args, journal, marqueur = "CODEX_CODE" }) {
   if ${lancer} < /dev/null > ${q(journal)} 2>&1; then CODE=0; else CODE=$?; fi
   # Seules les erreurs du moteur comptent (le vérificateur peut tester une limite de requêtes).
   E=$(grep -E '"type":"(error|turn.failed)"' ${q(journal)} 2>/dev/null | tail -3)
-  if [ -n "$E" ] && echo "$E" | grep -qiE '(usage|rate) limit|429|quota'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$E" | grep -oiE '(try again|resets?) [^"\\\\]{0,30}' | head -1)"
+  if [ -n "$E" ] && echo "$E" | grep -qiE '${FACTURATION_CODEX}'; then echo "@@ FACTURATION_${mode.toUpperCase()} $(echo "$E" | grep -oE '"message":"[^"]{0,200}' | head -1 | cut -c12-)"
+  elif [ -n "$E" ] && echo "$E" | grep -qiE '(usage|rate) limit|429|quota'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$E" | grep -oiE '(try again|resets?) [^"\\\\]{0,30}' | head -1)"
   elif [ -s ${q(journal)} ]; then FAIT=1; echo "@@ MODE_CODEX ${mode}"; fi
 fi`
   })

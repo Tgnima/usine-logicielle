@@ -20,7 +20,7 @@ import { ecrireReglage, enregistrer, lireReglage, usagesClaude } from "./couts.m
 import { verifierBudgets } from "./budgets.mjs"
 import { garderCaptures } from "./suivi.mjs"
 import { decrireDefaut, relireSecurite } from "./relectures.mjs"
-import { nomMode, noterLimites, scriptClaude } from "./moteurs.mjs"
+import { facturationsEnCours, nomMode, noterLimites, scriptClaude, signalerFacturation } from "./moteurs.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -175,7 +175,11 @@ async function fabriquer(ctx, projet, tache) {
   ].join("\n"), { minutes, surAvancement: () => {} })
   let resume = ""
   const acces = noterLimites(ctx, "claude-code", agent.marqueurs)
-  const limite = acces.epuise ? { texte: "toutes les façons d'utiliser Claude (abonnement, clé API, passerelle) sont à leur limite", reprise: acces.reprise ?? new Date(Date.now() + 30 * 60_000) } : null
+  await signalerFacturation(ctx, "claude-code", acces)
+  const sansCredit = facturationsEnCours(db).filter((f) => f.moteur === "claude-code").map((f) => nomMode(f.mode))
+  const limite = acces.epuise
+    ? { texte: `toutes les façons d'utiliser Claude (abonnement, clé API, passerelle) sont à leur limite${sansCredit.length ? ` (refus faute de crédit : ${sansCredit.join(", ")})` : ""}`, reprise: acces.reprise ?? new Date(Date.now() + 30 * 60_000) }
+    : null
   if (acces.mode && acces.mode !== "abonnement") noter(db, { projet: projet.id, tache: tache.id, type: "moteur", message: `${tache.cle} : l'abonnement Claude est à sa limite, l'agent a travaillé via ${nomMode(acces.mode)} (payé à l'usage).` })
   try {
     const sortie = JSON.parse(await lireFichier(atelier, jeton, "/tmp/sorties/tache/agent.json"))
