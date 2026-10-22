@@ -13,6 +13,8 @@ Connecté au compte GitHub qui recevra les applications, ouvrez [github.com/sett
 
 ## 2. Le régler
 
+[[capture:github-nouveau-token.png|Le haut du formulaire : nom, description, propriétaire, expiration et accès à tous les dépôts]]
+
 - **Token name** : un nom clair, par exemple `usine-logicielle` ;
 - **Resource owner** : le compte (ou l'organisation) qui recevra les dépôts ;
 - **Expiration** : notez la date, l'usine s'arrêtera de pousser ce jour-là ;
@@ -23,6 +25,8 @@ Connecté au compte GitHub qui recevra les applications, ouvrez [github.com/sett
   - **Issues** : *Read and write*, pour les issues d'escalade ;
   - **Pull requests** : *Read and write*, pour une pull request par tâche ;
   - **Metadata** : *Read-only*, ajouté d'office.
+
+[[capture:github-droits-token.png|Les cinq permissions : Administration, Contents, Issues et Pull requests en lecture et écriture, Metadata en lecture]]
 
 Cliquez sur **Generate token**.
 
