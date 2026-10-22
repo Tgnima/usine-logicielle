@@ -2,54 +2,40 @@
 titre: Comment donner à Claude l'accès à mon VPS ?
 slug: comment-donner-a-claude-l-acces-a-mon-vps
 ordre: 3
-resume: Un raccourci SSH, un premier test, et les règles à fixer avant de laisser Claude travailler sur le serveur.
-meta_description: Donnez à Claude Code l'accès à votre VPS Wayhost par une clé SSH : raccourci ~/.ssh/config, premier test et règles de sécurité à lui donner.
+resume: Déposer la clé publique sur le VPS une seule fois avec le mot de passe, puis laisser Claude se connecter avec la clé uniquement.
+meta_description: Donnez à Claude Code l'accès à votre VPS Wayhost : dépôt de la clé SSH, premier test, et les règles à suivre (mot de passe, connexions, pare-feu).
 ---
-Claude Code se connecte à votre VPS **avec votre clé SSH**, depuis votre ordinateur. Il n'a jamais besoin d'un mot de passe.
+Claude se connecte au VPS **avec la clé SSH** créée à l'étape précédente. Le mot de passe du serveur ne sert qu'une fois, pour déposer cette clé, et c'est **vous** qui le tapez.
 
-## 1. Créer un raccourci SSH
+## 1. Trouver l'IP et l'utilisateur
 
-Dans l'[espace client](https://panel.wayhost.cloud), ouvrez **Mes serveurs**, cliquez sur les **⋯** de votre VPS puis sur **Gérer**. La rubrique **Accès Root** donne la **commande SSH** et l'**IP du serveur**.
+Dans l'[espace client](https://panel.wayhost.cloud), ouvrez **Mes serveurs**, cliquez sur les **⋯** de votre VPS puis sur **Gérer**. La rubrique **Accès Root** donne la **commande SSH** (par exemple `ssh ubuntu@203.0.113.10`) : l'utilisateur est le mot avant le `@`, l'IP celui d'après.
 
 [[capture:acces-root.png|La rubrique Accès Root d'un VPS dans l'espace client]]
 
-Ouvrez (ou créez) le fichier `config` du dossier `.ssh` de votre compte, et ajoutez :
+## 2. Déposer la clé publique (vous, une seule fois)
+
+Sous Windows, dans **PowerShell**, en remplaçant l'utilisateur et l'IP par les vôtres :
 
 ```
-Host usine
-    HostName 203.0.113.10
-    User ubuntu
-    IdentityFile ~/.ssh/id_ed25519
+type $env:USERPROFILE\.ssh\wayhost_usine.pub | ssh ubuntu@203.0.113.10 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
-Remplacez `203.0.113.10` par l'IP de votre VPS, et `ubuntu` par l'utilisateur de la commande SSH (le mot avant le `@`).
+Répondez `yes` à la première question, puis tapez le mot de passe du VPS (rien ne s'affiche pendant la saisie, c'est normal).
 
-## 2. Tester la connexion
+## 3. Laisser Claude tester
 
-```
-ssh usine
-```
-
-Vous devez arriver sur le serveur **sans saisir de mot de passe**. Tapez `exit` pour revenir.
-
-## 3. Laisser Claude travailler
-
-Lancez `claude` sur votre ordinateur, puis demandez-lui par exemple :
+Demandez à Claude de se connecter avec la clé et de décrire le serveur. Il lance une commande de ce type :
 
 ```
-Connecte-toi au serveur avec « ssh usine » et dis-moi quel système, combien de mémoire et quel espace disque il a.
+ssh -i ~/.ssh/wayhost_usine ubuntu@203.0.113.10 "lsb_release -ds; nproc; free -h; df -h /; sudo -n true && echo SUDO_OK"
 ```
 
-Claude lance lui-même les commandes `ssh usine …` et vous montre ce qu'il fait. Lisez ses commandes avant de les accepter : c'est le meilleur moyen d'apprendre.
+Vous voyez le système, le nombre de processeurs, la mémoire, le disque, et `SUDO_OK` si l'utilisateur a les droits d'administration.
 
-## Les règles à donner à Claude dès le début
+## Les règles apprises en route
 
-Collez-les au début de chaque session (ou dans un fichier `CLAUDE.md` à la racine de votre projet) :
-
-```
-- Ne modifie jamais le pare-feu ni la configuration SSH du serveur sans me demander.
-- Ne me demande jamais un mot de passe, une clé privée ou un token dans la conversation : je les range moi-même dans un fichier .env.
-- Avant une commande qui supprime ou écrase des données, explique-la et attends mon accord.
-```
-
-> Claude vous a coupé l'accès au serveur ? Reprenez la main avec la **console web** de l'espace client : voir *Comment utiliser la console web de mon VPS ?*
+- **Ne tapez jamais le mot de passe du serveur dans la conversation.** Claude n'en a pas besoin. S'il y a été écrit, changez-le.
+- **Le serveur coupe les connexions SSH trop rapprochées** (« Connection reset », « Connection timed out »). Il ne s'agit pas d'une panne : demandez à Claude de regrouper ses commandes et de réessayer après une pause.
+- **Pas de pare-feu ni de réglage SSH sans votre accord** : une erreur vous coupe l'accès, à vous comme à Claude.
+- **Les secrets ne passent jamais par la conversation** : vous les collez vous-même dans un fichier sur le serveur (voir *Comment ranger les secrets de mon usine ?*).

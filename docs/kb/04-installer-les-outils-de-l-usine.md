@@ -1,76 +1,90 @@
 ---
-titre: Comment installer les outils de l'usine sur mon VPS ?
+titre: Comment installer l'usine logicielle sur mon VPS ?
 slug: comment-installer-les-outils-de-l-usine-sur-mon-vps
 ordre: 4
-resume: Mettre le serveur à jour, installer git et Docker, puis faire tourner Claude Code dans une image Docker connectée à votre compte.
-meta_description: Préparez votre VPS Wayhost pour une usine logicielle : git et Docker sur le serveur, Claude Code dans une image Docker, connexion à votre abonnement.
+resume: Docker et du swap sur le serveur, le code de l'usine, puis Claude Code et Codex connectés à vos abonnements, dans leurs conteneurs.
+meta_description: Installer l'usine logicielle sur un VPS Wayhost : Docker, swap, install.sh, puis Claude Code et Codex connectés dans leurs conteneurs Docker.
 ---
-Ces commandes se lancent **sur le VPS** (après `ssh usine`). Elles commencent par `sudo` : vous êtes connecté avec l'utilisateur de la commande SSH (souvent `ubuntu`), et `sudo` lui donne les droits d'administration. Vous pouvez aussi demander à Claude de les lancer pour vous, en lisant chaque commande avant de l'accepter.
+Ces commandes se lancent **sur le VPS** : Claude les lance pour vous par SSH, sauf les deux connexions aux abonnements (étapes 5 et 7), qui demandent un navigateur et se font **dans votre propre terminal**.
 
-Sur le serveur, on n'installe **que git et Docker**. Claude Code n'est pas installé sur le système : il tourne **dans une image Docker**, comme tous les rouages de l'usine. Le serveur reste propre, et chaque agent travaille dans un conteneur isolé.
+Sur le serveur, on n'installe **ni Node.js ni Claude Code** : ils sont dans les images Docker de l'usine.
 
-## 1. Mettre le serveur à jour
-
-```
-sudo apt update && sudo apt upgrade -y
-```
-
-## 2. Installer git et Docker
+## 1. Vérifier Docker
 
 ```
-sudo apt install -y git curl
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-```
-
-Déconnectez-vous (`exit`), reconnectez-vous (`ssh usine`), puis vérifiez :
-
-```
-docker run --rm hello-world
+docker --version
 docker compose version
 ```
 
-Le message « Hello from Docker! » confirme que Docker fonctionne. Docker Compose, installé avec lui, lancera les conteneurs de l'usine ensemble.
+Sur le VPS de démonstration, Docker et Docker Compose étaient déjà installés. S'ils manquent, suivez la [documentation officielle de Docker pour Ubuntu](https://docs.docker.com/engine/install/ubuntu/) : le script d'installation de l'usine s'arrête tant que Docker n'est pas là.
 
-## 3. Construire l'image de l'atelier
-
-L'**atelier** est le conteneur où les agents codent. Dans le dossier de votre usine, créez `atelier/Dockerfile` :
+Donnez ensuite à votre utilisateur le droit de lancer Docker, puis reconnectez-vous :
 
 ```
-FROM node:24-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl \
-  && rm -rf /var/lib/apt/lists/*
-RUN npm install -g @anthropic-ai/claude-code@latest
-USER node
-WORKDIR /travail
+sudo usermod -aG docker ubuntu
 ```
 
-Node.js est fourni par l'image `node:24-slim` : rien à installer sur le serveur. Construisez l'image et vérifiez :
+## 2. Ajouter 4 Go de swap
+
+Sur un petit serveur, la construction des images et le navigateur de test sont les pics de mémoire. Le swap évite qu'ils fassent tomber le serveur :
 
 ```
-docker build -t atelier atelier
-docker run --rm atelier claude --version
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
+sudo sysctl -w vm.swappiness=10
+echo vm.swappiness=10 | sudo tee -a /etc/sysctl.conf
 ```
 
-## 4. Connecter Claude Code à votre compte
+`free -h` doit afficher `Swap: 4,0Gi`.
 
-Cette étape se fait **vous-même, dans votre terminal** : elle demande un navigateur.
-
-```
-docker run --rm -it atelier claude setup-token
-```
-
-Ouvrez le lien affiché sur votre ordinateur, connectez-vous à votre compte Claude, puis collez le code obtenu dans le terminal. Claude Code affiche alors un **jeton longue durée** : copiez-le dans votre fichier `.env`, sur la ligne `CLAUDE_CODE_OAUTH_TOKEN=` (voir *Comment ranger mes secrets dans un fichier .env ?*). Le conteneur est supprimé aussitôt : le jeton n'est gardé que dans `.env`.
-
-## 5. Faire travailler l'agent
-
-Le conteneur reçoit le jeton par `.env` et ne voit que le dossier du projet :
+## 3. Récupérer le code de l'usine
 
 ```
-docker run --rm --env-file .env -v ~/projets/mon-app:/travail atelier \
-  claude -p "Lis le README et dis-moi comment lancer les tests."
+git clone https://github.com/<compte>/usine-logicielle.git
+cd usine-logicielle
 ```
 
-C'est le principe de l'usine : votre usine lancera ces conteneurs elle-même, une tâche à la fois. Plus tard, d'autres images s'ajoutent sur le même modèle (un vérificateur qui teste l'application, un déployeur qui la met en ligne), réunies dans un fichier `docker-compose.yml`.
+Le dépôt est privé. Sur le VPS de démonstration, le serveur n'avait pas encore d'accès à GitHub : Claude a copié le code depuis l'ordinateur (`git bundle`, puis `scp`).
 
-> Une clé API Anthropic (`ANTHROPIC_API_KEY`) remplace le jeton si vous n'avez pas d'abonnement Claude.
+## 4. Premier lancement
+
+```
+bash install.sh
+```
+
+Au premier lancement, le script crée `.env` (les réglages et les secrets) et `usine.config.yml` (le contrat de l'usine), puis **s'arrête** en listant ce qui manque, par exemple `Il manque : GITHUB_TOKEN`. C'est normal : les secrets se remplissent aux étapes suivantes.
+
+> Une usine à contenu tourne déjà sur le serveur ? `bash install.sh --reprendre-de ../usine-contenu` reprend sa connexion Claude et son compte Codex. C'est ce qui a été fait sur le VPS de démonstration.
+
+## 5. Connecter Claude Code à votre abonnement (vous)
+
+Claude Code est dans l'image de l'**atelier** (`atelier/Dockerfile` l'installe en dernière version). Construisez l'image, puis lancez la connexion **dans votre terminal**, connecté au serveur :
+
+```
+docker build -t usine-atelier -f atelier/Dockerfile .
+docker run --rm -it --entrypoint claude usine-atelier setup-token
+```
+
+Ouvrez le lien affiché, connectez-vous à votre compte Claude, autorisez, puis collez le code dans le terminal. Claude Code affiche un jeton qui commence par `sk-ant-oat01-` : copiez-le dans `.env`, sur la ligne `CLAUDE_CODE_OAUTH_TOKEN=` (voir *Comment ranger les secrets de mon usine ?*). Le conteneur est supprimé aussitôt.
+
+## 6. Construire et démarrer
+
+Une fois dans `.env` le token GitHub, le jeton Claude et `DEPOT_ETAT` (le dépôt d'état que tire le déployeur, sous la forme `compte/nom`) :
+
+```
+bash install.sh
+docker compose ps
+```
+
+Le script chiffre les secrets, construit les images (Claude Code, Codex et Playwright en dernière version) et démarre les conteneurs. Le journal se suit avec `docker compose logs -f orchestrateur`.
+
+## 7. Connecter Codex à votre abonnement ChatGPT (vous)
+
+Codex est dans l'image du **vérificateur** ; sa connexion est gardée dans un volume Docker. À la fin de son travail, `install.sh` affiche cette commande si Codex n'est pas encore connecté :
+
+```
+docker compose run --rm verificateur codex login --device-auth
+```
+
+Ouvrez le lien affiché, connectez-vous à ChatGPT et saisissez le code.

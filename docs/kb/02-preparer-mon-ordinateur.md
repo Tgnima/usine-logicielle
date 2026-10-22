@@ -2,52 +2,29 @@
 titre: Comment préparer mon ordinateur pour l'usine logicielle ?
 slug: comment-preparer-mon-ordinateur-pour-l-usine-logicielle
 ordre: 2
-resume: Ouvrir un terminal, installer Claude Code et créer votre clé SSH.
-meta_description: Avant de monter une usine logicielle sur un VPS Wayhost : ouvrir un terminal, installer Claude Code sur votre ordinateur et générer votre clé SSH.
+resume: Claude Code sur votre ordinateur pour piloter le serveur, et une clé SSH dédiée au VPS de l'usine.
+meta_description: Avant d'installer une usine logicielle sur un VPS Wayhost : Claude Code sur votre ordinateur et une clé SSH dédiée, sans phrase de passe.
 ---
-## 1. Ouvrir un terminal
+L'usine tourne sur le VPS, mais vous l'installez et l'entretenez **depuis votre ordinateur**, avec Claude Code. Rien d'autre n'est à installer en local.
 
-- **Windows** : ouvrez **Terminal** (ou **PowerShell**) depuis le menu Démarrer.
-- **macOS** : ouvrez **Terminal** depuis Applications › Utilitaires.
-- **Linux** : ouvrez le terminal de votre distribution.
+## 1. Claude Code
 
-Toutes les commandes de ce guide se tapent dans ce terminal.
+L'usine de démonstration a été montée depuis l'**application Claude** pour ordinateur, onglet **Code** : téléchargez-la sur [claude.ai/download](https://claude.ai/download) et connectez-vous à votre compte. Claude Code en ligne de commande convient aussi.
 
-## 2. Installer Claude Code
+Claude lance lui-même les commandes sur le serveur et vous les montre avant de les exécuter.
 
-Sur macOS ou Linux :
+## 2. Une clé SSH dédiée au VPS
 
-```
-curl -fsSL https://claude.ai/install.sh | bash
-```
-
-Sur Windows, dans PowerShell :
+Demandez à Claude de créer la clé, ou lancez la commande vous-même dans un terminal :
 
 ```
-irm https://claude.ai/install.ps1 | iex
+ssh-keygen -t ed25519 -N "" -C "usine-demo" -f ~/.ssh/wayhost_usine
 ```
 
-Lancez-le une première fois et connectez-vous à votre compte Claude :
+- `-f ~/.ssh/wayhost_usine` : une clé **réservée à ce serveur**, séparée de vos autres clés ;
+- `-N ""` : sans phrase de passe, pour que Claude puisse s'en servir sans vous la demander à chaque connexion. En échange, la clé privée ne doit **jamais** quitter votre ordinateur.
 
-```
-claude
-```
+Deux fichiers sont créés dans le dossier `.ssh` de votre compte (`C:\Users\<vous>\.ssh` sous Windows) :
 
-Un lien s'affiche : ouvrez-le dans votre navigateur, connectez-vous, puis revenez au terminal.
-
-## 3. Créer votre clé SSH
-
-La clé SSH vous connecte au VPS sans mot de passe, et c'est elle que Claude utilisera.
-
-```
-ssh-keygen -t ed25519 -C "votre@email.com"
-```
-
-Validez les questions (l'emplacement par défaut convient). Deux fichiers sont créés dans le dossier `.ssh` de votre compte :
-
-- `id_ed25519` : la **clé privée**, à ne **jamais partager**, ni avec une personne ni dans une conversation avec une IA ;
-- `id_ed25519.pub` : la **clé publique**, celle à déposer sur votre VPS.
-
-Pour l'ajouter à votre serveur, suivez *Comment ajouter une clé SSH à mon VPS ?*
-
-> Vous avez déjà une clé (`id_rsa.pub`, par exemple) ? Vous pouvez la réutiliser.
+- `wayhost_usine` : la **clé privée**, à ne partager avec personne, ni dans une conversation avec une IA ;
+- `wayhost_usine.pub` : la **clé publique**, celle que vous allez déposer sur le VPS (article suivant).

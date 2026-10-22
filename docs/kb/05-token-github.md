@@ -1,36 +1,35 @@
 ---
-titre: Comment créer un token GitHub pour mon agent ?
+titre: Comment créer le token GitHub de mon usine ?
 slug: comment-creer-un-token-github-pour-mon-agent
 ordre: 5
-resume: Un token « fine-grained » limité à vos dépôts, avec les seuls droits dont l'agent a besoin.
-meta_description: Créez un token GitHub fine-grained pour l'agent de votre usine logicielle : dépôts choisis, droits minimum, expiration, et où le ranger.
+resume: Un token fine-grained sur tous vos dépôts, avec les droits qui permettent à l'usine de créer des dépôts, pousser et ouvrir des pull requests.
+meta_description: Créez le token GitHub fine-grained de votre usine logicielle : tous les dépôts, Administration, Contents, Issues et Pull requests, et son expiration.
 ---
-Le token permet à l'agent de **cloner vos dépôts, pousser ses branches et ouvrir des pull requests**. Donnez-lui le moins de droits possible.
+Avec ce token, l'usine **crée les dépôts** de vos applications, y pousse le code, ouvre les pull requests et les issues. Les agents qui codent ne le voient jamais : il ne sert qu'aux étapes de clone et de push, hors de l'agent.
 
-## 1. Ouvrir la page des tokens
+## 1. Ouvrir la page de création
 
-Sur GitHub, cliquez sur votre photo, puis **Settings** › **Developer settings** › **Personal access tokens** › **Fine-grained tokens**, et enfin **Generate new token**.
-
-[[capture:github-nouveau-token.png|La page de création d'un token fine-grained sur GitHub]]
+Connecté au compte GitHub qui recevra les applications, ouvrez [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new).
 
 ## 2. Le régler
 
-- **Token name** : un nom clair, par exemple `usine-vps-groupe-3` ;
-- **Description** : à quoi il sert (facultatif, mais utile quand on en a plusieurs) ;
-- **Expiration** : la durée de votre projet (30 jours par défaut, 90 au plus pour un module), jamais « No expiration » ;
-- **Repository access** : **Only select repositories**, puis **Select repositories** pour choisir les dépôts de l'usine ;
-- **Permissions** : cliquez sur **Add permissions**, cochez **Contents**, **Pull requests** et **Issues**, puis passez chacun sur **Access : Read and write** :
-  - **Contents** : lire et pousser le code ;
-  - **Pull requests** : ouvrir et commenter les PR ;
-  - **Issues** : si votre usine suit son travail dans des issues ;
-  - **Metadata** reste en *Read-only* : il est ajouté d'office.
-
-[[capture:github-droits-token.png|Les droits du token : Contents, Pull requests et Issues en lecture et écriture]]
+- **Token name** : un nom clair, par exemple `usine-logicielle` ;
+- **Resource owner** : le compte (ou l'organisation) qui recevra les dépôts ;
+- **Expiration** : notez la date, l'usine s'arrêtera de pousser ce jour-là ;
+- **Repository access** : **All repositories**. L'usine crée de nouveaux dépôts : un token limité à des dépôts choisis ne les verrait pas ;
+- **Permissions** : cliquez sur **Add permissions**, ajoutez-les, puis réglez l'accès :
+  - **Administration** : *Read and write*, pour créer les dépôts ;
+  - **Contents** : *Read and write*, pour pousser le code ;
+  - **Issues** : *Read and write*, pour les issues d'escalade ;
+  - **Pull requests** : *Read and write*, pour une pull request par tâche ;
+  - **Metadata** : *Read-only*, ajouté d'office.
 
 Cliquez sur **Generate token**.
 
 ## 3. Le ranger tout de suite
 
-GitHub n'affiche le token **qu'une seule fois**. Copiez-le et collez-le directement dans le fichier `.env` du serveur : voir *Comment ranger mes secrets dans un fichier .env ?*
+GitHub n'affiche le token **qu'une seule fois**. Collez-le vous-même dans le `.env` du serveur, sur la ligne `GITHUB_TOKEN=`, puis relancez `bash install.sh` : voir *Comment ranger les secrets de mon usine ?*
 
-> Ne collez jamais le token dans une conversation avec Claude, dans un dépôt ou dans un message. S'il a fuité, supprimez-le sur la même page et créez-en un autre.
+> Reprendre le dépôt d'un autre compte en mode direct ? Le compte de l'usine doit y être invité en écriture. Sinon, l'usine travaille sur une copie.
+
+> Le token expire : renouvelez-le avant la date, recollez-le dans `.env`, puis lancez `bash secrets.sh migrer`.
