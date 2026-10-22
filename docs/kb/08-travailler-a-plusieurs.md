@@ -5,7 +5,7 @@ ordre: 8
 resume: Un VPS par groupe, un compte par personne, un dépôt partagé et une branche par piste.
 meta_description: Partager une usine logicielle sur un VPS Wayhost : un compte Linux par membre, un dépôt GitHub commun, une branche par piste et des pull requests.
 ---
-Un groupe n'a besoin que **d'un VPS**. Chaque membre y a **son propre compte**, avec sa clé SSH et son abonnement Claude, et tout le monde travaille sur **le même dépôt GitHub**, chacun sur sa branche.
+Un groupe n'a besoin que **d'un VPS**. Chaque membre y a **son propre compte**, avec sa clé SSH, et tout le monde travaille sur **le même dépôt GitHub**, chacun sur sa branche.
 
 ## 1. Créer un compte par membre
 
@@ -25,7 +25,7 @@ sudo chown -R alice:alice /home/alice/.ssh
 sudo chmod 700 /home/alice/.ssh && sudo chmod 600 /home/alice/.ssh/authorized_keys
 ```
 
-Alice se connecte ensuite avec `ssh alice@203.0.113.10`, et connecte **son** Claude Code à **son** compte Claude (voir *Comment installer les outils de l'usine sur mon VPS ?*, étape 5).
+Alice se connecte ensuite avec `ssh alice@203.0.113.10`, depuis le Claude Code de **son** ordinateur. Sur le serveur, rien à installer pour elle : les agents tournent dans l'image Docker de l'atelier, avec le jeton Claude rangé dans `.env` (voir *Comment installer les outils de l'usine sur mon VPS ?*, étape 4). Le groupe choisit l'abonnement qui fait travailler l'usine.
 
 ## 2. Partager le dépôt
 

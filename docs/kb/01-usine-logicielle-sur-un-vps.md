@@ -23,7 +23,7 @@ Vous travaillez en groupe ? Un seul VPS suffit pour toute l'équipe : voir *Comm
 
 1. Préparer votre ordinateur : terminal, Claude Code et clé SSH.
 2. Donner à Claude l'accès à votre VPS.
-3. Installer les outils de l'usine sur le VPS.
+3. Installer git et Docker sur le VPS, et faire tourner Claude Code dans une image Docker.
 4. Créer un token GitHub pour l'agent.
 5. Ranger les secrets dans un fichier `.env`.
 6. Ouvrir les ports utiles **sans perdre l'accès** au serveur.
