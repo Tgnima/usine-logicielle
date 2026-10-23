@@ -36,6 +36,7 @@ import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPer
 import { MODES_REPRISE } from "./reprise.mjs"
 import { ecartsEnCorrections, lireRecette } from "./recette.mjs"
 import { proteges } from "./profil.mjs"
+import { compteGithub, premiersPas } from "./premiers-pas.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -245,19 +246,12 @@ function historique(ctx, { projet = null, type = null } = {}) {
 
 // Les réglages : la forge du code (GitHub aujourd'hui, GitLab prévu), les budgets
 // (modifiables, comme dans Slack) et le contrat de l'usine (lecture).
-let compteGithub = { valeur: null, le: 0 }
 async function reglages(ctx) {
   const { config, db } = ctx
-  let compte = Date.now() - compteGithub.le < 300_000 ? compteGithub.valeur : null
-  if (!compte) try {
-    const r = await fetch("https://api.github.com/user", { headers: { authorization: `Bearer ${config.secrets.github}`, "user-agent": "usine-logicielle" }, signal: AbortSignal.timeout(8_000) })
-    compte = r.ok ? { ok: true, login: (await r.json()).login } : { ok: false, detail: `réponse ${r.status}` }
-  } catch (e) {
-    compte = { ok: false, detail: "GitHub injoignable" }
-  }
-  compteGithub = { valeur: compte, le: Date.now() }
+  const compte = await compteGithub(ctx)
   const rc = reglagesCouts(db, config)
   return {
+    slack: { branche: !!(config.secrets.slackBot && config.secrets.slackApp), canal: config.slack?.canal || null },
     forge: {
       type: "github",
       compte,
@@ -455,6 +449,8 @@ const ROUTES = [
 
   ["GET", /^\/api\/reglages$/, (ctx) => reglages(ctx)],
   ["PUT", /^\/api\/reglages\/couts$/, (ctx, _p, c, qui) => enregistrerCouts(ctx, c, qui)],
+  ["GET", /^\/api\/premiers-pas$/, (ctx) => premiersPas(ctx)],
+  ["PUT", /^\/api\/premiers-pas$/, (ctx, _p, c) => (ecrireReglage(ctx.db, "premiers_pas_masque", c.masque ? "1" : ""), { ok: true, message: c.masque ? "Premiers pas masqués : ils se rouvrent depuis les Réglages." : "Premiers pas affichés." })],
   // Les fournisseurs d'IA : identifiants (jamais renvoyés), façons de se servir de chaque moteur, modèles.
   ["GET", /^\/api\/fournisseurs$/, (ctx) => etatFournisseurs(ctx)],
   ["PUT", /^\/api\/fournisseurs\/identifiants\/([A-Z_]+)$/, (ctx, [nom], c, qui) => poserIdentifiant(ctx, nom, c.valeur, qui.email)],

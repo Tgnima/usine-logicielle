@@ -4,14 +4,19 @@
 #   bash install.sh --reprendre-de ../usine-contenu
 #                                    réutilise la connexion Claude et le volume Codex
 #                                    d'une usine à contenu déjà installée
+#   bash install.sh --admin prenom@exemple.fr
+#                                    crée le premier administrateur et affiche son lien
+#                                    d'invitation (tout le reste se règle dans la console)
 # Aucun secret n'est jamais affiché, ni gardé en clair : secrets.sh les chiffre.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 SOURCE=""
+ADMIN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --reprendre-de) SOURCE="$2"; shift 2 ;;
+    --admin) ADMIN="$2"; shift 2 ;;
     *) echo "Option inconnue : $1"; exit 1 ;;
   esac
 done
@@ -86,5 +91,23 @@ echo
 if ! docker compose run --rm --no-deps verificateur codex login status >/dev/null 2>&1; then
   echo "Codex n'est pas connecté : console, Réglages, Fournisseurs d'IA, « Connecter un compte ChatGPT »."
   echo "  (ou ici : docker compose run --rm verificateur codex login --device-auth)"
+fi
+# Le premier administrateur : son lien d'invitation (personnel, 72 h). Il ouvre la console,
+# où l'assistant « Premiers pas » guide le reste (fournisseur d'IA, GitHub, premier projet).
+if [ -n "$ADMIN" ]; then
+  echo "• Attente de l'orchestrateur…"
+  for i in $(seq 1 30); do docker compose exec -T orchestrateur node src/cli.mjs statut >/dev/null 2>&1 && break; sleep 4; done
+  r=$(docker compose exec -T orchestrateur node src/cli.mjs admin "$ADMIN")
+  lien=$(echo "$r" | grep -oE '"lien": *"[^"]+"' | cut -d'"' -f4)
+  adresse=$(echo "$r" | grep -oE '"console": *"[^"]+"' | cut -d'"' -f4)
+  if [ -n "$lien" ]; then
+    echo
+    echo "Administrateur : $ADMIN"
+    echo "  1. Ouvre ce lien pour choisir ton mot de passe (personnel, valable 72 h) :"
+    echo "     $lien"
+    echo "  2. Puis la console : $adresse"
+  else
+    echo "Le premier administrateur n'a pas pu être créé : $r"
+  fi
 fi
 echo "Usine prête. Journal : docker compose logs -f orchestrateur"

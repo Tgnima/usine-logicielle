@@ -13,6 +13,7 @@ const AIDE = `Usage : node src/cli.mjs <commande>
                                  met en production (après livraison)
   journal <n°>                   les derniers événements
   abandonner <n°>                abandonne un plan pas encore validé
+  admin <email>                  crée le premier administrateur (sans Slack) et donne son lien d'invitation
   mettre-a-jour                  met l'usine à jour depuis GitHub (après la tâche en cours)
   relancer <n°> · stop · reprendre`
 
@@ -41,6 +42,7 @@ const table = {
   journal: async () => (await appel("GET", `/journal/${a}`)).map((l) => `${l.le}  ${l.type.padEnd(12)} ${l.message.split("\n")[0]}`).join("\n"),
   relancer: () => appel("POST", `/relancer/${a}`, {}),
   abandonner: () => appel("POST", `/abandonner/${a}`, {}),
+  admin: () => appel("POST", "/admin", { email: a }),
   "mettre-a-jour": () => appel("POST", "/mettre-a-jour", {}),
   stop: () => appel("POST", "/stop", {}),
   reprendre: () => appel("POST", "/reprendre", {}),

@@ -17,7 +17,7 @@ import { demarrerSlack, notificateurConsole } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
 import { demarrerConsole } from "./console.mjs"
-import { demarrerSynchronisationPortier } from "./portier.mjs"
+import { demarrerSynchronisationPortier, portier } from "./portier.mjs"
 import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
 import { demarrerDomaines, ouvrirDomaines } from "./domaines.mjs"
@@ -77,6 +77,17 @@ const routes = {
   "POST /mettre-a-jour": (c) => mettreAJourUsine(ctx, c.par ?? "cli"),
   "POST /stop": (c) => actions.arreter(ctx, c.par ?? "cli"),
   "POST /reprendre": () => actions.reprendre(ctx),
+  // Le premier administrateur, sans Slack (install.sh) : le lien d'invitation, ou un nouveau lien s'il existe déjà.
+  "POST /admin": async (c) => {
+    const { adresseTableau } = await import("./slack-couts.mjs")
+    const email = String(c.email ?? "").trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("adresse email invalide")
+    const existant = (await portier("utilisateurs")).find((u) => u.email === email)
+    const { lien } = existant
+      ? await portier(`utilisateurs/${existant.id}/invitation`, { methode: "POST" })
+      : await portier("utilisateurs", { methode: "POST", corps: { email, nom: null, role: "admin", applis: [], par: "installation" } })
+    return { ok: true, console: adresseTableau(config), lien, existant: !!existant }
+  },
   "GET /journal": (_c, id) => db.prepare("SELECT le, type, message FROM journal WHERE projet_id = ? ORDER BY id DESC LIMIT 60").all(id).reverse(),
 }
 

@@ -59,6 +59,7 @@ const etat = {
   sante: null,
   acces: null,
   reglages: null,
+  premiersPas: null, // les étapes restantes pour que l'usine soit prête
   fournisseurs: null, // Réglages : les fournisseurs d'IA (jamais une valeur secrète)
   chatgpt: null, // la connexion ChatGPT en cours : { etat, url, code }
   onglet: null, // null : « En direct » si une tâche tourne, sinon le journal
@@ -95,6 +96,7 @@ function lireRoute() {
   if (h.startsWith("/acces")) return { vue: "acces" }
   if (h.startsWith("/reglages")) return { vue: "reglages" }
   if (h.startsWith("/historique")) return { vue: "historique" }
+  if (h.startsWith("/demarrer")) return { vue: "demarrer" }
   return { vue: "projets" }
 }
 
@@ -125,6 +127,38 @@ function afficherMessages() {
   zone.innerHTML = contenu
 }
 
+// --- Premiers pas --------------------------------------------------------------------------
+const prochaineEtape = (pp) => pp.etapes.find((e) => e.obligatoire && !e.fait) ?? pp.etapes.find((e) => !e.fait)
+
+function bandeauPremiersPas() {
+  const pp = etat.premiersPas
+  if (!pp || pp.termine || pp.masque) return ""
+  const e = prochaineEtape(pp)
+  return html`<section class="carte carte-p barre" style="gap:16px;flex-wrap:wrap;border-color:var(--accent)" aria-label="Premiers pas">
+    <div style="flex:1;min-width:240px"><div class="aide">Premiers pas · ${pp.faites} sur ${pp.total}</div><strong>${e ? e.titre : "Presque prêt"}</strong><div class="aide">${e?.detail ?? ""}</div></div>
+    <div class="rangee">${e ? html`<a class="btn btn-p" href="${e.aller}">${e.action}</a>` : ""}<a class="btn btn-s" href="#/demarrer">Voir toutes les étapes</a></div>
+  </section>`
+}
+
+function vueDemarrer() {
+  const pp = etat.premiersPas
+  if (!pp) return html`${barreHaut()}<div class="chargement">Chargement…</div>`
+  const e = prochaineEtape(pp)
+  return html`
+    ${barreHaut()}
+    <div><h1>Premiers pas</h1><p class="chapeau">${pp.termine ? "L'usine est prête : tout l'essentiel est fait. Les étapes facultatives restent là si tu en as besoin." : `${pp.faites} étape${pp.faites > 1 ? "s" : ""} sur ${pp.total} pour que l'usine soit prête. Tout se fait ici, dans la console.`}</p></div>
+    ${messageGlobal()}
+    <div class="jauge ${pp.termine ? "verte" : ""}" role="progressbar" aria-valuemin="0" aria-valuemax="${pp.total}" aria-valuenow="${pp.faites}" aria-label="Avancement des premiers pas"><div style="width:${Math.round((pp.faites / pp.total) * 100)}%"></div></div>
+    <ol class="pile" style="gap:12px;list-style:none;padding:0;margin:0">${pp.etapes.map((x, i) => html`<li class="carte carte-p barre" style="gap:16px;flex-wrap:wrap;${x === e ? "border-color:var(--accent)" : ""}">
+      <div class="rangee" style="flex:1;min-width:240px;flex-wrap:nowrap;align-items:flex-start;gap:14px">
+        <span class="badge ${x.fait ? "vert" : x.obligatoire ? "orange" : ""}" style="min-width:2.2em;text-align:center">${x.fait ? "✓" : i + 1}</span>
+        <div><strong>${x.titre}</strong>${x.obligatoire ? "" : html` <span class="aide">(facultatif)</span>`}<div class="aide">${x.detail}</div></div>
+      </div>
+      ${x.fait ? html`<a class="btn btn-s" href="${x.aller}">Revoir</a>` : html`<a class="btn ${x === e ? "btn-p" : "btn-s"}" href="${x.aller}">${x.action}</a>`}
+    </li>`)}</ol>
+    <div class="rangee">${pp.masque ? html`<button type="button" class="btn btn-s" data-action="premiers-pas" data-quoi="afficher">Afficher le rappel sur la page Projets</button>` : html`<button type="button" class="btn btn-s" data-action="premiers-pas" data-quoi="masquer">Ne plus afficher le rappel</button>`}<a class="btn btn-s" href="#/">Aller aux projets</a></div>`
+}
+
 function vueProjets() {
   const r = etat.resume
   if (!r) return html`<div class="chargement">Chargement…</div>`
@@ -138,6 +172,7 @@ function vueProjets() {
       <a href="#/nouveau" class="btn btn-p">+ Nouveau projet</a>
     </div>
     ${messageGlobal()}
+    ${bandeauPremiersPas()}
     ${r.a_traiter.length ? html`<section aria-labelledby="a-traiter" class="pile">
       <h2 id="a-traiter" class="surtitre">À traiter · ${r.a_traiter.length}</h2>
       <div class="grille">${r.a_traiter.map((x) => html`<a class="a-traiter" href="#/projets/${x.projet}">
@@ -853,6 +888,7 @@ function vueReglages() {
     ${barreHaut()}
     <div><h1>Réglages</h1><p class="chapeau">Les fournisseurs d'IA, où vont les dépôts des produits, ce que l'usine a le droit de dépenser, et les règles qu'elle applique.</p></div>
     ${messageGlobal()}
+    <div><a class="btn btn-s" href="#/demarrer">Premiers pas : revoir les étapes de mise en route</a></div>
     ${blocFournisseurs()}
     <section class="carte carte-p pile" aria-labelledby="forge" style="gap:16px">
       <div><h2 id="forge">Dépôt de code</h2><p class="aide" style="margin:4px 0 0">Chaque produit reçoit son dépôt : le code, une pull request par tâche, les issues du plan.</p></div>
@@ -870,6 +906,10 @@ function vueReglages() {
           <div class="aide">Prévu : le même parcours qu'avec GitHub (dépôt par produit, une merge request par tâche, état souhaité), avec un jeton de groupe GitLab posé sur le serveur.</div>
         </div>
       </div>
+    </section>
+    <section class="carte carte-p pile" style="gap:10px" aria-labelledby="slack">
+      <div class="barre"><h2 id="slack">Slack <span class="aide">(facultatif)</span></h2>${r.slack?.branche ? html`<span class="badge vert">branché</span>` : html`<span class="badge">non branché</span>`}</div>
+      <p class="aide" style="margin:0">Tout se fait dans la console. Slack ajoute seulement des notifications et des commandes dans un canal${r.slack?.branche && r.slack.canal ? ` (ici : ${r.slack.canal})` : ""}. Pour le brancher plus tard : une application Slack créée depuis <span class="mono">slack-manifest.yml</span>, puis ses deux jetons posés sur le serveur.</p>
     </section>
     <form class="carte carte-p pile" style="gap:16px" data-form="couts" aria-labelledby="budgets">
       <div><h2 id="budgets">Budgets et coûts</h2><p class="aide" style="margin:4px 0 0">Les budgets portent sur l'équivalent API. Alertes à ${c.alertes.join(", ")} % ; au-delà, l'usine demande avant de continuer. 0 = pas de limite.</p></div>
@@ -946,7 +986,7 @@ function vueHistorique() {
 
 // --- Rendu et chargement ------------------------------------------------------------------
 function rendre() {
-  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages, historique: vueHistorique, personas: vuePersonas, persona: vuePersona }[etat.route.vue]
+  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages, historique: vueHistorique, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer }[etat.route.vue]
   const m = $("#principal")
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
@@ -1001,6 +1041,13 @@ async function charger({ silencieux = false } = {}) {
     if (r.vue === "sante") taches.push(api("GET", "sante").then((x) => { etat.sante = x; rendre() }))
     if (r.vue === "acces") taches.push(api("GET", "acces").then((x) => { etat.acces = x; rendre() }))
     if (r.vue === "reglages") taches.push(api("GET", "reglages").then((x) => { etat.reglages = x; rendre() }))
+    if (["projets", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
+      if (!frais()) return
+      etat.premiersPas = x
+      // Une usine neuve s'ouvre sur ses premiers pas.
+      if (r.vue === "projets" && !location.hash && !x.termine && !x.masque && !etat.premiersPasVus) { etat.premiersPasVus = true; location.hash = "#/demarrer"; return }
+      rendre()
+    }))
     if (r.vue === "reglages") taches.push(api("GET", "fournisseurs").then((x) => { etat.fournisseurs = x; rendre() }))
     await Promise.all(taches)
   } catch (e) {
@@ -1209,6 +1256,7 @@ function suivreChatGPT() {
 
 const ACTIONS = {
   palette: () => ouvrirPalette(),
+  "premiers-pas": (el) => agir(() => api("PUT", "premiers-pas", { masque: el.dataset.quoi === "masquer" })),
   "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
   "retirer-identifiant": (el) => {
     if (!confirmer("Retirer cette valeur de la console ? Celle du serveur, s'il y en a une, reprendra.")) return
