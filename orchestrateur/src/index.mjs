@@ -8,6 +8,7 @@ import { chargerConfig } from "./config.mjs"
 import { ouvrirDb, plan as lirePlan, obtenir } from "./db.mjs"
 import { brancherEnvCommun, sante } from "./travaux.mjs"
 import { appliquerModeles, envFournisseurs } from "./fournisseurs.mjs"
+import { brancherForge } from "./forge-github.mjs"
 import { preparerDepotEtat } from "./github.mjs"
 import { demarrerFabrique } from "./fabrique.mjs"
 import { resoudre, surveillerEscalades } from "./escalade.mjs"
@@ -31,6 +32,8 @@ ouvrirDomaines(db)
 const ctx = { config, db, notifier: notificateurConsole(), livraison }
 // Les fournisseurs d'IA réglés dans la console : modèles, et identifiants passés aux travaux.
 appliquerModeles(ctx)
+// GitHub : l'application de l'usine, si elle est connectée (sinon le jeton du serveur).
+await brancherForge(ctx).catch((e) => console.error("GitHub (application) :", e.message))
 brancherEnvCommun((serveur) => envFournisseurs(ctx, serveur === config.verificateur.url ? "codex" : "claude-code"))
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))

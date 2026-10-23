@@ -43,7 +43,7 @@ before(async () => {
   const config = {
     domaine: { base: "exemple.test", https: true }, dataDir: dossier, etatDir: dossier,
     atelier: { url: "http://127.0.0.1:1" }, verificateur: { url: "http://127.0.0.1:1" },
-    secrets: { github: "", worker: "x" }, github: { proprietaire: "essai", depot_etat: "etat" },
+    secrets: { github: "jeton-de-test", worker: "x" }, github: { proprietaire: "essai", depot_etat: "etat" },
     modeles: { analyste: { modele: "m" }, atelier: { modele: "m" } }, slack: { canal: "", admins: [] },
     perimetre_protege: ["Dockerfile", "docs/DESIGN.md"], couts: {}, budget: {},
   }

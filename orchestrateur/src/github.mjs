@@ -6,13 +6,13 @@ export const MARQUE = "<!-- usine-logicielle -->" // signe les commentaires de l
 
 // Les coupures réseau brèves (DNS, 5xx) sont réessayées : elles ne doivent pas
 // faire escalader une tâche.
-async function gh(config, chemin, { method = "GET", corps, accepter = [] } = {}) {
+async function gh(config, chemin, { method = "GET", corps, accepter = [], jeton = null } = {}) {
   let res
   for (let essai = 1; ; essai++) {
     try {
       res = await fetch(`${API}${chemin}`, {
         method,
-        headers: { authorization: `Bearer ${config.secrets.github}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+        headers: { authorization: `Bearer ${jeton ?? config.secrets.github}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
         body: corps ? JSON.stringify(corps) : undefined,
         signal: AbortSignal.timeout(30_000),
       })
@@ -37,12 +37,25 @@ async function gh(config, chemin, { method = "GET", corps, accepter = [] } = {})
 const complet = (config, nom) => (String(nom).includes("/") ? String(nom) : `${config.github.proprietaire}/${nom}`)
 const depot = (config, nom) => `/repos/${complet(config, nom)}`
 
+// Où créer un dépôt, et avec quel jeton. Avec l'application GitHub de l'usine (forge-github.mjs),
+// le type du compte est connu ; sur un compte personnel, GitHub exige le jeton de l'utilisateur.
+async function cibleCreation(config) {
+  const type = config.github.type_proprietaire
+  if (type === "Organization") return { chemin: `/orgs/${config.github.proprietaire}/repos`, jeton: null }
+  if (type === "User") {
+    const jeton = (await config.jetonCreation?.()) ?? null
+    if (!jeton) throw new Error("GitHub : l'autorisation de créer des dépôts a expiré. Dans la console, Réglages, reconnecte GitHub.")
+    return { chemin: "/user/repos", jeton }
+  }
+  const moi = (await gh(config, "/user")).json.login
+  return { chemin: moi === config.github.proprietaire ? "/user/repos" : `/orgs/${config.github.proprietaire}/repos`, jeton: null }
+}
+
 export async function creerDepot(config, nom, description) {
   const existe = await gh(config, depot(config, nom), { accepter: [404] })
   if (existe.statut === 200) return existe.json
-  const moi = (await gh(config, "/user")).json.login
-  const chemin = moi === config.github.proprietaire ? "/user/repos" : `/orgs/${config.github.proprietaire}/repos`
-  return (await gh(config, chemin, { method: "POST", corps: { name: nom, description: descriptionDepot(description), private: config.github.visibilite !== "public", auto_init: false, has_wiki: false } })).json
+  const { chemin, jeton } = await cibleCreation(config)
+  return (await gh(config, chemin, { method: "POST", jeton, corps: { name: nom, description: descriptionDepot(description), private: config.github.visibilite !== "public", auto_init: false, has_wiki: false } })).json
 }
 
 // GitHub refuse une description de plus de 350 caractères (le résumé d'un plan peut dépasser) :
@@ -120,9 +133,8 @@ export async function preparerDepotEtat(config) {
   const nom = config.github.depot_etat
   const existe = await gh(config, depot(config, nom), { accepter: [404] })
   if (existe.statut === 200) return
-  const moi = (await gh(config, "/user")).json.login
-  const chemin = moi === config.github.proprietaire ? "/user/repos" : `/orgs/${config.github.proprietaire}/repos`
-  await gh(config, chemin, { method: "POST", corps: { name: nom, description: "État souhaité des produits de l'usine logicielle (lu par le déployeur)", private: true, auto_init: true } })
+  const { chemin, jeton } = await cibleCreation(config)
+  await gh(config, chemin, { method: "POST", jeton, corps: { name: nom, description: "État souhaité des produits de l'usine logicielle (lu par le déployeur)", private: true, auto_init: true } })
 }
 
 async function lireEtat(config, chemin, branche = "main") {

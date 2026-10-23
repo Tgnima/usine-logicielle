@@ -136,6 +136,21 @@ les ports 80 et 443 libres.
    ChatGPT du vérificateur, ordre de secours et modèles se règlent là.
 5. Dans Slack, `/usine acces` : crée ton compte (administrateur) et ouvre le lien d'invitation.
 
+## Premiers pas et GitHub
+
+À la première connexion, la console s'ouvre sur **Premiers pas** : fournisseur d'IA, GitHub,
+invitations, personas, premier projet. L'avancement est calculé sur l'état réel ; l'assistant
+se rouvre depuis les Réglages. Le premier administrateur se crée sans Slack :
+`bash install.sh --admin prenom@exemple.fr` affiche son lien d'invitation.
+
+**Se connecter avec GitHub** (Réglages) : la console fait créer à GitHub une application propre
+à cette usine (un clic), que la personne installe sur son compte ou son organisation, sur « tous
+les dépôts ». L'usine n'utilise ensuite que des jetons qui expirent : le jeton d'installation
+(1 h, renouvelé, aussi déposé pour le déployeur) et, sur un compte personnel, le jeton de
+l'utilisateur pour créer un dépôt. La clé privée de l'application est chiffrée dans le coffre.
+Sans application, le jeton du serveur (`github_token`) sert comme avant ; il n'est plus exigé
+à l'installation. La mise à jour de l'usine elle-même garde le jeton du serveur (`deploy_token`).
+
 ## Fournisseurs d'IA
 
 Console, **Réglages → Fournisseurs d'IA** (administrateurs) :

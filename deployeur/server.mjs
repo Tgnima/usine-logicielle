@@ -44,7 +44,8 @@ const DNS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"].flatMap((d) => ["--dns", d])
 // Le dossier de l'usine sur le serveur, monté au même chemin (mise à jour de l'usine).
 const USINE_DIR = env.USINE_DIR ?? ""
 const DEPOT_USINE = env.DEPOT_USINE ?? ""
-if (!DEPOT_ETAT || !JETON) throw new Error("DEPOT_ETAT et GITHUB_TOKEN sont requis.")
+// Sans jeton ni dépôt d'état (usine neuve, GitHub pas encore connecté dans la console) :
+// le déployeur attend ; il reprend dès que l'orchestrateur dépose le jeton de l'application.
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const horodatage = () => new Date().toISOString()
@@ -52,18 +53,35 @@ const log = (...a) => console.log(horodatage(), ...a)
 
 // Le jeton passe par la configuration git de l'environnement : jamais dans les
 // arguments (visibles dans ps) ni dans .git/config.
-const envGit = {
+// Avec l'application GitHub de l'usine, l'orchestrateur dépose un jeton de courte durée
+// (/jetons/github.json) pour l'état et les produits ; la mise à jour de l'usine elle-même
+// (DEPOT_USINE) garde le jeton du serveur.
+function lireJetons() {
+  try {
+    return JSON.parse(readFileSync(join(env.JETONS_DIR ?? "/jetons", "github.json"), "utf8"))
+  } catch {
+    return {}
+  }
+}
+function jetonForge() {
+  const j = lireJetons()
+  return j.jeton && j.expire - Date.now() > 2 * 60_000 ? j.jeton : JETON
+}
+// Le dépôt d'état : celui du compte GitHub connecté dans la console, sinon celui du contrat.
+const depotEtat = () => lireJetons().depot_etat || DEPOT_ETAT
+const envGit = (jeton = jetonForge()) => ({
   ...env,
   GIT_TERMINAL_PROMPT: "0",
   GIT_CONFIG_COUNT: "1",
   GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-  GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${JETON}`).toString("base64")}`,
-}
+  GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${jeton}`).toString("base64")}`,
+})
 
 // Une commande, sans shell (les valeurs ne sont jamais interprétées).
 function lancer(cmd, args, { cwd, git = false, minutes = 15, max = 20_000 } = {}) {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { cwd, env: git ? envGit : env })
+    const jeton = git === "usine" ? JETON : git ? jetonForge() : null
+    const p = spawn(cmd, args, { cwd, env: jeton ? envGit(jeton) : env })
     let sortie = ""
     const garder = (d) => (sortie = (sortie + d).slice(-max))
     p.stdout.on("data", garder)
@@ -71,7 +89,7 @@ function lancer(cmd, args, { cwd, git = false, minutes = 15, max = 20_000 } = {}
     const minuterie = setTimeout(() => p.kill("SIGKILL"), minutes * 60_000)
     p.on("close", (code) => {
       clearTimeout(minuterie)
-      resolve({ code, sortie: sortie.replaceAll(JETON, "***") })
+      resolve({ code, sortie: jeton ? sortie.replaceAll(jeton, "***").replaceAll(JETON, "***") : sortie.replaceAll(JETON, "***") })
     })
     p.on("error", (e) => resolve({ code: -1, sortie: e.message }))
   })
@@ -100,8 +118,12 @@ let demandeMiseAJour = null
 let domaines = {} // produit -> adresses personnalisées (servies comme sa production)
 async function synchroniserEtat() {
   const dossier = join(SRV, "etat")
-  if (!existsSync(join(dossier, ".git"))) await ok("git", ["clone", "-q", `https://github.com/${DEPOT_ETAT}.git`, dossier], { git: true })
+  const depot = depotEtat()
+  if (!depot || !jetonForge()) return // GitHub pas encore connecté
+  if (!existsSync(join(dossier, ".git"))) await ok("git", ["clone", "-q", `https://github.com/${depot}.git`, dossier], { git: true })
   else {
+    // Le compte GitHub a changé (connexion depuis la console) : on suit le nouveau dépôt d'état.
+    await ok("git", ["remote", "set-url", "origin", `https://github.com/${depot}.git`], { cwd: dossier })
     await ok("git", ["fetch", "-q", "origin"], { cwd: dossier, git: true })
     await ok("git", ["reset", "-q", "--hard", "origin/HEAD"], { cwd: dossier })
   }
@@ -456,7 +478,7 @@ async function entretenir() {
 async function verifierMiseAJour() {
   if (!USINE_DIR || !DEPOT_USINE || !existsSync(join(USINE_DIR, ".git"))) return
   const git = (args, options = {}) => lancer("git", ["-c", `safe.directory=${USINE_DIR}`, "-C", USINE_DIR, ...args], options)
-  const f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: true })
+  const f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: "usine" })
   if (f.code !== 0) return
   await lancer("chown", ["-R", "1000:1000", join(USINE_DIR, ".git")])
   const commits = (await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/main"])).sortie.split("\n").filter(Boolean)
@@ -539,7 +561,7 @@ async function isolerProduits() {
 mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
-log(`Déployeur prêt : tire ${DEPOT_ETAT} toutes les 20 s.`)
+log(`Déployeur prêt : tire ${depotEtat() || "(dépôt d'état pas encore connu : GitHub à connecter dans la console)"} toutes les 20 s.`)
 // Une mise à jour vient d'être appliquée : on note sa fin (l'orchestrateur l'annonce).
 let derniereDemande = null
 try {

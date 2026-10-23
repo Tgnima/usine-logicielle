@@ -37,6 +37,8 @@ import { MODES_REPRISE } from "./reprise.mjs"
 import { ecartsEnCorrections, lireRecette } from "./recette.mjs"
 import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
+import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recevoirManifeste } from "./forge-github.mjs"
+import { adresseTableau } from "./slack-couts.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -45,7 +47,7 @@ const ENTETES = {
   "x-frame-options": "DENY",
   "x-content-type-options": "nosniff",
   "referrer-policy": "same-origin",
-  "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://github.com",
 }
 
 const erreur = (code, message) => Object.assign(new Error(message), { code })
@@ -255,6 +257,7 @@ async function reglages(ctx) {
     forge: {
       type: "github",
       compte,
+      app: etatForge(ctx),
       proprietaire: config.github.proprietaire,
       visibilite: config.github.visibilite ?? "private",
       depot_etat: config.github.depot_etat,
@@ -339,6 +342,7 @@ const ROUTES = [
   ["GET", /^\/api\/projets\/(\d+)\/direct$/, (ctx, [id]) => direct(ctx, ctx.db.prepare("SELECT * FROM taches WHERE projet_id = ? AND statut IN ('en_cours', 'verification') ORDER BY id LIMIT 1").get(Number(id)))],
 
   ["POST", /^\/api\/projets$/, async (ctx, _p, c, qui) => {
+    if (!ctx.config.secrets.github || !ctx.config.github.proprietaire) throw erreur(409, "Connecte d'abord GitHub (Réglages, ou Premiers pas) : chaque produit reçoit son dépôt.")
     const prompt = String(c.prompt ?? "").trim()
     if (prompt.length < 20) throw erreur(400, "Décris un peu plus ce que tu veux construire (20 caractères au moins).")
     if (prompt.length > 8000) throw erreur(400, "La demande est trop longue (8 000 caractères au plus).")
@@ -449,6 +453,9 @@ const ROUTES = [
 
   ["GET", /^\/api\/reglages$/, (ctx) => reglages(ctx)],
   ["PUT", /^\/api\/reglages\/couts$/, (ctx, _p, c, qui) => enregistrerCouts(ctx, c, qui)],
+  // GitHub : l'application de l'usine (le retour de GitHub est traité dans traiter(), c'est une navigation).
+  ["POST", /^\/api\/github\/connexion$/, (ctx, _p, c, qui) => demarrerConnexion(ctx, { organisation: c.organisation, console: adresseTableau(ctx.config) }, qui.email)],
+  ["DELETE", /^\/api\/github$/, (ctx, _p, _c, qui) => oublierForge(ctx, qui.email)],
   ["GET", /^\/api\/premiers-pas$/, (ctx) => premiersPas(ctx)],
   ["PUT", /^\/api\/premiers-pas$/, (ctx, _p, c) => (ecrireReglage(ctx.db, "premiers_pas_masque", c.masque ? "1" : ""), { ok: true, message: c.masque ? "Premiers pas masqués : ils se rouvrent depuis les Réglages." : "Premiers pas affichés." })],
   // Les fournisseurs d'IA : identifiants (jamais renvoyés), façons de se servir de chaque moteur, modèles.
@@ -559,6 +566,26 @@ export async function traiter(ctx, req, res) {
       }
       res.writeHead(200, { "content-type": "video/mp4", "accept-ranges": "bytes", "content-length": contenu.length, "cache-control": "private, no-cache", ...nom, ...ENTETES })
       return res.end(contenu)
+    }
+    // Les retours de GitHub (navigation du navigateur, pas un appel de la console) : on finit
+    // l'étape, puis on revient sur les Réglages avec un message.
+    if (req.method === "GET" && ["/api/github/manifeste", "/api/github/installe"].includes(url.pathname)) {
+      const retour = (texte, ok) => {
+        res.writeHead(302, { location: `/#/reglages?github=${ok ? "ok" : "erreur"}&message=${encodeURIComponent(texte)}`, "cache-control": "no-store", ...ENTETES })
+        res.end()
+      }
+      try {
+        if (url.pathname === "/api/github/manifeste") {
+          const installer = await recevoirManifeste(ctx, { code: url.searchParams.get("code"), state: url.searchParams.get("state") })
+          res.writeHead(302, { location: installer, "cache-control": "no-store", ...ENTETES })
+          return res.end()
+        }
+        await recevoirInstallation(ctx, { installation_id: url.searchParams.get("installation_id"), code: url.searchParams.get("code") }, qui.email)
+        return retour("GitHub est connecté : les dépôts des produits seront créés sur ce compte.", true)
+      } catch (e) {
+        console.error("GitHub (connexion) :", e.message)
+        return retour(e.code >= 400 && e.code < 500 ? e.message : `La connexion à GitHub n'a pas abouti : ${e.message}`, false)
+      }
     }
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES.find(([m, motif]) => m === req.method && motif.test(url.pathname))

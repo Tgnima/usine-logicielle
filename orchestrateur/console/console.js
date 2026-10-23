@@ -85,6 +85,13 @@ const etat = {
 }
 
 function lireRoute() {
+  // Un retour de GitHub (#/reglages?github=ok&message=…) : le message, puis une adresse propre.
+  const retour = location.hash.match(/^#\/reglages\?(.*)$/)
+  if (retour) {
+    const p = new URLSearchParams(retour[1])
+    if (p.get("message")) etat.message = { type: p.get("github") === "ok" ? "ok" : "erreur", texte: p.get("message") }
+    history.replaceState(null, "", "#/reglages")
+  }
   const h = location.hash.replace(/^#/, "") || "/"
   const m = h.match(/^\/projets\/(\d+)/)
   if (m) return { vue: "projet", id: Number(m[1]) }
@@ -878,6 +885,35 @@ function blocFournisseurs() {
   </section>`
 }
 
+// GitHub : l'application de l'usine (recommandé : des jetons qui expirent), ou le jeton du serveur.
+function carteGithub(f) {
+  const app = f.app ?? { mode: "jeton" }
+  const connecte = app.mode === "application" || f.compte?.ok
+  const formulaire = html`<form class="pile" style="gap:8px" data-form="github">
+    <fieldset class="pile" style="gap:6px;border:0;padding:0;margin:0"><legend class="aide">Les dépôts des produits iront sur</legend>
+      <label class="rangee" style="gap:8px"><input type="radio" name="cible" value="perso" checked> mon compte GitHub personnel</label>
+      <label class="rangee" style="gap:8px"><input type="radio" name="cible" value="org"> une organisation :</label>
+      <input name="organisation" class="champ mono" placeholder="nom-de-l-organisation" autocomplete="off" spellcheck="false" aria-label="Nom de l'organisation GitHub">
+    </fieldset>
+    <div><button type="submit" class="btn btn-p">Se connecter avec GitHub</button></div>
+    <div class="aide">GitHub te demande de créer l'application de l'usine (un clic), puis de l'installer sur « tous les dépôts » : l'usine crée un dépôt par produit. Aucun jeton à copier ; l'usine n'obtient que des accès qui expirent au bout d'une heure.</div>
+  </form>`
+  return html`<div class="carte carte-p pile" style="border-color:var(--accent);gap:10px">
+    <div class="barre"><strong>GitHub</strong>${app.mode === "application" ? html`<span class="badge vert">connecté</span>` : app.mode === "a_installer" ? html`<span class="badge orange">à installer</span>` : f.compte?.ok ? html`<span class="badge vert">connecté (jeton du serveur)</span>` : html`<span class="badge orange">non connecté</span>`}</div>
+    ${app.mode === "application" ? html`
+      <div style="font-size:14px">Compte : <span class="mono">${app.compte}</span> · ${app.type === "Organization" ? "organisation" : "compte personnel"} · dépôts ${f.visibilite === "public" ? "publics" : "privés"}</div>
+      ${app.tous_depots === false ? html`<div class="message erreur">L'application n'a accès qu'à certains dépôts : l'usine ne pourra pas créer ceux des nouveaux produits. Sur GitHub, choisis « All repositories ».</div>` : ""}
+      <div class="aide">Connecté le ${dateCourte(app.le)} par ${app.par} · application <span class="mono">${app.slug}</span></div>
+      <div class="rangee"><a class="btn btn-s" href="${app.gerer}" target="_blank" rel="noopener noreferrer">Gérer sur GitHub</a><button type="button" class="btn btn-s" data-action="github-oublier">Déconnecter</button></div>`
+    : app.mode === "a_installer" ? html`
+      <div style="font-size:14px">L'application <span class="mono">${app.slug}</span> est créée : il reste à l'installer sur ton compte ou ton organisation.</div>
+      <div class="rangee"><a class="btn btn-p" href="${app.installer}">Installer l'application</a><button type="button" class="btn btn-s" data-action="github-oublier">Recommencer</button></div>`
+    : html`
+      ${f.compte?.ok ? html`<div style="font-size:14px">Jeton du serveur, compte <span class="mono">${f.compte.login}</span> · dépôts chez <span class="mono">${f.proprietaire}</span>.</div><div class="aide">Recommandé : passer à l'application GitHub de l'usine (accès limités, qui expirent).</div>` : ""}
+      ${formulaire}`}
+  </div>`
+}
+
 function vueReglages() {
   const r = etat.reglages
   if (!r) return html`${barreHaut()}<div class="chargement">Chargement des réglages…</div>`
@@ -893,13 +929,7 @@ function vueReglages() {
     <section class="carte carte-p pile" aria-labelledby="forge" style="gap:16px">
       <div><h2 id="forge">Dépôt de code</h2><p class="aide" style="margin:4px 0 0">Chaque produit reçoit son dépôt : le code, une pull request par tâche, les issues du plan.</p></div>
       <div class="grille">
-        <div class="carte carte-p pile" style="border-color:var(--accent);gap:8px">
-          <div class="barre"><strong>GitHub</strong>${f.compte?.ok ? html`<span class="badge vert">connecté</span>` : html`<span class="badge rouge">${f.compte?.detail ?? "non connecté"}</span>`}</div>
-          <div style="font-size:14px">${f.compte?.ok ? html`Compte du jeton : <span class="mono">${f.compte.login}</span>` : "Le jeton GitHub ne répond pas."}</div>
-          <div style="font-size:14px">Dépôts créés chez <span class="mono">${f.proprietaire}</span> · ${f.visibilite === "public" ? "publics" : "privés"}</div>
-          <div style="font-size:14px">État souhaité : <span class="mono">${f.proprietaire}/${f.depot_etat}</span></div>
-          <div class="aide">Changer de compte ou d'organisation : un nouveau jeton, posé sur le serveur (<span class="mono">bash secrets.sh editer</span>), jamais saisi ici ; puis <span class="mono">github.proprietaire</span> dans le contrat.</div>
-        </div>
+        ${carteGithub(f)}
         <div class="carte carte-p pile" style="gap:8px">
           <div class="barre"><strong>GitLab</strong><span class="badge">prochaine étape</span></div>
           <div style="font-size:14px">GitLab.com ou une instance auto-hébergée : groupes, merge requests, issues.</div>
@@ -1257,6 +1287,10 @@ function suivreChatGPT() {
 const ACTIONS = {
   palette: () => ouvrirPalette(),
   "premiers-pas": (el) => agir(() => api("PUT", "premiers-pas", { masque: el.dataset.quoi === "masquer" })),
+  "github-oublier": () => {
+    if (!confirmer("Déconnecter GitHub de l'usine ? Les projets en cours ne pourront plus pousser leur code tant qu'un compte n'est pas reconnecté.")) return
+    return agir(() => api("DELETE", "github", {}))
+  },
   "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
   "retirer-identifiant": (el) => {
     if (!confirmer("Retirer cette valeur de la console ? Celle du serveur, s'il y en a une, reprendra.")) return
@@ -1497,6 +1531,27 @@ document.addEventListener("submit", async (e) => {
     const r = await agir(() => api("POST", "acces/utilisateurs", { email: d.get("email"), role: d.get("role"), applis: d.getAll("applis") }), { succes: "Invitation créée." })
     etat.invitation = r ? (r.envoye ? `Invitation envoyée par email à ${d.get("email")} (lien valable 72 h).` : `L'email n'est pas parti : transmets ce lien toi-même (personnel, 72 h) : ${r.lien}`) : null
     rendre()
+  }
+  if (type === "github") {
+    const organisation = d.get("cible") === "org" ? String(d.get("organisation") ?? "").trim() : ""
+    if (d.get("cible") === "org" && !organisation) {
+      etat.message = { type: "erreur", texte: "Indique le nom de l'organisation GitHub." }
+      return afficherMessages()
+    }
+    const r = await agir(() => api("POST", "github/connexion", { organisation }), { succes: "Direction GitHub…" })
+    if (r?.action) {
+      // Le manifeste part vers GitHub par un formulaire (c'est ce que GitHub attend).
+      const envoi = document.createElement("form")
+      envoi.method = "post"
+      envoi.action = r.action
+      const champ = document.createElement("input")
+      champ.type = "hidden"
+      champ.name = "manifest"
+      champ.value = r.manifeste
+      envoi.append(champ)
+      document.body.append(envoi)
+      envoi.submit()
+    }
   }
   if (type === "identifiant") {
     const valeur = String(d.get("valeur") ?? "").trim()

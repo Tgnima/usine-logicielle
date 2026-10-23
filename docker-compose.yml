@@ -35,6 +35,8 @@ services:
       - ./usine.config.yml:/app/usine.config.yml:ro
       - orchestrateur-data:/app/data
       - etat:/app/etat:ro
+      # Le jeton GitHub de courte durée (application GitHub de l'usine), pour le déployeur.
+      - jetons:/app/jetons
     depends_on: [atelier-1, verificateur, portier]
     mem_limit: 256m
     networks: [usine]
@@ -85,6 +87,7 @@ services:
       - ./caddy:/caddy
       - etat:/etat
       - deployeur-srv:/srv
+      - jetons:/jetons:ro
       - ${USINE_DIR:-./.usine-dir-absent}:${USINE_DIR:-/usine-dir-absent}
     mem_limit: 512m
     networks: [usine, produits]
@@ -148,6 +151,7 @@ secrets:
 volumes:
   orchestrateur-data:
   etat:
+  jetons:
   deployeur-srv:
   portier-data:
   caddy-data:

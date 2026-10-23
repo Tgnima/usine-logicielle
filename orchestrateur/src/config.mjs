@@ -16,8 +16,11 @@ export function chargerConfig() {
   const fichier = process.env.USINE_CONFIG ?? "/app/usine.config.yml"
   const c = YAML.parse(readFileSync(fichier, "utf8"))
   const env = process.env
-  for (const nom of ["github_token", "worker_token"]) if (!secret(nom)) throw new Error(`Secret ${nom} manquant (bash secrets.sh verifier).`)
-  if (!c.github?.proprietaire) throw new Error("github.proprietaire manquant dans usine.config.yml.")
+  // GitHub peut se connecter plus tard, depuis la console (application GitHub de l'usine).
+  if (!secret("worker_token")) throw new Error("Secret worker_token manquant (bash secrets.sh verifier).")
+  // Le compte GitHub des produits : celui de l'application connectée dans la console, sinon le contrat.
+  c.github = { depot_etat: "usine-etat", ...(c.github ?? {}) }
+  if (!c.github.proprietaire) console.log("GitHub pas encore connecté : à faire dans la console (Premiers pas).")
   return {
     ...c,
     secrets: { github: secret("github_token"), worker: secret("worker_token"), slackBot: secret("slack_bot_token"), slackApp: secret("slack_app_token") },
