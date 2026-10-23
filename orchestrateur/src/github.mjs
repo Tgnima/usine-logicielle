@@ -23,7 +23,12 @@ async function gh(config, chemin, { method = "GET", corps, accepter = [] } = {})
     await new Promise((r) => setTimeout(r, 5_000 * essai))
   }
   const json = res.status === 204 ? {} : await res.json().catch(() => ({}))
-  if (!res.ok && !accepter.includes(res.status)) throw Object.assign(new Error(`GitHub ${res.status} ${method} ${chemin} : ${json.message ?? ""}`), { statut: res.status })
+  if (!res.ok && !accepter.includes(res.status)) {
+    // Le détail de GitHub (« description cannot be more than 350 characters »…) : sans lui,
+    // un 422 ne dit que « Repository creation failed ».
+    const details = (json.errors ?? []).map((e) => (typeof e === "string" ? e : e.message ?? [e.field, e.code].filter(Boolean).join(" "))).filter(Boolean)
+    throw Object.assign(new Error(`GitHub ${res.status} ${method} ${chemin} : ${json.message ?? ""}${details.length ? ` (${details.join(" ; ")})` : ""}`), { statut: res.status })
+  }
   return { statut: res.status, json }
 }
 
@@ -37,7 +42,16 @@ export async function creerDepot(config, nom, description) {
   if (existe.statut === 200) return existe.json
   const moi = (await gh(config, "/user")).json.login
   const chemin = moi === config.github.proprietaire ? "/user/repos" : `/orgs/${config.github.proprietaire}/repos`
-  return (await gh(config, chemin, { method: "POST", corps: { name: nom, description, private: config.github.visibilite !== "public", auto_init: false, has_wiki: false } })).json
+  return (await gh(config, chemin, { method: "POST", corps: { name: nom, description: descriptionDepot(description), private: config.github.visibilite !== "public", auto_init: false, has_wiki: false } })).json
+}
+
+// GitHub refuse une description de plus de 350 caractères (le résumé d'un plan peut dépasser) :
+// coupée au dernier mot entier, sur une ligne.
+export function descriptionDepot(texte, max = 350) {
+  const t = String(texte ?? "").replace(/\s+/g, " ").trim()
+  if (t.length <= max) return t
+  const coupe = t.slice(0, max - 1)
+  return `${coupe.slice(0, coupe.lastIndexOf(" ") > max / 2 ? coupe.lastIndexOf(" ") : coupe.length).replace(/[\s,;:.]+$/, "")}…`
 }
 
 export async function creerEtiquettes(config, nom, etiquettes) {
