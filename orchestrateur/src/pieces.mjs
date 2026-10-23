@@ -1,4 +1,5 @@
-// Les pièces jointes d'une demande (maquettes, captures, cahier des charges en PDF),
+// Les pièces jointes d'une demande (maquettes, captures, cahier des charges en PDF ou en
+// Markdown, notes en texte brut),
 // déposées dans la console. Gardées dans data/pieces/<projet>/, lues par l'analyste
 // (outil Read de Claude Code) et copiées dans le dépôt du produit (docs/maquettes/),
 // où les agents les retrouvent.
@@ -16,17 +17,32 @@ const dossier = (config, projetId) => join(config.dataDir, "pieces", String(proj
 const nomSur = (nom) => String(nom ?? "piece").normalize("NFD").replace(/\p{M}/gu, "").replace(/\.[a-z0-9]+$/i, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "piece"
 
 // Contrôle les pièces envoyées ({ nom, type, base64 }) ; renvoie les fichiers à écrire. Lève une erreur claire.
+// Le texte (Markdown, texte brut) : reconnu à l'extension (Windows n'annonce souvent aucun type
+// pour un .md), puis contrôlé : de l'UTF-8 valide, sans octet nul (pas un binaire renommé).
+const TEXTES = { md: "md", markdown: "md", txt: "txt" }
+const extensionTexte = (nom) => TEXTES[/\.([a-z0-9]+)$/i.exec(String(nom ?? ""))?.[1]?.toLowerCase()]
+function estDuTexte(contenu) {
+  if (contenu.includes(0)) return false
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(contenu)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function verifierPieces(pieces) {
   if (pieces === undefined || pieces === null) return []
   if (!Array.isArray(pieces)) throw new Error("Pièces jointes illisibles.")
   if (pieces.length > PIECES_MAX) throw new Error(`${PIECES_MAX} pièces jointes au plus.`)
   return pieces.map((p, i) => {
-    const ext = TYPES[p?.type]
-    if (!ext) throw new Error(`« ${p?.nom ?? "?"} » : formats acceptés PNG, JPEG, WebP ou PDF.`)
+    const ext = TYPES[p?.type] ?? extensionTexte(p?.nom)
+    if (!ext) throw new Error(`« ${p?.nom ?? "?"} » : formats acceptés PNG, JPEG, WebP, PDF, Markdown (.md) ou texte (.txt).`)
     const contenu = Buffer.from(String(p.base64 ?? ""), "base64")
     if (!contenu.length) throw new Error(`« ${p.nom} » est vide.`)
     if (contenu.length > TAILLE_MAX) throw new Error(`« ${p.nom} » dépasse 2 Mo.`)
-    if (!SIGNATURES[ext].every((o, k) => contenu[k] === o)) throw new Error(`« ${p.nom} » n'est pas un vrai fichier ${ext.toUpperCase()}.`)
+    if (SIGNATURES[ext] && !SIGNATURES[ext].every((o, k) => contenu[k] === o)) throw new Error(`« ${p.nom} » n'est pas un vrai fichier ${ext.toUpperCase()}.`)
+    if (!SIGNATURES[ext] && !estDuTexte(contenu)) throw new Error(`« ${p.nom} » n'est pas un fichier texte (UTF-8).`)
     return { nom: `${i + 1}-${nomSur(p.nom)}.${ext}`, contenu }
   })
 }
@@ -41,7 +57,7 @@ export function enregistrerPieces(config, projetId, fichiers) {
 export function listerPieces(config, projetId) {
   const d = dossier(config, projetId)
   if (!existsSync(d)) return []
-  return readdirSync(d).filter((f) => /^\d-[\w-]+\.(png|jpg|webp|pdf)$/.test(f)).sort().map((f) => ({ nom: f, chemin: join(d, f), taille: statSync(join(d, f)).size }))
+  return readdirSync(d).filter((f) => /^\d-[\w-]+\.(png|jpg|webp|pdf|md|txt)$/.test(f)).sort().map((f) => ({ nom: f, chemin: join(d, f), taille: statSync(join(d, f)).size }))
 }
 
 // Les lignes bash qui recréent les pièces dans un dossier de l'atelier (binaire, via base64).

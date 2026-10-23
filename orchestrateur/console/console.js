@@ -233,8 +233,8 @@ function vueNouveau() {
           <textarea id="demande" name="prompt" class="champ" rows="8" required minlength="20" style="resize:vertical;line-height:1.6" placeholder="Ex. : une application pour nos techniciens de maintenance : chaque matin ils voient leurs interventions du jour, sur place ils saisissent le compte rendu (photos, pièces changées, signature), même sans réseau. Le responsable suit tout depuis un tableau de bord."></textarea>
           <div class="aide">Pour aller plus vite, précise : qui l'utilise · les écrans clés · ce qui n'est pas demandé.</div></div>
         <div class="pile">
-          <label class="titre-champ" for="pieces">Pièces jointes <span class="aide" style="font-weight:400">· maquettes, captures ou cahier des charges : PNG, JPEG, WebP ou PDF, 3 au plus, 2 Mo chacune</span></label>
-          <input id="pieces" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple class="champ" style="padding:9px">
+          <label class="titre-champ" for="pieces">Pièces jointes <span class="aide" style="font-weight:400">· maquettes, captures ou cahier des charges : PNG, JPEG, WebP, PDF, Markdown ou texte, 3 au plus, 2 Mo chacune</span></label>
+          <input id="pieces" type="file" accept="image/png,image/jpeg,image/webp,application/pdf,.md,.markdown,.txt,text/markdown,text/plain" multiple class="champ" style="padding:9px">
           ${etat.pieces.length ? html`<ul class="pieces">${etat.pieces.map((f, i) => html`<li><span class="mono">${f.name}</span><span class="aide">${Math.ceil(f.size / 1024)} Ko</span><button type="button" class="btn-icone" data-action="retirer-piece" data-id="${i}" aria-label="Retirer ${f.name}">✕</button></li>`)}</ul>` : ""}
           <div class="aide">L'analyste les lit avant de planifier ; elles sont ensuite copiées dans le dépôt (docs/maquettes/) pour les agents.</div>
         </div>
@@ -1160,14 +1160,15 @@ function enBase64(tampon) {
   for (let i = 0; i < octets.length; i += 0x8000) binaire += String.fromCharCode(...octets.subarray(i, i + 0x8000))
   return btoa(binaire)
 }
-const PIECES = { max: 3, taille: 2 * 1024 * 1024, types: ["image/png", "image/jpeg", "image/webp", "application/pdf"] }
+const PIECES = { max: 3, taille: 2 * 1024 * 1024, types: ["image/png", "image/jpeg", "image/webp", "application/pdf"], textes: /\.(md|markdown|txt)$/i }
+const pieceAcceptee = (f) => PIECES.types.includes(f.type) || PIECES.textes.test(f.name)
 document.addEventListener("change", (e) => {
   if (e.target.id === "pieces") {
     const choisis = [...e.target.files]
-    const refuses = choisis.filter((f) => !PIECES.types.includes(f.type) || f.size > PIECES.taille)
+    const refuses = choisis.filter((f) => !pieceAcceptee(f) || f.size > PIECES.taille)
     const toutes = [...etat.pieces, ...choisis.filter((f) => !refuses.includes(f))]
     etat.pieces = toutes.slice(0, PIECES.max)
-    if (refuses.length) etat.message = { type: "erreur", texte: `Non retenu : ${refuses.map((f) => f.name).join(", ")} (PNG, JPEG, WebP ou PDF de 2 Mo au plus).` }
+    if (refuses.length) etat.message = { type: "erreur", texte: `Non retenu : ${refuses.map((f) => f.name).join(", ")} (PNG, JPEG, WebP, PDF, Markdown ou texte, de 2 Mo au plus).` }
     else if (toutes.length > PIECES.max) etat.message = { type: "info", texte: `${PIECES.max} pièces jointes au plus : les suivantes n'ont pas été retenues.` }
     const texte = $("#demande")?.value
     rendre()
