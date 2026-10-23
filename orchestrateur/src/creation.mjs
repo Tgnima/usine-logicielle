@@ -68,7 +68,9 @@ export async function creerProduit(ctx, projetId) {
     'if [ -n "$DEV" ]; then npm install -D --no-audit --no-fund $DEV 2>&1 | tail -2; fi',
     `npm run verify 2>&1 | tee /tmp/sorties/socle.log | tail -15; ${COMPTER_TESTS} /tmp/sorties/socle.log`,
     `git init -q -b main && git add -A && git commit -q -m 'Socle : brique ${brique} et plan de fabrication'`,
-    `reessayer git push -q "https://x-access-token:$JETON@github.com/${o}/${nomDepot}.git" main 2>&1 | sed "s/$JETON/***/g"`,
+    // --force : une création relancée après un échec remplace le socle déjà poussé (rien n'est
+    // encore fabriqué dessus : la relance n'a lieu qu'avant la fabrication).
+    `reessayer git push -q --force "https://x-access-token:$JETON@github.com/${o}/${nomDepot}.git" main 2>&1 | sed "s/$JETON/***/g"`,
     `git remote add origin https://github.com/${o}/${nomDepot}.git`,
     "echo '@@ CREATION_OK'",
   ].join("\n")
@@ -146,6 +148,8 @@ async function ouvrirTaches(ctx, projetId, nomDepot, lot, numero) {
   const { config, db } = ctx
   const inserer = db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, issue, statut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente')")
   for (const t of lot.taches) {
+    // Une création relancée : les issues déjà ouvertes au premier essai ne sont pas rouvertes.
+    if (db.prepare("SELECT 1 FROM taches WHERE projet_id = ? AND lot = ? AND cle = ?").get(projetId, numero, t.cle)) continue
     const corps = [
       `**Lot ${numero} : ${lot.nom}**`,
       "",

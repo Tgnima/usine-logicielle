@@ -219,10 +219,7 @@ export async function demarrerSlack(ctx) {
     }
     if (mot === "stop") return repondre(actions.arreter(ctx, command.user_name).message)
     if (mot === "reprendre") return repondre(actions.reprendre(ctx).message)
-    if (mot === "relancer" && /^\d+$/.test(arg ?? "")) {
-      actions.lancerAnalyse(ctx, Number(arg)).catch((e) => console.error(e))
-      return repondre("Analyse relancée.")
-    }
+    if (mot === "relancer" && /^\d+$/.test(arg ?? "")) return repondre(actions.relancerProjet(ctx, Number(arg), command.user_name).message)
     if (mot === "production" && /^\d+$/.test(arg ?? "")) {
       const p = obtenir(db, "projets", Number(arg))
       if (!["livre", "en_production"].includes(p?.statut)) return repondre(p ? `Le projet ${arg} est « ${p.statut} » : il n'est pas encore livré.` : `Pas de projet ${arg}.`)

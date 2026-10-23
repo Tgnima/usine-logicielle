@@ -407,6 +407,11 @@ const ROUTES = [
   }],
   ["POST", /^\/api\/projets\/(\d+)\/valider$/, (ctx, [id], _c, qui) => actions.validerPlan(ctx, Number(id), qui.email)],
   ["POST", /^\/api\/projets\/(\d+)\/abandonner$/, (ctx, [id], _c, qui) => actions.abandonnerPlan(ctx, Number(id), qui.email)],
+  ["POST", /^\/api\/projets\/(\d+)\/relancer$/, (ctx, [id], _c, qui) => {
+    const r = actions.relancerProjet(ctx, Number(id), qui.email)
+    if (!r.ok) throw erreur(409, r.message)
+    return r
+  }],
   ["POST", /^\/api\/projets\/(\d+)\/message$/, async (ctx, [id], c, qui) => {
     const texte = String(c.texte ?? "").trim()
     if (!texte) throw erreur(400, "Message vide.")

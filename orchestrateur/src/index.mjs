@@ -68,7 +68,7 @@ const routes = {
   },
   "POST /decider": (c, id) => resoudre(ctx, id, { choix: c.choix, texte: c.texte ?? "", par: c.par ?? "cli" }),
   "POST /production": (c, id) => livraison.mettreEnProduction(ctx, id, c.par ?? "cli", c.choix ?? null),
-  "POST /relancer": (_c, id) => (actions.lancerAnalyse(ctx, id), { ok: true }),
+  "POST /relancer": (c, id) => actions.relancerProjet(ctx, id, c.par ?? "cli"),
   "POST /abandonner": (c, id) => actions.abandonnerPlan(ctx, id, c.par ?? "cli"),
   "POST /mettre-a-jour": (c) => mettreAJourUsine(ctx, c.par ?? "cli"),
   "POST /stop": (c) => actions.arreter(ctx, c.par ?? "cli"),

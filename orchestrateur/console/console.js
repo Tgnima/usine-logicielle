@@ -623,6 +623,17 @@ function blocVideo(p) {
   </section>`
 }
 
+// Un projet en échec : la dernière erreur, et la relance là où il s'est arrêté.
+function blocEchec(p) {
+  const derniere = [...(p.journal ?? [])].reverse().find((x) => x.type === "erreur")
+  const creation = p.plan?.lots?.length && (p.journal ?? []).some((x) => x.type === "validation")
+  return html`<div class="message erreur pile" style="align-items:flex-start">
+    <span><strong>${creation ? "La création du produit a échoué." : "L'analyse a échoué."}</strong> ${derniere ? derniere.message.slice(0, 600) : "Raison inconnue : voir l'historique."}</span>
+    <span class="aide">${creation ? "La relance recrée le dépôt et le socle avec le plan déjà validé, sans repasser par l'analyste." : "La relance repart de la demande d'origine."}</span>
+    <div><button type="button" class="btn btn-p btn-petit" data-action="relancer-projet">Relancer</button></div>
+  </div>`
+}
+
 function vueProjet() {
   const p = etat.projet
   if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement du projet…</div>`
@@ -640,6 +651,7 @@ function vueProjet() {
     </div>
     ${messageGlobal()}
     ${p.statut === "analyse" ? html`<div class="message info"><span>${p.repris && !p.inventaire ? "L'usine fait l'inventaire du dépôt (pile, commandes, ce qui marche) et le met au contrat d'hébergement ; puis l'analyste prépare le plan." : "L'analyste étudie la demande et prépare le plan."} Cette page se met à jour toute seule.</span></div>` : ""}
+    ${p.statut === "echec" ? blocEchec(p) : ""}
     ${blocReprise(p)}
     ${p.statut === "questions" ? html`<section class="carte carte-p pile"><h2>L'analyste a des questions</h2>
       <ol style="margin:0;padding-left:20px">${(p.plan?.questions ?? []).map((q) => html`<li>${q}</li>`)}</ol>
@@ -823,7 +835,7 @@ async function suivreDirect() {
 }
 setInterval(suivreDirect, 3000)
 
-const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Production", abandon: "Abandon", cycle: "Cycle de vie", plan: "Plan", domaine: "Domaine", corrections: "Corrections", remarque: "Remarque", escalade: "Escalade", erreur: "Erreur" }
+const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Production", abandon: "Abandon", cycle: "Cycle de vie", plan: "Plan", domaine: "Domaine", corrections: "Corrections", remarque: "Remarque", escalade: "Escalade", erreur: "Erreur", relance: "Relance" }
 function vueHistorique() {
   const h = etat.historique
   const projets = etat.resume?.projets ?? []
@@ -1135,6 +1147,7 @@ const ACTIONS = {
   },
   decider: (el) => agir(() => api("POST", `escalades/${el.dataset.id}`, { choix: el.dataset.choix, texte: $(`#consigne-${el.dataset.id}`)?.value ?? "" }), { succes: "Décision transmise : l'usine reprend." }),
   "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
+  "relancer-projet": () => agir(() => api("POST", `projets/${etat.projet.id}/relancer`, {}), { succes: "Relance lancée : cette page se met à jour toute seule." }),
   "ajouter-critere": (el) => {
     const [l, t] = [Number(el.dataset.lot), Number(el.dataset.tache)]
     editerPlan((plan) => { plan.lots[l].taches[t].criteres.push("") })

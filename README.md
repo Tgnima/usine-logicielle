@@ -142,6 +142,11 @@ Répondre dans le fil d'un projet vaut réponse à l'usine (correction, décisio
 `/usine statut`, `/usine stop` (après la tâche en cours), `/usine reprendre` (sans argument :
 l'usine repart après un arrêt).
 
+**Un projet en échec** se relance avec `/usine relancer <n°>` ou le bouton *Relancer* de la
+console, là où il a échoué : une création échouée (GitHub indisponible, par exemple) est refaite
+avec le plan déjà validé, sans repasser par l'analyste ; une analyse échouée repart de la demande.
+Un projet en fabrication ne se relance pas : ses tâches bloquées se débloquent par leur décision.
+
 **Reprendre un dépôt existant, pour un persona.** Le cas d'usage : un reverse engineering (REA)
 a reproduit une partie d'une application ; l'usine la reprend, la spécialise pour une cible et la
 termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Dans Slack :

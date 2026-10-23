@@ -67,7 +67,7 @@ export async function lancerAnalyse(ctx, projetId, options = {}) {
   } catch (error) {
     maj(db, "projets", projetId, { statut: "echec" })
     noter(db, { projet: projetId, type: "erreur", message: error.message })
-    return ctx.notifier.etape(projet, `:x: L'analyse a échoué : ${error.message.slice(0, 800)}\nRelance avec \`/usine relancer ${projetId}\`.`)
+    return ctx.notifier.etape(projet, `:x: L'analyse a échoué : ${error.message.slice(0, 800)}\nRelance avec \`/usine relancer ${projetId}\` ou le bouton « Relancer » de la console.`)
   }
 }
 
@@ -98,11 +98,20 @@ export async function validerPlan(ctx, projetId, par) {
   const { db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (projet?.statut !== "plan_a_valider") return { ok: false, message: "Ce plan n'est pas en attente de validation." }
-  maj(db, "projets", projetId, { statut: "creation" })
   db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Plan de fabrication", "validé", par)
   noter(db, { projet: projetId, type: "validation", message: `Plan validé par ${par}` })
+  lancerCreation(ctx, projetId, `:white_check_mark: Plan validé par ${par}. Création du dépôt et du socle…`)
+  return { ok: true, message: "Plan validé." }
+}
+
+// La création du dépôt, du socle et des issues, en tâche de fond. Rejouable après un échec :
+// le dépôt n'est créé que s'il manque, le socle est repoussé, une issue déjà ouverte ne l'est pas deux fois.
+function lancerCreation(ctx, projetId, annonce) {
+  const { db } = ctx
+  maj(db, "projets", projetId, { statut: "creation" })
+  const projet = obtenir(db, "projets", projetId)
   ;(async () => {
-    await ctx.notifier.etape(projet, `:white_check_mark: Plan validé par ${par}. Création du dépôt et du socle…`)
+    await ctx.notifier.etape(projet, annonce)
     try {
       await creerProduit(ctx, projetId)
       const p = obtenir(db, "projets", projetId)
@@ -116,10 +125,30 @@ export async function validerPlan(ctx, projetId, par) {
     } catch (error) {
       maj(db, "projets", projetId, { statut: "echec" })
       noter(db, { projet: projetId, type: "erreur", message: error.message })
-      await ctx.notifier.etape(projet, `:x: La création du produit a échoué : ${error.message.slice(0, 800)}`)
+      await ctx.notifier.etape(projet, `:x: La création du produit a échoué : ${error.message.slice(0, 800)}\nRelance avec \`/usine relancer ${projetId}\` ou le bouton « Relancer » de la console : le plan validé est gardé.`)
     }
-  })()
-  return { ok: true, message: "Plan validé." }
+  })().catch((e) => console.error(e))
+}
+
+// Relancer un projet là où il a échoué : la création si son plan était validé (le plan est
+// gardé tel quel), sinon l'analyse. Un projet en fabrication ne se relance pas : ses tâches
+// bloquées se débloquent par leur décision (A · Réessayer).
+export function relancerProjet(ctx, projetId, par = "?") {
+  const { db } = ctx
+  const projet = obtenir(db, "projets", projetId)
+  if (!projet) return { ok: false, message: `Pas de projet ${projetId}.` }
+  const planValide = db.prepare("SELECT 1 FROM decisions WHERE projet_id = ? AND question = 'Plan de fabrication' AND reponse = 'validé'").get(projetId)
+  if (projet.statut === "echec" && planValide && !projet.debut_fabrication) {
+    noter(db, { projet: projetId, type: "relance", message: `Création relancée par ${par}, avec le plan validé` })
+    lancerCreation(ctx, projetId, `:repeat: Création relancée par ${par}, avec le plan validé. Dépôt et socle…`)
+    return { ok: true, message: "Création relancée, avec le plan validé." }
+  }
+  if (!["echec", "questions", "plan_a_valider"].includes(projet.statut)) {
+    return { ok: false, message: `Le projet ${projetId} est « ${projet.statut} » : il n'y a rien à relancer. Une tâche bloquée se débloque par sa décision (A · Réessayer).` }
+  }
+  noter(db, { projet: projetId, type: "relance", message: `Analyse relancée par ${par}` })
+  lancerAnalyse(ctx, projetId).catch((e) => console.error(e))
+  return { ok: true, message: "Analyse relancée." }
 }
 
 // Un plan qui ne correspond pas à la demande : on l'abandonne, rien n'a encore été créé.
