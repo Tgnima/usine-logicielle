@@ -36,6 +36,7 @@ import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPer
 import { MODES_REPRISE } from "./reprise.mjs"
 import { ecartsEnCorrections, lireRecette } from "./recette.mjs"
 import { proteges } from "./profil.mjs"
+import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" }
@@ -232,7 +233,7 @@ export function estimation(ctx, nbTaches = null) {
 }
 
 // L'historique : qui a fait quoi (validations, décisions, production, corrections, réglages…).
-const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur"]
+const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur", "reglage"]
 function historique(ctx, { projet = null, type = null } = {}) {
   const types = type && TYPES_HISTORIQUE.includes(type) ? [type] : TYPES_HISTORIQUE
   const filtre = projet ? "AND j.projet_id = ?" : ""
@@ -454,6 +455,15 @@ const ROUTES = [
 
   ["GET", /^\/api\/reglages$/, (ctx) => reglages(ctx)],
   ["PUT", /^\/api\/reglages\/couts$/, (ctx, _p, c, qui) => enregistrerCouts(ctx, c, qui)],
+  // Les fournisseurs d'IA : identifiants (jamais renvoyés), façons de se servir de chaque moteur, modèles.
+  ["GET", /^\/api\/fournisseurs$/, (ctx) => etatFournisseurs(ctx)],
+  ["PUT", /^\/api\/fournisseurs\/identifiants\/([A-Z_]+)$/, (ctx, [nom], c, qui) => poserIdentifiant(ctx, nom, c.valeur, qui.email)],
+  ["DELETE", /^\/api\/fournisseurs\/identifiants\/([A-Z_]+)$/, (ctx, [nom], _c, qui) => effacerIdentifiant(ctx, nom, qui.email)],
+  ["PUT", /^\/api\/fournisseurs\/modes\/(claude-code|codex)$/, (ctx, [moteur], c, qui) => reglerModes(ctx, moteur, c.modes, qui.email)],
+  ["PUT", /^\/api\/fournisseurs\/modeles$/, (ctx, _p, c, qui) => reglerModeles(ctx, c, qui.email)],
+  ["POST", /^\/api\/fournisseurs\/tester$/, (ctx) => testerFournisseurs(ctx)],
+  ["POST", /^\/api\/fournisseurs\/chatgpt$/, (ctx, _p, _c, qui) => connecterChatGPT(ctx, qui.email)],
+  ["GET", /^\/api\/fournisseurs\/chatgpt$/, (ctx) => etatChatGPT(ctx)],
 
   ["GET", /^\/api\/acces$/, async (ctx) => {
     const noms = Object.fromEntries(ctx.db.prepare("SELECT slug, nom FROM projets WHERE slug IS NOT NULL").all().map((p) => [p.slug, p.nom]))

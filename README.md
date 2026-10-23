@@ -131,8 +131,26 @@ les ports 80 et 443 libres.
 
    Sur un serveur où l'usine à contenu tourne déjà : `bash install.sh --reprendre-de ../usine-contenu`
    réutilise sa connexion Claude, sa clé Vercel AI Gateway et son volume Codex.
-4. Codex, si ce n'est pas déjà fait : `docker compose run --rm verificateur codex login --device-auth`.
+4. Les fournisseurs d'IA : dans la console, **Réglages → Fournisseurs d'IA** (voir plus bas).
+   Rien à faire sur le serveur : jeton d'abonnement Claude, clés API, passerelle, connexion
+   ChatGPT du vérificateur, ordre de secours et modèles se règlent là.
 5. Dans Slack, `/usine acces` : crée ton compte (administrateur) et ouvre le lien d'invitation.
+
+## Fournisseurs d'IA
+
+Console, **Réglages → Fournisseurs d'IA** (administrateurs) :
+
+- **Claude** (analyste, agents, relecteurs) : le jeton d'abonnement Pro/Max (obtenu sur ton
+  ordinateur par `claude setup-token`), une clé API Anthropic, la passerelle Vercel AI Gateway.
+- **Codex · OpenAI** (vérificateur) : le bouton *Connecter un compte ChatGPT* (un lien et un code
+  à saisir sur le site d'OpenAI), une clé API OpenAI, la passerelle.
+- Pour chaque moteur, les façons actives et leur **ordre de secours** : à la limite d'usage ou à
+  court de crédit, l'usine passe à la suivante pour le même travail.
+- Le **modèle de chaque rôle**, et un bouton *Tester les connexions* (sans dépense pour les clés).
+
+Une valeur saisie est chiffrée (AES-256-GCM, clé dérivée de `worker_token`), jamais réaffichée
+(seulement ses 4 derniers caractères, la date et l'auteur), et passe avant celle du serveur.
+Les secrets du serveur (`secrets.sh`) restent le secours. Changer `worker_token` efface ces valeurs.
 
 ## Piloter
 

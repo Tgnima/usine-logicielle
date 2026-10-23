@@ -18,6 +18,7 @@
 const FACTURATION_PAUSE = 60 * 60_000
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { q } from "./travaux.mjs"
+import { ordreModes } from "./fournisseurs.mjs"
 
 export const MODES = ["abonnement", "cle", "passerelle"]
 export const PASSERELLE = "https://ai-gateway.vercel.sh"
@@ -44,8 +45,9 @@ export function heureDeReprise(texte, maintenant = new Date()) {
 }
 
 // Les façons encore utilisables pour un moteur (dans l'ordre du contrat).
+// L'ordre vient de la console (Réglages, fournisseurs d'IA), sinon du contrat (secours.ordre).
 export function modesDisponibles(ctx, moteur) {
-  const ordre = (ctx.config.secours?.ordre ?? MODES).filter((m) => MODES.includes(m))
+  const ordre = ordreModes(ctx, moteur)
   return ordre.filter((m) => {
     const jusqua = lireReglage(ctx.db, cleLimite(moteur, m), "")
     return !jusqua || new Date(jusqua) <= new Date()
@@ -128,7 +130,8 @@ const PREALABLE = { abonnement: "true", cle: null, passerelle: '[ -n "$AI_GATEWA
 export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null" }) {
   const modes = modesDisponibles(ctx, "claude-code")
   const essais = modes.map((mode) => {
-    const prealable = { ...PREALABLE, cle: '[ -n "$ANTHROPIC_API_KEY" ]' }[mode]
+    // L'abonnement Claude n'existe dans l'atelier que par son jeton (console ou serveur).
+    const prealable = { ...PREALABLE, abonnement: '[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]', cle: '[ -n "$ANTHROPIC_API_KEY" ]' }[mode]
     const lancer = {
       abonnement: `env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN claude ${args} --model ${q(modele)}`,
       cle: `env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN claude ${args} --model ${q(modele)}`,

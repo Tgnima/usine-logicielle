@@ -6,7 +6,8 @@ import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { chargerConfig } from "./config.mjs"
 import { ouvrirDb, plan as lirePlan, obtenir } from "./db.mjs"
-import { sante } from "./travaux.mjs"
+import { brancherEnvCommun, sante } from "./travaux.mjs"
+import { appliquerModeles, envFournisseurs } from "./fournisseurs.mjs"
 import { preparerDepotEtat } from "./github.mjs"
 import { demarrerFabrique } from "./fabrique.mjs"
 import { resoudre, surveillerEscalades } from "./escalade.mjs"
@@ -28,6 +29,9 @@ ouvrirCouts(db)
 ouvrirCycle(db)
 ouvrirDomaines(db)
 const ctx = { config, db, notifier: notificateurConsole(), livraison }
+// Les fournisseurs d'IA réglés dans la console : modèles, et identifiants passés aux travaux.
+appliquerModeles(ctx)
+brancherEnvCommun((serveur) => envFournisseurs(ctx, serveur === config.verificateur.url ? "codex" : "claude-code"))
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
 if (config.secrets.slackBot && config.secrets.slackApp) {

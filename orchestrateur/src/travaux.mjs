@@ -10,12 +10,17 @@ async function appel(serveur, jeton, chemin, init = {}) {
   return { statut: res.status, corps: res.headers.get("content-type")?.includes("json") ? await res.json() : await res.text() }
 }
 
+// Les identifiants des fournisseurs d'IA posés dans la console (fournisseurs.mjs), ajoutés à
+// chaque travail : ils passent avant ceux du serveur. Branché au démarrage par index.mjs.
+let envCommun = () => ({})
+export const brancherEnvCommun = (f) => (envCommun = f)
+
 // Lance un script et attend sa fin. Renvoie { code, journal, marqueurs, duree_s }.
 // env : variables passées au seul script (un jeton GitHub, par exemple).
 export async function executer(serveur, jeton, script, { env = {}, minutes = 30, surAvancement } = {}) {
   let lance
   for (let essai = 0; ; essai++) {
-    lance = await appel(serveur, jeton, "/travaux", { method: "POST", body: JSON.stringify({ script, env, minutes }) })
+    lance = await appel(serveur, jeton, "/travaux", { method: "POST", body: JSON.stringify({ script, env: { ...envCommun(serveur), ...env }, minutes }) })
     if (lance.statut !== 409) break
     if (essai > 400) throw new Error(`${serveur} reste occupé.`)
     await pause(10_000)
@@ -67,3 +72,15 @@ export const RESEAU = [
   'reessayer() { local i; for i in 1 2 3 4 5; do "$@" && return 0; echo "(coupure réseau ? nouvel essai $i)"; sleep $((i * 10)); done; return 1; }',
   'cloner() { local i; for i in 1 2 3 4 5; do rm -rf "$2"; git clone -q "$1" "$2" && return 0; echo "(coupure réseau ? nouvel essai $i)"; sleep $((i * 10)); done; return 1; }',
 ].join("\n")
+
+// Lance un script sans attendre (une connexion qui attend l'humain) : { id } ou une erreur.
+export async function lancerTravail(serveur, jeton, script, { env = {}, minutes = 30 } = {}) {
+  const r = await appel(serveur, jeton, "/travaux", { method: "POST", body: JSON.stringify({ script, env: { ...envCommun(serveur), ...env }, minutes }) })
+  if (r.statut === 409) throw Object.assign(new Error("occupé"), { occupe: true })
+  if (r.statut !== 202) throw new Error(`${serveur} a refusé le travail (${r.statut}).`)
+  return r.corps
+}
+export const etatTravail = async (serveur, jeton, id) => {
+  const { statut, corps } = await appel(serveur, jeton, `/travaux/${id}?lignes=60`)
+  return statut === 200 ? corps : null
+}

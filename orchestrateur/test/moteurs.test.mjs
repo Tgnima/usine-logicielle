@@ -49,7 +49,7 @@ echo '{"type":"result","is_error":true,"api_error_status":429,"result":"You have
   // Les chemins vus par bash (sous Windows, Git Bash attend /c/…).
   const posix = (p) => (process.platform === "win32" ? p.replace(/^([A-Za-z]):/, (_, l) => `/${l.toLowerCase()}`).replaceAll("\\", "/") : p)
   const script = `set -e\nexport PATH="${posix(d)}:$PATH"\n${scriptClaude(ctx, { args: "-p essai", modele: "claude-sonnet-5-5", sortie: posix(join(d, "sortie.jsonl")) })}`
-  const r = spawnSync("bash", ["-c", script], { env: { ...process.env, ...env }, encoding: "utf8" })
+  const r = spawnSync("bash", ["-c", script], { env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: "jeton-abonnement", ...env }, encoding: "utf8" })
   return { sortie: r.stdout, fichier: readFileSync(join(d, "sortie.jsonl"), "utf8") }
 }
 
@@ -85,7 +85,7 @@ echo '{"type":"result","is_error":true,"api_error_status":429,"result":"You have
   chmodSync(join(d, "claude"), 0o755)
   const posix = (p) => (process.platform === "win32" ? p.replace(/^([A-Za-z]):/, (_, l) => `/${l.toLowerCase()}`).replaceAll("\\", "/") : p)
   const script = `set -e\nexport PATH="${posix(d)}:$PATH"\n${scriptClaude(ctx, { args: "-p essai", modele: "claude-sonnet-5-5", sortie: posix(join(d, "sortie.jsonl")) })}`
-  return spawnSync("bash", ["-c", script], { env: { ...process.env, ...env }, encoding: "utf8" }).stdout
+  return spawnSync("bash", ["-c", script], { env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: "jeton-abonnement", ...env }, encoding: "utf8" }).stdout
 }
 const marqueursDe = (sortie) => Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""]))
 
@@ -146,4 +146,11 @@ echo '{"type":"error","message":"You exceeded your current quota, please check y
   assert.match(sortie, /@@ FACTURATION_ABONNEMENT You exceeded your current quota/)
   assert.doesNotMatch(sortie, /@@ LIMITE_ABONNEMENT/)
   assert.match(sortie, /@@ EPUISE_CODEX/)
+})
+
+test("sans jeton d'abonnement Claude, l'abonnement est sauté sans être compté comme une limite", () => {
+  const ctx = ctxDe()
+  const { sortie } = lancerAvecFauxClaude(ctx, { CLAUDE_CODE_OAUTH_TOKEN: "", AI_GATEWAY_API_KEY: "cle-passerelle", ANTHROPIC_API_KEY: "" })
+  assert.doesNotMatch(sortie, /LIMITE_ABONNEMENT/)
+  assert.match(sortie, /@@ MODE_CLAUDE passerelle/)
 })

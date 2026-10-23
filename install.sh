@@ -64,7 +64,6 @@ bash secrets.sh migrer
 manque=()
 etat=$(bash secrets.sh verifier)
 for v in GITHUB_TOKEN WORKER_TOKEN; do echo "$etat" | grep -qE "^$v +rempli" || manque+=("$v"); done
-echo "$etat" | grep -qE "^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY) +rempli" || manque+=("CLAUDE_CODE_OAUTH_TOKEN ou ANTHROPIC_API_KEY")
 [ -n "$(valeur DEPOT_ETAT)" ] || manque+=("DEPOT_ETAT")
 if [ ${#manque[@]} -gt 0 ]; then
   echo
@@ -73,6 +72,8 @@ if [ ${#manque[@]} -gt 0 ]; then
   echo "(Elles y seront chiffrées puis effacées : .env ne garde jamais un secret.)"
   exit 1
 fi
+# Les fournisseurs d'IA ne sont plus obligatoires ici : ils se posent aussi dans la console.
+echo "$etat" | grep -qE "^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|AI_GATEWAY_API_KEY) +rempli" || echo "• Aucun accès à Claude sur le serveur : pose-le dans la console (Réglages, Fournisseurs d'IA)."
 echo "$etat" | grep -qE "^SLACK_BOT_TOKEN +rempli" || echo "• Pas de jetons Slack : l'usine se pilotera par la CLI (voir README)."
 
 docker volume create "$(valeur CODEX_VOLUME)" >/dev/null  # existe déjà s'il est réutilisé
@@ -83,7 +84,7 @@ echo
 docker compose ps --format "table {{.Service}}\t{{.Status}}"
 echo
 if ! docker compose run --rm --no-deps verificateur codex login status >/dev/null 2>&1; then
-  echo "Codex n'est pas connecté. Pour le connecter à ChatGPT (navigateur requis) :"
-  echo "  docker compose run --rm verificateur codex login --device-auth"
+  echo "Codex n'est pas connecté : console, Réglages, Fournisseurs d'IA, « Connecter un compte ChatGPT »."
+  echo "  (ou ici : docker compose run --rm verificateur codex login --device-auth)"
 fi
 echo "Usine prête. Journal : docker compose logs -f orchestrateur"

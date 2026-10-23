@@ -59,6 +59,8 @@ const etat = {
   sante: null,
   acces: null,
   reglages: null,
+  fournisseurs: null, // Réglages : les fournisseurs d'IA (jamais une valeur secrète)
+  chatgpt: null, // la connexion ChatGPT en cours : { etat, url, code }
   onglet: null, // null : « En direct » si une tâche tourne, sinon le journal
   brique: "webapp",
   message: null, // { type: "ok" | "erreur" | "info", texte }
@@ -757,6 +759,90 @@ const ROLES = { analyste: "Analyste (plan)", atelier: "Agents (code)", verificat
 const POLITIQUES = { jamais: "jamais", manuel: "un humain décide", "sur-criteres": "automatique si les critères passent" }
 const ACTIONS_POLITIQUES = { implementer: "Coder une tâche", merger: "Fusionner", deployer_apercu: "Mettre un aperçu en ligne", mettre_en_production: "Mettre en production", supprimer_des_donnees: "Supprimer des données" }
 
+// --- Fournisseurs d'IA ---------------------------------------------------------------------
+const NOMS_MODES = {
+  "claude-code": { abonnement: "Abonnement Claude (Pro/Max)", cle: "Clé API Anthropic", passerelle: "Passerelle Vercel AI Gateway" },
+  codex: { abonnement: "Abonnement ChatGPT", cle: "Clé API OpenAI", passerelle: "Passerelle Vercel AI Gateway" },
+}
+const ROLES_MODELES = { analyste: "Analyste (plan)", atelier: "Agents (code)", renfort: "Renfort (autre approche)", relecteur: "Relecteurs", petites_taches: "Petites tâches" }
+const MODELES_CONNUS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-4-5"]
+const dateCourte = (le) => (le ? new Date(le).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "")
+
+function badgeTest(t) {
+  if (!t) return html`<span class="badge">pas encore testé</span>`
+  if (t.etat === "ok") return html`<span class="badge vert">fonctionne</span>`
+  if (t.etat === "absent") return html`<span class="badge">non configuré</span>`
+  return html`<span class="badge rouge" title="${t.detail ?? ""}">en erreur</span>`
+}
+
+// Une valeur secrète : son origine (console ou serveur), jamais la valeur elle-même.
+function champIdentifiant(f, nom, aide) {
+  const i = f.identifiants.find((x) => x.nom === nom)
+  const source = i.console ? html`<span class="badge vert">console · …${i.console.fin}</span> <span class="aide">le ${dateCourte(i.console.le)} par ${i.console.par}</span>`
+    : i.serveur ? html`<span class="badge">serveur</span> <span class="aide">posée sur le serveur (secours)</span>` : html`<span class="badge orange">aucune</span>`
+  return html`<form class="pile" style="gap:6px" data-form="identifiant" data-nom="${nom}">
+    <div class="barre" style="flex-wrap:wrap;gap:6px"><label class="aide" for="id-${nom}"><strong>${i.libelle}</strong></label><span>${source}</span></div>
+    <div class="rangee" style="flex-wrap:nowrap"><input id="id-${nom}" name="valeur" type="password" class="champ mono" autocomplete="off" spellcheck="false" placeholder="${i.console || i.serveur ? "Coller une nouvelle valeur pour la remplacer" : "Coller la valeur"}" required>
+    <button type="submit" class="btn btn-s">Enregistrer</button>
+    ${i.console ? html`<button type="button" class="btn btn-s" data-action="retirer-identifiant" data-nom="${nom}">Retirer</button>` : ""}</div>
+    ${aide ? html`<div class="aide">${aide}</div>` : ""}
+  </form>`
+}
+
+function carteMoteur(f, m) {
+  const tests = f.tests.resultats?.[m.id] ?? {}
+  const tous = [...m.modes, ...["abonnement", "cle", "passerelle"].filter((x) => !m.modes.includes(x))]
+  const chat = etat.chatgpt
+  return html`<div class="carte carte-p pile" style="gap:14px">
+    <div><strong>${m.libelle}</strong><div class="aide">Les façons de s'en servir, dans l'ordre : quand l'une atteint sa limite ou n'a plus de crédit, l'usine passe à la suivante pour le même travail.</div></div>
+    <div class="tableau"><table><tbody>${tous.map((mode) => {
+      const actif = m.modes.includes(mode)
+      const rang = m.modes.indexOf(mode)
+      return html`<tr>
+        <td style="width:2.5em">${actif ? html`<strong>${rang + 1}</strong>` : html`<span class="aide">—</span>`}</td>
+        <td>${actif ? NOMS_MODES[m.id][mode] : html`<span class="aide">${NOMS_MODES[m.id][mode]} (désactivée)</span>`}</td>
+        <td>${badgeTest(tests[mode])}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${actif && rang > 0 ? petitBouton("mode-monter", `data-moteur="${m.id}" data-mode="${mode}"`, "↑", `Passer ${NOMS_MODES[m.id][mode]} avant`) : ""}
+          <button type="button" class="btn btn-s" data-action="mode-basculer" data-moteur="${m.id}" data-mode="${mode}">${actif ? "Désactiver" : "Activer"}</button>
+        </td></tr>`
+    })}</tbody></table></div>
+    ${m.id === "claude-code" ? html`
+      ${champIdentifiant(f, "CLAUDE_CODE_OAUTH_TOKEN", brut(`Sur ton ordinateur, lance <span class="mono">claude setup-token</span>, connecte-toi à ton compte Claude, puis colle ici le jeton affiché (il commence par <span class="mono">sk-ant-oat</span>, valable un an).`))}
+      ${champIdentifiant(f, "ANTHROPIC_API_KEY", brut(`Sur <span class="mono">console.anthropic.com</span>, rubrique API Keys. Payée à l'usage.`))}` : html`
+      <div class="pile" style="gap:6px">
+        <div class="barre" style="flex-wrap:wrap;gap:6px"><strong class="aide">Abonnement ChatGPT du vérificateur</strong>${badgeTest(tests.abonnement)}</div>
+        ${chat?.etat === "code" ? html`<div class="carte carte-p pile" style="gap:6px;border-color:var(--accent)"><div>Ouvre <a href="${chat.url}" target="_blank" rel="noopener noreferrer">${chat.url}</a>, connecte-toi à ton compte ChatGPT et saisis ce code :</div><div class="mono" style="font-size:22px;letter-spacing:2px"><strong>${chat.code}</strong></div><div class="aide">Valable 15 minutes. Cette page se met à jour toute seule quand c'est fait.</div></div>`
+          : chat?.etat === "attente" ? html`<div class="aide">Le vérificateur prépare le lien de connexion…</div>`
+          : html`<div><button type="button" class="btn btn-s" data-action="connecter-chatgpt">${tests.abonnement?.etat === "ok" ? "Reconnecter un compte ChatGPT" : "Connecter un compte ChatGPT"}</button></div>`}
+      </div>
+      ${champIdentifiant(f, "OPENAI_API_KEY", brut(`Sur <span class="mono">platform.openai.com</span>, rubrique API keys. Payée à l'usage.`))}`}
+  </div>`
+}
+
+function blocFournisseurs() {
+  const f = etat.fournisseurs
+  if (!f) return html`<section class="carte carte-p"><div class="chargement">Chargement des fournisseurs d'IA…</div></section>`
+  const modeles = f.modeles
+  return html`<section class="carte carte-p pile" style="gap:16px" aria-labelledby="fournisseurs">
+    <div class="barre" style="flex-wrap:wrap;gap:10px">
+      <div><h2 id="fournisseurs">Fournisseurs d'IA</h2><p class="aide" style="margin:4px 0 0">Comment l'usine se connecte aux modèles. Une clé saisie ici est chiffrée, jamais réaffichée, et passe avant celle du serveur ; elle sert dès le prochain travail.</p></div>
+      <div class="pile" style="gap:4px;align-items:flex-end"><button type="button" class="btn btn-s" data-action="tester-fournisseurs">Tester les connexions</button><span class="aide">${f.tests.le ? `Dernier test : ${dateCourte(f.tests.le)}` : "Jamais testé"}</span></div>
+    </div>
+    <div class="grille">${f.moteurs.map((m) => carteMoteur(f, m))}</div>
+    <div class="carte carte-p pile" style="gap:10px">
+      <div><strong>Passerelle Vercel AI Gateway</strong><div class="aide">Une seule clé pour les modèles de tous les fournisseurs : le secours commun des deux moteurs. Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys. Les produits en ligne gardent la clé posée sur le serveur.</div></div>
+      ${champIdentifiant(f, "AI_GATEWAY_API_KEY", "")}
+    </div>
+    <form class="carte carte-p pile" style="gap:12px" data-form="modeles">
+      <div><strong>Modèle de chaque rôle</strong><div class="aide">Un nom de modèle Claude (abonnement, clé ou passerelle). Laisser vide : le modèle du contrat.</div></div>
+      <datalist id="modeles-connus">${MODELES_CONNUS.map((x) => html`<option value="${x}"></option>`)}</datalist>
+      <div class="grille">${modeles.map((m) => html`<div class="pile" style="gap:6px"><label class="aide" for="mod-${m.role}">${ROLES_MODELES[m.role] ?? m.role}</label><input id="mod-${m.role}" name="${m.role}" class="champ mono" list="modeles-connus" value="${m.modele !== m.contrat ? m.modele : ""}" placeholder="${m.contrat ?? m.modele}" autocomplete="off" spellcheck="false"></div>`)}</div>
+      <div><button type="submit" class="btn btn-p">Enregistrer les modèles</button></div>
+    </form>
+  </section>`
+}
+
 function vueReglages() {
   const r = etat.reglages
   if (!r) return html`${barreHaut()}<div class="chargement">Chargement des réglages…</div>`
@@ -765,8 +851,9 @@ function vueReglages() {
   const k = r.contrat
   return html`
     ${barreHaut()}
-    <div><h1>Réglages</h1><p class="chapeau">Où vont les dépôts des produits, ce que l'usine a le droit de dépenser, et les règles qu'elle applique.</p></div>
+    <div><h1>Réglages</h1><p class="chapeau">Les fournisseurs d'IA, où vont les dépôts des produits, ce que l'usine a le droit de dépenser, et les règles qu'elle applique.</p></div>
     ${messageGlobal()}
+    ${blocFournisseurs()}
     <section class="carte carte-p pile" aria-labelledby="forge" style="gap:16px">
       <div><h2 id="forge">Dépôt de code</h2><p class="aide" style="margin:4px 0 0">Chaque produit reçoit son dépôt : le code, une pull request par tâche, les issues du plan.</p></div>
       <div class="grille">
@@ -835,7 +922,7 @@ async function suivreDirect() {
 }
 setInterval(suivreDirect, 3000)
 
-const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Production", abandon: "Abandon", cycle: "Cycle de vie", plan: "Plan", domaine: "Domaine", corrections: "Corrections", remarque: "Remarque", escalade: "Escalade", erreur: "Erreur", relance: "Relance" }
+const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Production", abandon: "Abandon", cycle: "Cycle de vie", plan: "Plan", domaine: "Domaine", corrections: "Corrections", remarque: "Remarque", escalade: "Escalade", erreur: "Erreur", relance: "Relance", reglage: "Réglage" }
 function vueHistorique() {
   const h = etat.historique
   const projets = etat.resume?.projets ?? []
@@ -914,6 +1001,7 @@ async function charger({ silencieux = false } = {}) {
     if (r.vue === "sante") taches.push(api("GET", "sante").then((x) => { etat.sante = x; rendre() }))
     if (r.vue === "acces") taches.push(api("GET", "acces").then((x) => { etat.acces = x; rendre() }))
     if (r.vue === "reglages") taches.push(api("GET", "reglages").then((x) => { etat.reglages = x; rendre() }))
+    if (r.vue === "reglages") taches.push(api("GET", "fournisseurs").then((x) => { etat.fournisseurs = x; rendre() }))
     await Promise.all(taches)
   } catch (e) {
     if (!silencieux) etat.message = { type: "erreur", texte: e.message }
@@ -1091,8 +1179,47 @@ function defautsPlan(plan) {
 }
 
 // --- Évènements ----------------------------------------------------------------------------
+// L'ordre des façons de se servir d'un moteur : changé tout de suite côté usine.
+function changerModes(moteur, modifier) {
+  const m = etat.fournisseurs?.moteurs.find((x) => x.id === moteur)
+  if (!m) return
+  const modes = modifier([...m.modes])
+  return agir(() => api("PUT", `fournisseurs/modes/${moteur}`, { modes }))
+}
+
+// La connexion ChatGPT : le lien et le code arrivent du vérificateur, puis le résultat.
+let suiviChatGPT = null
+function suivreChatGPT() {
+  clearInterval(suiviChatGPT)
+  suiviChatGPT = setInterval(async () => {
+    const x = await api("GET", "fournisseurs/chatgpt").catch(() => null)
+    if (!x) return
+    if (x.etat === "connecte" || x.etat === "echec" || x.etat === "aucune") {
+      clearInterval(suiviChatGPT)
+      etat.chatgpt = null
+      if (x.message) etat.message = { type: x.etat === "connecte" ? "ok" : "erreur", texte: x.message }
+      await charger({ silencieux: true })
+      return
+    }
+    const avant = JSON.stringify(etat.chatgpt)
+    etat.chatgpt = x
+    if (JSON.stringify(x) !== avant && etat.route.vue === "reglages") rendre()
+  }, 3000)
+}
+
 const ACTIONS = {
   palette: () => ouvrirPalette(),
+  "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
+  "retirer-identifiant": (el) => {
+    if (!confirmer("Retirer cette valeur de la console ? Celle du serveur, s'il y en a une, reprendra.")) return
+    return agir(() => api("DELETE", `fournisseurs/identifiants/${el.dataset.nom}`, {}))
+  },
+  "mode-monter": (el) => changerModes(el.dataset.moteur, (l) => { const i = l.indexOf(el.dataset.mode); if (i > 0) [l[i - 1], l[i]] = [l[i], l[i - 1]]; return l }),
+  "mode-basculer": (el) => changerModes(el.dataset.moteur, (l) => (l.includes(el.dataset.mode) ? l.filter((x) => x !== el.dataset.mode) : [...l, el.dataset.mode])),
+  "connecter-chatgpt": async () => {
+    const r = await agir(() => api("POST", "fournisseurs/chatgpt", {}))
+    if (r) { etat.chatgpt = { etat: "attente" }; rendre(); suivreChatGPT() }
+  },
   "fermer-message": () => { etat.message = null; rendre() },
   video: () => agir(() => api("POST", `projets/${etat.projet.id}/video`, {}), { succes: "Génération lancée : la vidéo arrive ici dans quelques minutes." }),
   filtre: (el) => { etat.filtre = el.dataset.id; rendre() },
@@ -1322,6 +1449,15 @@ document.addEventListener("submit", async (e) => {
     const r = await agir(() => api("POST", "acces/utilisateurs", { email: d.get("email"), role: d.get("role"), applis: d.getAll("applis") }), { succes: "Invitation créée." })
     etat.invitation = r ? (r.envoye ? `Invitation envoyée par email à ${d.get("email")} (lien valable 72 h).` : `L'email n'est pas parti : transmets ce lien toi-même (personnel, 72 h) : ${r.lien}`) : null
     rendre()
+  }
+  if (type === "identifiant") {
+    const valeur = String(d.get("valeur") ?? "").trim()
+    // La valeur ne reste pas dans la page : le champ est vidé avant l'envoi.
+    f.reset()
+    if (valeur) await agir(() => api("PUT", `fournisseurs/identifiants/${f.dataset.nom}`, { valeur }))
+  }
+  if (type === "modeles") {
+    await agir(() => api("PUT", "fournisseurs/modeles", Object.fromEntries([...d.entries()].map(([k, v]) => [k, String(v).trim()]))))
   }
   if (type === "couts") {
     await agir(() => api("PUT", "reglages/couts", { budget_mensuel: d.get("budget_mensuel"), budget_par_projet: d.get("budget_par_projet"), serveur_mensuel: d.get("serveur_mensuel"), abonnements: d.getAll("abonnement") }))
