@@ -3,7 +3,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
-import { appliquerModeles, chiffrer, dechiffrer, effacerIdentifiant, envFournisseurs, etatFournisseurs, lireMarqueursTest, ordreModes, poserIdentifiant, reglerModeles, reglerModes } from "../src/fournisseurs.mjs"
+import { appliquerModeles, chiffrer, dechiffrer, migrerCoffre, protegeParAxmaril, effacerIdentifiant, envFournisseurs, etatFournisseurs, lireMarqueursTest, ordreModes, poserIdentifiant, reglerModeles, reglerModes } from "../src/fournisseurs.mjs"
 import { modesDisponibles } from "../src/moteurs.mjs"
 
 const ctxDe = () => {
@@ -83,4 +83,36 @@ test("le résultat d'un test de connexion est lu par façon", () => {
   assert.equal(r.resultats.cle.etat, "erreur")
   assert.equal(r.resultats.passerelle.etat, "absent")
   assert.deepEqual(r.serveur, { ANTHROPIC_API_KEY: true })
+})
+
+const MAITRE = "cle-maitresse-de-test-gardee-dans-axmaril-0123456789abcdef"
+
+test("avec la clé maîtresse d'AXMARIL, le coffre chiffre en v2 et une autre clé ne lit rien", () => {
+  const ctx = ctxDe()
+  ctx.config.secrets.coffreMaitre = MAITRE
+  assert.ok(protegeParAxmaril(ctx))
+  const e = chiffrer(ctx, CLE)
+  assert.equal(e.v, 2)
+  assert.equal(dechiffrer(ctx, e), CLE)
+  // Même worker_token, autre clé maîtresse : illisible.
+  const autre = { ...ctx, config: { ...ctx.config, secrets: { ...ctx.config.secrets, coffreMaitre: "une-autre-cle-maitresse-0123456789abcdef-xyz" } } }
+  assert.throws(() => dechiffrer(autre, e))
+})
+
+test("les entrées v1 passent sous la clé maîtresse au démarrage ; sans elle, le coffre est verrouillé", () => {
+  const ctx = ctxDe()
+  poserIdentifiant(ctx, "ANTHROPIC_API_KEY", CLE, "a") // v1 : clé du serveur
+  assert.equal(JSON.parse(ctx.db.prepare("SELECT valeur FROM reglages WHERE cle = 'coffre_ANTHROPIC_API_KEY'").get().valeur).v, 1)
+  ctx.config.secrets.coffreMaitre = MAITRE
+  assert.equal(migrerCoffre(ctx), 1)
+  const e = JSON.parse(ctx.db.prepare("SELECT valeur FROM reglages WHERE cle = 'coffre_ANTHROPIC_API_KEY'").get().valeur)
+  assert.equal(e.v, 2)
+  assert.equal(e.fin, "WXYZ") // les métadonnées restent
+  assert.equal(envFournisseurs(ctx, "claude-code").ANTHROPIC_API_KEY, CLE)
+  assert.equal(migrerCoffre(ctx), 0) // rien à refaire
+  // L'agent AXMARIL est révoqué : plus de clé maîtresse, plus rien de lisible.
+  ctx.config.secrets.coffreMaitre = ""
+  assert.equal(envFournisseurs(ctx, "claude-code").ANTHROPIC_API_KEY, undefined)
+  assert.equal(etatFournisseurs(ctx).verrouille, true)
+  assert.equal(etatFournisseurs(ctx).protection, "serveur")
 })

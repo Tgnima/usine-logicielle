@@ -23,7 +23,7 @@ export function chargerConfig() {
   if (!c.github.proprietaire) console.log("GitHub pas encore connecté : à faire dans la console (Premiers pas).")
   return {
     ...c,
-    secrets: { github: secret("github_token"), worker: secret("worker_token"), slackBot: secret("slack_bot_token"), slackApp: secret("slack_app_token") },
+    secrets: { github: secret("github_token"), worker: secret("worker_token"), coffreMaitre: secret("coffre_maitre"), slackBot: secret("slack_bot_token"), slackApp: secret("slack_app_token") },
     slack: { canal: env.SLACK_CANAL ?? c.slack?.canal ?? "", admins: (env.ADMIN_USER_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean) },
     dataDir: env.DATA_DIR ?? "/app/data",
     etatDir: env.ETAT_DIR ?? "/app/etat",

@@ -5,9 +5,12 @@
 //   - le modèle de chaque rôle (analyste, agents, renfort…).
 //
 // Sécurité : une valeur saisie n'est jamais renvoyée (seulement « renseignée », ses 4 derniers
-// caractères, la date et l'auteur). Le chiffrement (AES-256-GCM) utilise une clé dérivée du
-// secret worker_token, qui ne quitte pas le serveur : la base seule ne suffit pas à lire les clés.
-// Changer worker_token efface donc le coffre (les clés sont à ressaisir).
+// caractères, la date et l'auteur). Chiffrement AES-256-GCM, avec une clé dérivée :
+//   - v2 : de la clé maîtresse gardée dans AXMARIL (coffre_maitre, lue par l'agent axgent au
+//     démarrage du serveur, en mémoire seulement) : sans AXMARIL, la base et le disque ne
+//     suffisent pas ; révoquer l'agent dans AXMARIL verrouille le coffre ;
+//   - v1 (sans AXMARIL) : du secret worker_token du serveur.
+// Une entrée v1 est rechiffrée en v2 dès que la clé maîtresse est là (migrerCoffre).
 // Une valeur de la console passe avant celle du serveur (secrets.sh), qui reste le secours.
 // Les identifiants vont aux ateliers et au vérificateur avec chaque travail, jamais ailleurs.
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto"
@@ -31,24 +34,72 @@ const erreur = (code, message) => Object.assign(new Error(message), { code })
 const cleCoffre = (nom) => `coffre_${nom}`
 
 const cles = new Map()
-function cleDeChiffrement(ctx) {
+const deriver = (base, info) => {
+  const k = `${info}:${base}`
+  if (!cles.has(k)) cles.set(k, Buffer.from(hkdfSync("sha256", base, "usine-logicielle", info, 32)))
+  return cles.get(k)
+}
+const cleMaitre = (ctx) => String(ctx.config.secrets.coffreMaitre ?? "").trim()
+export const protegeParAxmaril = (ctx) => cleMaitre(ctx).length >= 32
+function cleDeChiffrement(ctx, version) {
+  if (version === 2) {
+    if (!protegeParAxmaril(ctx)) throw Object.assign(new Error("coffre verrouillé : la clé maîtresse d'AXMARIL n'est pas disponible (agent arrêté ou révoqué ?)."), { verrouille: true })
+    return deriver(cleMaitre(ctx), "coffre v2 (cle maitresse AXMARIL)")
+  }
   const jeton = ctx.config.secrets.worker
   if (!jeton) throw new Error("worker_token manquant : le coffre est indisponible.")
-  if (!cles.has(jeton)) cles.set(jeton, Buffer.from(hkdfSync("sha256", jeton, "usine-logicielle", "coffre des fournisseurs", 32)))
-  return cles.get(jeton)
+  return deriver(jeton, "coffre des fournisseurs")
 }
 
 export function chiffrer(ctx, texte) {
+  const v = protegeParAxmaril(ctx) ? 2 : 1
   const iv = randomBytes(12)
-  const c = createCipheriv("aes-256-gcm", cleDeChiffrement(ctx), iv)
+  const c = createCipheriv("aes-256-gcm", cleDeChiffrement(ctx, v), iv)
   const donnees = Buffer.concat([c.update(texte, "utf8"), c.final()])
-  return { iv: iv.toString("base64"), tag: c.getAuthTag().toString("base64"), donnees: donnees.toString("base64") }
+  return { v, iv: iv.toString("base64"), tag: c.getAuthTag().toString("base64"), donnees: donnees.toString("base64") }
 }
 
 export function dechiffrer(ctx, e) {
-  const d = createDecipheriv("aes-256-gcm", cleDeChiffrement(ctx), Buffer.from(e.iv, "base64"))
+  const d = createDecipheriv("aes-256-gcm", cleDeChiffrement(ctx, e.v === 2 ? 2 : 1), Buffer.from(e.iv, "base64"))
   d.setAuthTag(Buffer.from(e.tag, "base64"))
   return Buffer.concat([d.update(Buffer.from(e.donnees, "base64")), d.final()]).toString("utf8")
+}
+
+// Au démarrage : tout ce qui est encore chiffré avec la clé du serveur (v1) passe sous la clé
+// maîtresse d'AXMARIL (v2). Renvoie le nombre d'entrées rechiffrées.
+export function migrerCoffre(ctx) {
+  if (!protegeParAxmaril(ctx)) return 0
+  let n = 0
+  for (const { cle, valeur } of ctx.db.prepare("SELECT cle, valeur FROM reglages").all()) {
+    let e
+    try {
+      e = JSON.parse(valeur)
+    } catch {
+      continue
+    }
+    if (!e || typeof e !== "object" || !e.iv || !e.tag || !e.donnees || e.v === 2) continue
+    try {
+      const clair = dechiffrer(ctx, e)
+      ecrireReglage(ctx.db, cle, JSON.stringify({ ...e, ...chiffrer(ctx, clair) }))
+      n++
+    } catch (error) {
+      console.error(`Coffre : ${cle} illisible, laissé tel quel (${error.message})`)
+    }
+  }
+  if (n) console.log(`Coffre : ${n} entrée(s) placée(s) sous la clé maîtresse d'AXMARIL.`)
+  return n
+}
+
+// Le coffre est-il verrouillé (des entrées v2, mais plus de clé maîtresse) ?
+function verrouille(ctx) {
+  if (protegeParAxmaril(ctx)) return false
+  return ctx.db.prepare("SELECT valeur FROM reglages WHERE valeur LIKE '%\"v\":2%'").all().some((r) => {
+    try {
+      return JSON.parse(r.valeur)?.v === 2
+    } catch {
+      return false
+    }
+  })
 }
 
 function entree(ctx, nom) {
@@ -71,7 +122,7 @@ export function envFournisseurs(ctx, moteur = null) {
     try {
       env[nom] = dechiffrer(ctx, e)
     } catch {
-      console.error(`Coffre : ${nom} illisible (worker_token changé ?) ; la valeur du serveur sert.`)
+      console.error(`Coffre : ${nom} illisible (clé maîtresse AXMARIL absente, ou worker_token changé ?) ; la valeur du serveur sert.`)
     }
   }
   return env
@@ -150,6 +201,8 @@ export function etatFournisseurs(ctx) {
     return { nom, libelle: def.libelle, moteur: def.moteur, mode: def.mode, console: e ? { fin: e.fin, le: e.le, par: e.par } : null, serveur: serveur[nom] ?? null }
   })
   return {
+    protection: protegeParAxmaril(ctx) ? "axmaril" : "serveur",
+    verrouille: verrouille(ctx),
     identifiants,
     moteurs: Object.entries(MOTEURS).map(([id, libelle]) => ({ id, libelle, modes: ordreModes(ctx, id) })),
     tests: { le: tests.le ?? null, resultats: tests.resultats ?? {} },

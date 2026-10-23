@@ -11,6 +11,11 @@
 #   bash secrets.sh dechiffrer  déchiffre vers /run/usine-secrets (au démarrage du serveur)
 #   bash secrets.sh editer      modifie les secrets (éditeur), puis redéchiffre
 #   bash secrets.sh verifier    liste les secrets remplis ou vides, sans jamais les afficher
+#   bash secrets.sh axmaril     relit la clé maîtresse du coffre de la console dans AXMARIL
+#
+# La clé maîtresse (coffre_maitre) n'est PAS dans secrets.sops.env : elle vit seulement dans
+# AXMARIL et arrive par l'agent axgent (/opt/axgent), en mémoire (/run/usine-secrets). Le
+# coffre et le nom du secret : AXMARIL_COFFRE et AXMARIL_CLE dans .env (non secrets).
 #
 # Pour changer une clé sans éditeur : la coller dans .env, puis « bash secrets.sh migrer ».
 set -euo pipefail
@@ -58,7 +63,8 @@ installer() {
 Description=Usine logicielle : déchiffrer les secrets en mémoire
 Before=docker.service
 DefaultDependencies=no
-After=local-fs.target
+After=local-fs.target axgent.service
+Wants=axgent.service
 
 [Service]
 Type=oneshot
@@ -132,6 +138,34 @@ dechiffrer() {
     sudo_si_besoin chown root:"$GID_CONTENEURS" "$f"
     sudo_si_besoin chmod 0440 "$f"
   done
+  cle_axmaril
+}
+
+# La clé maîtresse du coffre de la console, lue dans AXMARIL par l'agent (s'il est installé).
+# L'agent peut démarrer juste après : on l'attend jusqu'à une minute. Sans elle, le fichier
+# reste vide et l'usine garde la clé du serveur (le coffre est verrouillé s'il était scellé).
+cle_axmaril() {
+  local f="$SORTIE/coffre_maitre" coffre nom v=""
+  printf '' | sudo_si_besoin tee "$f" >/dev/null
+  sudo_si_besoin chown root:"$GID_CONTENEURS" "$f"
+  sudo_si_besoin chmod 0440 "$f"
+  [ -x /opt/axgent/axgent ] || return 0
+  coffre=$(grep -E '^AXMARIL_COFFRE=' .env 2>/dev/null | cut -d= -f2- || true)
+  nom=$(grep -E '^AXMARIL_CLE=' .env 2>/dev/null | cut -d= -f2- || true)
+  coffre=${coffre:-usine-test}
+  nom=${nom:-USINE_CLE_MAITRE}
+  for _ in $(seq 1 30); do
+    v=$(cd /tmp && sudo -u axgent -H /opt/axgent/axgent secret "$coffre" "$nom" --reveal --output json 2>/dev/null | grep -oE '"secret_content": *"[^"]*"' | sed -E 's/^"secret_content": *"//; s/"$//' || true)
+    [ -n "$v" ] && break
+    sleep 2
+  done
+  if [ ${#v} -ge 32 ]; then
+    printf '%s' "$v" | sudo_si_besoin tee "$f" >/dev/null
+    echo "• Clé maîtresse du coffre lue dans AXMARIL ($coffre/$nom)."
+  else
+    echo "• AXMARIL : clé maîtresse $coffre/$nom introuvable ou trop courte (32 caractères au moins) ; clé du serveur."
+  fi
+  v=""
 }
 
 verifier() {
@@ -153,5 +187,6 @@ case "${1:-}" in
   dechiffrer) dechiffrer ;;
   editer) editer ;;
   verifier) verifier ;;
+  axmaril) sudo_si_besoin install -d -m 0750 -o root -g "$GID_CONTENEURS" "$SORTIE"; cle_axmaril; echo "Pour l'appliquer : docker compose up -d orchestrateur" ;;
   *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

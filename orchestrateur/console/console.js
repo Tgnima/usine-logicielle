@@ -868,9 +868,11 @@ function blocFournisseurs() {
   const modeles = f.modeles
   return html`<section class="carte carte-p pile" style="gap:16px" aria-labelledby="fournisseurs">
     <div class="barre" style="flex-wrap:wrap;gap:10px">
-      <div><h2 id="fournisseurs">Fournisseurs d'IA</h2><p class="aide" style="margin:4px 0 0">Comment l'usine se connecte aux modèles. Une clé saisie ici est chiffrée, jamais réaffichée, et passe avant celle du serveur ; elle sert dès le prochain travail.</p></div>
+      <div><h2 id="fournisseurs">Fournisseurs d'IA</h2><p class="aide" style="margin:4px 0 0">Comment l'usine se connecte aux modèles. Une clé saisie ici est chiffrée, jamais réaffichée, et passe avant celle du serveur ; elle sert dès le prochain travail.</p>
+        ${f.protection === "axmaril" ? html`<p style="margin:8px 0 0"><span class="badge vert">clés scellées</span> <span class="aide">La clé qui les chiffre n'est pas sur ce serveur : une copie du disque ne donne rien.</span></p>` : ""}</div>
       <div class="pile" style="gap:4px;align-items:flex-end"><button type="button" class="btn btn-s" data-action="tester-fournisseurs">Tester les connexions</button><span class="aide">${f.tests.le ? `Dernier test : ${dateCourte(f.tests.le)}` : "Jamais testé"}</span></div>
     </div>
+    ${f.verrouille ? html`<div class="message erreur">Le coffre des clés est verrouillé : sa clé de scellement est indisponible. Les clés posées ici ne servent pas pour l'instant (celles du serveur prennent le relais). Préviens l'opérateur de l'usine.</div>` : ""}
     <div class="grille">${f.moteurs.map((m) => carteMoteur(f, m))}</div>
     <div class="carte carte-p pile" style="gap:10px">
       <div><strong>Passerelle Vercel AI Gateway</strong><div class="aide">Une seule clé pour les modèles de tous les fournisseurs : le secours commun des deux moteurs. Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys. Les produits en ligne gardent la clé posée sur le serveur.</div></div>

@@ -30,7 +30,7 @@ services:
     environment:
       USINE_CONFIG: /app/usine.config.yml
     # smtp_* : pour envoyer les invitations aux applications (le service d'envoi du serveur).
-    secrets: [github_token, worker_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token, smtp_user, smtp_pass]
+    secrets: [github_token, worker_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token, smtp_user, smtp_pass, coffre_maitre]
     volumes:
       - ./usine.config.yml:/app/usine.config.yml:ro
       - orchestrateur-data:/app/data
@@ -147,6 +147,8 @@ secrets:
   smtp_pass: { file: /run/usine-secrets/smtp_pass }
   portier_secret: { file: /run/usine-secrets/portier_secret }
   portier_api_token: { file: /run/usine-secrets/portier_api_token }
+  # La clé maîtresse du coffre de la console : lue dans AXMARIL au démarrage (secrets.sh), jamais sur disque.
+  coffre_maitre: { file: /run/usine-secrets/coffre_maitre }
 
 volumes:
   orchestrateur-data:
