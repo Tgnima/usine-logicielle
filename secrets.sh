@@ -149,7 +149,7 @@ cle_axmaril() {
   printf '' | sudo_si_besoin tee "$f" >/dev/null
   sudo_si_besoin chown root:"$GID_CONTENEURS" "$f"
   sudo_si_besoin chmod 0440 "$f"
-  [ -x /opt/axgent/axgent ] || return 0
+  sudo_si_besoin test -x /opt/axgent/axgent || { echo "• AXMARIL : agent axgent absent, clé du serveur."; return 0; }
   coffre=$(grep -E '^AXMARIL_COFFRE=' .env 2>/dev/null | cut -d= -f2- || true)
   nom=$(grep -E '^AXMARIL_CLE=' .env 2>/dev/null | cut -d= -f2- || true)
   coffre=${coffre:-usine-test}
