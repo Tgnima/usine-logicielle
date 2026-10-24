@@ -58,3 +58,20 @@ test("la recette envoie à l'analyste les écarts du persona puis la pyramide", 
   assert.match(ecartsEnCorrections({ persona: null, scenarios: [], pyramide: notes(9, 9, 6, 5, 5, 5) }), /^La pyramide/)
   assert.equal(ecartsEnCorrections({ scenarios: [], pyramide: null }), "")
 })
+
+test("le sens est exigé d'un nouveau plan, et complet", async () => {
+  const { verifierSens } = await import("../src/pyramide.mjs")
+  assert.match(verifierSens(null, { exige: true })[0], /sens/)
+  assert.deepEqual(verifierSens(null), [])
+  assert.deepEqual(verifierSens({ motivation: "être fier", promesse: "…", moment: "le bilan", preuve: "" }), ["sens.preuve manquant"])
+})
+
+test("le sens est écrit en tête de docs/PLAN.md", async () => {
+  const { planEnMarkdown, verifierPlan } = await import("../src/analyste.mjs")
+  const plan = { nom: "Palier", slug: "palier", resume: "r", sens: { motivation: "être reconnu par ses pairs", promesse: "Tu vois enfin ton progrès", moment: "le bilan du dimanche", preuve: "le bilan affiche la progression du mois" }, lots: [{ nom: "L1", objectif: "o", taches: [{ cle: "T1", titre: "t", description: "d", criteres: ["c"] }] }] }
+  const md = planEnMarkdown(plan)
+  assert.ok(md.indexOf("## Le sens") < md.indexOf("## Lot 1"))
+  assert.match(md, /\*\*Promesse\*\* : Tu vois enfin ton progrès/)
+  assert.deepEqual(verifierPlan(plan), [])
+  assert.deepEqual(verifierPlan({ ...plan, sens: { promesse: "x" } }).length, 3)
+})

@@ -5,7 +5,7 @@
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { usagesClaude } from "./couts.mjs"
 import { SCHEMA_DESIGN, grilleEnTexte, verifierDesign } from "./design.mjs"
-import { REGLE_PYRAMIDE } from "./pyramide.mjs"
+import { QUESTION_SENS, REGLE_PYRAMIDE, SCHEMA_SENS, sensEnMarkdown, sensEnTexte, verifierSens } from "./pyramide.mjs"
 import { listerPieces, scriptPieces } from "./pieces.mjs"
 import { noterLimites, scriptClaude } from "./moteurs.mjs"
 import { proteges as protegesDuProjet } from "./profil.mjs"
@@ -74,6 +74,7 @@ ${repris ? "" : `  "brique": "${Object.keys(BRIQUES).join(" | ")}",\n`}  "lots":
   "criteres_globaux": ["…"],
   "hors_perimetre": ["…"],
   "risques": ["…"],
+  ${SCHEMA_SENS},
   ${SCHEMA_DESIGN}
 }
 
@@ -90,12 +91,13 @@ ${repris
     ? `7. Reste dans la pile du dépôt (${pile}) : pas d'autre langage ; un service externe seulement s'il est déjà utilisé par le dépôt, ou Vercel AI Gateway et Mailpit.`
     : `7. Reste dans la brique choisie ("brique") : pas d'autre langage, pas de service externe hors Vercel AI Gateway et Mailpit.`}
 8. Une démo doit impressionner : prévois une interface soignée et un parcours qui raconte une histoire. ${REGLE_PYRAMIDE}
-   Chaque lot après le premier contient au moins un critère observable des étages Pratique ou Agréable (« le parcours clé tient en 3 actions », « le résultat s'affiche dès la saisie, sans recharger »), et le dernier lot au moins un critère de l'étage « Qui a du sens » (la valeur obtenue, chiffrée, à l'écran).
+   Chaque lot après le premier contient au moins un critère observable des étages Pratique ou Agréable (« le parcours clé tient en 3 actions », « le résultat s'affiche dès la saisie, sans recharger »), et le dernier lot au moins un critère de l'étage « Qui a du sens » : la "preuve" du sens (règle 13), observable à l'écran.
 9. Le "design" est un vrai brief, propre à CE produit et à son public (pas une palette passe-partout) : il sera écrit dans docs/DESIGN.md, suivi par les agents et vérifié sur captures d'écran avec cette grille :
 ${grilleEnTexte()}
 10. Dans les tâches, décris les écrans comme un designer : ce qu'on voit d'abord, l'action principale, les états vides, de chargement et d'erreur.
 ${regleProteges(config, projet)}${persona ? `
-12. Chaque lot sert le persona : ses problèmes et ses besoins guident l'ordre des lots et les critères (formulés de son point de vue quand c'est possible). "hors_perimetre" reprend le hors périmètre du persona, et le complète.` : ""}`
+12. Chaque lot sert le persona : ses problèmes et ses besoins guident l'ordre des lots et les critères (formulés de son point de vue quand c'est possible). "hors_perimetre" reprend le hors périmètre du persona, et le complète.` : ""}
+13. Le "sens". ${QUESTION_SENS}`
 }
 
 // Les fichiers protégés (le périmètre qui juge le produit) : l'usine les restaure avant
@@ -155,6 +157,7 @@ export function verifierPlan(plan, { lotsMax = 6, protege, repris = false } = {}
     }
   }
   p.push(...verifierDesign(plan.design))
+  p.push(...verifierSens(plan.sens))
   // (Seulement si on le demande : un vieux plan peut en contenir, on ne juge que le nouveau.)
   if (protege) p.push(...tachesSurProteges(plan.lots, protege))
   return p
@@ -223,7 +226,7 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
 }
 
 export async function analyser(config, projet, options = {}) {
-  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => verifierPlan(r, { protege: proteges(config, projet), repris: Boolean(projet.origine) }), options.mesurer, { projetId: projet.id, ctx: options.ctx ?? null })
+  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => [...verifierPlan(r, { protege: proteges(config, projet), repris: Boolean(projet.origine) }), ...(r?.lots?.length ? verifierSens(r.sens, { exige: true }) : [])], options.mesurer, { projetId: projet.id, ctx: options.ctx ?? null })
   return { plan: objet, tokens }
 }
 
@@ -240,7 +243,12 @@ export async function analyserCorrections(config, projet, plan, retours, context
     : brique
   const texte = `${cadre}
 ${contexte.persona ? `\nIl est construit pour ce persona (ICP.md) :\n<persona>\n${contexte.persona}\n</persona>\n` : ""}
-Le produit « ${plan.nom} » a été fabriqué et livré selon ce plan :
+${plan.sens ? `Ce qui donne du sens au produit (décidé à partir du persona) :
+<sens>
+${sensEnTexte(plan.sens)}
+</sens>
+
+` : ""}Le produit « ${plan.nom} » a été fabriqué et livré selon ce plan :
 <plan>
 ${JSON.stringify(plan.lots, null, 1)}
 </plan>
@@ -298,9 +306,28 @@ ${grilleEnTexte()}`
   return objet.design
 }
 
+// Le sens d'un produit qui n'en a pas (fabriqué avant la question du sens) :
+// l'analyste se pose la question d'après le persona, le plan et la demande d'origine.
+export async function analyserSens(config, projet, plan, persona, mesurer) {
+  const texte = `Le produit « ${plan.nom} » existe déjà : ${plan.resume}
+Demande d'origine : ${projet.prompt}
+Ses lots : ${plan.lots.map((l) => l.nom).join(" · ")}
+${persona ? `
+Son persona (ICP.md) :
+<persona>
+${persona}
+</persona>
+` : ""}
+${QUESTION_SENS}
+Il servira à orienter ses prochaines évolutions (pas à le refaire de zéro).
+Réponds UNIQUEMENT par ce JSON : { ${SCHEMA_SENS} }`
+  const { objet } = await interroger(config, texte, (r) => verifierSens(r?.sens ?? null, { exige: true }), mesurer)
+  return objet.sens
+}
+
 // Le plan, lisible par un humain (Slack, docs/PLAN.md, issue).
 export function planEnMarkdown(plan) {
-  const lignes = [`# ${plan.nom}`, "", plan.resume, "", plan.pile ? `Dépôt repris, pile : ${plan.pile}` : `Brique : ${plan.brique ?? "webapp"}`, ...(plan.persona ? ["", `Persona : ${plan.persona} (ICP.md)`] : []), ""]
+  const lignes = [`# ${plan.nom}`, "", plan.resume, "", plan.pile ? `Dépôt repris, pile : ${plan.pile}` : `Brique : ${plan.brique ?? "webapp"}`, ...(plan.persona ? ["", `Persona : ${plan.persona} (ICP.md)`] : []), "", ...sensEnMarkdown(plan.sens)]
   plan.lots.forEach((lot, i) => {
     lignes.push(`## Lot ${i + 1} : ${lot.nom}`, "", `*${lot.objectif}*`, "")
     for (const t of lot.taches) {

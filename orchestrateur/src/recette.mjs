@@ -16,10 +16,11 @@ import { noterLimites, scriptCodex } from "./moteurs.mjs"
 import { libererPort, lireProfil } from "./profil.mjs"
 import { lirePersona, obtenirPersona } from "./personas.mjs"
 import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
-import { SCHEMA_PYRAMIDE, normaliserPyramide, pyramideEnCorrections, pyramideEnTexte, verdictPyramide } from "./pyramide.mjs"
+import { SCHEMA_PYRAMIDE, normaliserPyramide, pyramideEnCorrections, pyramideEnTexte, sensEnTexte, verdictPyramide } from "./pyramide.mjs"
 
 function consigne(projet, persona) {
   const f = persona.fiche ?? {}
+  const sens = lirePlan(projet)?.sens
   const scenarios = persona.scenarios ?? []
   return `Tu fais la RECETTE d'un logiciel terminé, dans la peau de son utilisateur cible. Tu es exigeant, concret, et tu ne juges que ce que tu observes.
 
@@ -36,7 +37,10 @@ ${scenarios.map((s, i) => `${i + 1}. ${s.titre}
 
 Puis note la pyramide de l'expérience du produit, étage par étage, de 0 à 10, d'après ce que tu as vécu (pas d'après le code) :
 ${pyramideEnTexte()}
-Un étage est tenu à partir de 7. Sois sévère : 7 veut dire « un utilisateur exigeant serait satisfait ». Pour chaque étage, « observe » dit ce que tu as constaté (une phrase), et « pour_monter » donne LA modification concrète (un écran, ce qu'on change) qui ferait le plus monter la note.
+${sens ? `Pour l'étage « Qui a du sens », juge la promesse décidée à partir du persona :
+${sensEnTexte(sens)}
+L'as-tu ressentie, au moment prévu, et la preuve est-elle à l'écran ?
+` : ""}Un étage est tenu à partir de 7. Sois sévère : 7 veut dire « un utilisateur exigeant serait satisfait ». Pour chaque étage, « observe » dit ce que tu as constaté (une phrase), et « pour_monter » donne LA modification concrète (un écran, ce qu'on change) qui ferait le plus monter la note.
 
 Règles :
 ${scenarios.length ? `- Un scénario est « tenu » seulement si tu as obtenu le résultat attendu, comme le persona l'obtiendrait (sans connaître le code, sans contourner l'interface).

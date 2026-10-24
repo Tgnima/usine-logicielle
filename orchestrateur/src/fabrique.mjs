@@ -113,6 +113,7 @@ function consigne(ctx, projet, tache) {
       ? "- Design (si le produit a des écrans) : lis docs/DESIGN.md s'il existe, réutilise les composants et le style déjà présents dans le dépôt ; tes écrans seront jugés sur captures (ordinateur et mobile)."
       : "- Design (si le produit a des écrans, dossier client/) : lis docs/DESIGN.md s'il existe, construis avec client/src/ui et les jetons de couleur ; tes écrans seront jugés sur captures (ordinateur et mobile) avec sa grille.",
     "- Si tu lances un serveur pour essayer, arrête-le avant de terminer.",
+    ...(plan.sens ? [`- Le sens du produit, décidé à partir du persona (c'est lui qui guide tes choix d'écran et de texte) : ${plan.sens.promesse} On le ressent ici : ${plan.sens.moment}.`] : []),
     `- ${REGLE_PYRAMIDE.replace(/\n/g, "\n  ")}\n  Sur les écrans de ta tâche, sans sortir de son périmètre : le produit sera noté étage par étage à la livraison.`,
   ]
   if (decisionsPrises.length) parties.push("", "Décisions humaines déjà prises sur ce projet (à respecter) :", ...decisionsPrises.map((d) => `- ${d.question} → ${d.reponse}`))

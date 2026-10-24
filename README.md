@@ -221,6 +221,16 @@ produits, Pratique, Agréable et Qui a du sens (`orchestrateur/src/pyramide.mjs`
 - *Corriger et monter d'un étage* envoie à l'analyste les écarts et les étages à faire monter.
 - Toute demande de correction ajoute un critère de l'étage suivant sur les écrans qu'elle touche.
 
+**Le sens** : avant de planifier, l'analyste se demande, à partir du persona, ce qui donnerait du
+sens à l'application. Ce n'est pas sa fonction, mais ce qui compte vraiment pour cette personne :
+appartenance, fierté, sérénité, progrès, transmission… Strava enregistre des courses, mais son
+sens est la passion partagée.
+- Le plan doit le dire : motivation, promesse, moment où on le ressent, preuve à l'écran. Ces
+  éléments sont écrits en tête de `docs/PLAN.md`.
+- Le dernier lot rend la preuve tangible, et les agents ont la promesse dans leur consigne.
+- La recette juge l'étage du sommet sur cette promesse.
+- Un produit livré avant cette règle reçoit son sens à sa prochaine demande de correction.
+
 **Un domaine à soi** : `/usine domaine <n°> app.mon-entreprise.fr` sur un produit en
 production. L'usine donne l'enregistrement DNS à créer (A vers le serveur), vérifie toutes
 les 2 minutes, ajoute l'adresse à Caddy (certificat HTTPS) dès que le DNS est bon, et

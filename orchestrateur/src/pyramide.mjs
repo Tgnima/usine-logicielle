@@ -12,8 +12,33 @@ export const NIVEAUX = [
   { cle: "utilisable", nom: "Utilisable", devise: "s'utilise sans difficulté", critere: "lisible, utilisable sur mobile et au clavier ; chaque écran a ses états vide, chargement et erreur." },
   { cle: "pratique", nom: "Pratique", devise: "marche comme je pense", critere: "l'action principale saute aux yeux en moins de 5 secondes ; le parcours clé tient en 3 actions ou moins ; des valeurs par défaut intelligentes ; aucune aide nécessaire." },
   { cle: "agreable", nom: "Agréable", devise: "un moment qu'on a envie de montrer", critere: "au moins un moment « waouh » sur le parcours clé (résultat immédiat et bien présenté, aperçu en direct, transition soignée, texte qui parle le métier) ; l'accueil donne envie de continuer." },
-  { cle: "sens", nom: "Qui a du sens", devise: "compte pour la personne", critere: "le produit montre la valeur obtenue (temps gagné, argent, risque évité, progrès), avec les mots de son utilisateur." },
+  { cle: "sens", nom: "Qui a du sens", devise: "compte pour la personne", critere: "le produit tient sa promesse de sens : il touche ce qui compte vraiment pour son utilisateur, au-delà de la tâche, et on le ressent à un moment précis du parcours." },
 ]
+
+// Le sens : avant de planifier, l'usine se demande, à partir du persona, ce qui donnerait du sens
+// à l'application. Strava est né pour enregistrer des courses ; son sens est l'appartenance à une
+// passion partagée. Mais le sens n'est pas toujours social : fierté du travail bien fait, sérénité,
+// progrès visible, transmission, reconnaissance, temps rendu à ce qui compte… La réponse vient du persona.
+export const QUESTION_SENS = `Avant les lots, pose-toi la question : à partir du persona (ou, sans persona, de l'utilisateur de la demande), qu'est-ce qui donnerait du SENS à cette application ? Pas sa fonction : ce qui compte vraiment pour cette personne, au-delà de la tâche.
+Exemple : Strava a été conçu pour enregistrer des courses et des itinéraires ; son sens est l'appartenance à une communauté qui partage la même passion. Ce n'est qu'un exemple : le sens peut être la fierté du travail bien fait, la sérénité, un progrès visible, la transmission, la reconnaissance des pairs, du temps rendu à ce qui compte… Choisis celui qui est vrai pour CE persona, pas un sens passe-partout, et pas forcément social.
+Le sens oriente le plan : le parcours y mène, le dernier lot le rend tangible, et la recette vérifiera qu'il est tenu.`
+
+export const SCHEMA_SENS = `"sens": {
+    "motivation": "Ce qui compte profondément pour le persona, au-delà de la tâche (d'après sa fiche : problèmes, aspirations, ce qui le ferait renoncer)",
+    "promesse": "En une phrase, ce que le produit change pour lui, dans ses mots",
+    "moment": "Le moment précis du parcours où il le ressent",
+    "preuve": "Ce qu'on observe à l'écran qui le démontre (un critère vérifiable)"
+  }`
+
+// Les problèmes du sens (vide = acceptable). Un plan sans sens reste accepté (ancien format), sauf exigé.
+export function verifierSens(sens, { exige = false } = {}) {
+  if (!sens) return exige ? ["« sens » manquant : pose-toi la question de ce qui donnerait du sens à l'application pour le persona"] : []
+  return ["motivation", "promesse", "moment", "preuve"].filter((c) => !String(sens[c] ?? "").trim()).map((c) => `sens.${c} manquant`)
+}
+
+export const sensEnTexte = (sens) => (sens ? `Motivation profonde : ${sens.motivation}\nPromesse : ${sens.promesse}\nMoment où on le ressent : ${sens.moment}\nPreuve à l'écran : ${sens.preuve}` : "")
+
+export const sensEnMarkdown = (sens) => (sens ? ["## Le sens", "", `**Promesse** : ${sens.promesse}`, "", `- Ce qui compte pour le persona : ${sens.motivation}`, `- Le moment où il le ressent : ${sens.moment}`, `- Ce qui le prouve à l'écran : ${sens.preuve}`, ""] : [])
 
 // La note à partir de laquelle un étage est tenu, et le premier étage au-dessus du gouffre.
 export const SEUIL = 7

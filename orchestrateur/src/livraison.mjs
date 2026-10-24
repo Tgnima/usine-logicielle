@@ -10,7 +10,7 @@ import { join } from "node:path"
 import { adresses } from "./config.mjs"
 import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { ecrireEtat, ecrireFichierDepot, ouvrirPR, shaPrincipal } from "./github.mjs"
-import { analyserBrief, analyserCorrections } from "./analyste.mjs"
+import { analyserBrief, analyserCorrections, analyserSens } from "./analyste.mjs"
 import { designEnMarkdown } from "./design.mjs"
 import { capturesDuLot } from "./suivi.mjs"
 import { ajouterLot } from "./creation.mjs"
@@ -307,6 +307,18 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
         await ctx.notifier.etape(projet, `:art: *${plan.nom}* n'avait pas de brief de design : l'analyste en a rédigé un (docs/DESIGN.md). ${plan.design.intention}`)
       } catch (error) {
         console.error("Brief de design :", error.message) // sans brief, la grille seule s'applique
+      }
+    }
+    // Un produit fabriqué avant la question du sens : l'analyste se la pose d'abord, d'après le persona.
+    if (!plan.sens) {
+      try {
+        plan.sens = await analyserSens(config, projet, plan, contexte.persona, contexte.mesurer)
+        maj(db, "projets", projetId, { plan: JSON.stringify(plan) })
+        noter(db, { projet: projetId, type: "sens", message: `Le sens du produit : ${plan.sens.promesse}` })
+        await ctx.notifier.etape(projet, `:compass: *Ce qui donnerait du sens à ${plan.nom}* (d'après le persona) : ${plan.sens.promesse}
+Le moment où on le ressent : ${plan.sens.moment}. Les prochaines évolutions s'en serviront.`)
+      } catch (error) {
+        console.error("Sens :", error.message) // sans sens, la pyramide seule s'applique
       }
     }
     // La demande est gardée même si l'analyse échoue : une reformulation la retrouvera.
