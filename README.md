@@ -288,7 +288,8 @@ Il est laissé au soin de la personne qui configure l'usine.
 - **DNS** : pas d'API DNS publique documentée chez l'hébergeur ; la démo utilise un DNS
   joker (sslip.io), et un domaine personnalisé demande un enregistrement créé par son
   propriétaire (`/usine domaine`, qui vérifie ensuite tout seul).
-- **Petit serveur partagé** : un seul atelier, une tâche à la fois ; la construction des
+- **Petit serveur partagé** : un seul atelier, une tâche à la fois, les projets servis à
+  tour de rôle (aucun ne fait attendre les autres) ; la construction des
   images et Chromium sont les pics de mémoire.
 - **Limites d'usage des abonnements** (Claude, ChatGPT) : tester le parcours complet avant
   une démo ; une clé API plafonnée sert de secours.

@@ -43,6 +43,11 @@ const enPauseLimite = (db) => {
 }
 
 let occupe = false
+let dernierServi = 0
+
+// À tour de rôle : on part du projet qui suit le dernier servi, pour qu'un projet
+// aux nombreuses tâches ne fasse pas attendre tous les autres.
+export const aTourDeRole = (projets, dernier) => [...projets.filter((p) => p.id > dernier), ...projets.filter((p) => p.id <= dernier)]
 
 export function demarrerFabrique(ctx) {
   const tick = async () => {
@@ -50,7 +55,7 @@ export function demarrerFabrique(ctx) {
     // Les budgets d'abord : alertes, escalades, et arrêt si le budget mensuel est épuisé.
     if (await verifierBudgets(ctx).catch((e) => (console.error("Budgets :", e), false))) return
     const projets = ctx.db.prepare("SELECT * FROM projets WHERE statut = 'fabrication' ORDER BY id").all()
-    for (const projet of projets) {
+    for (const projet of aTourDeRole(projets, dernierServi)) {
       // Le budget de durée du contrat : au-delà, l'humain décide de continuer ou non.
       const heures = Number(ctx.config.autonomie?.budget_par_projet?.duree_max_heures ?? 0)
       if (heures > 0 && projet.debut_fabrication && Date.now() - new Date(projet.debut_fabrication).getTime() > heures * 3_600_000) {
@@ -61,6 +66,7 @@ export function demarrerFabrique(ctx) {
       const t = ctx.db.prepare("SELECT * FROM taches WHERE projet_id = ? AND statut = 'prete' ORDER BY lot, id LIMIT 1").get(projet.id)
       if (!t) continue
       occupe = true
+      dernierServi = projet.id
       try {
         await fabriquer(ctx, projet, t)
       } catch (error) {
