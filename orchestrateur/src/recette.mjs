@@ -5,16 +5,22 @@
 // qui les joue, dans la peau du persona, sur la branche de base telle qu'elle sera livrée.
 // Le résultat va dans le rapport final : l'humain décide (valider, ou corriger d'après la recette).
 // Une recette impossible (panne, limite d'usage) ne bloque jamais la livraison.
+//
+// La même séance note aussi la pyramide de l'expérience (pyramide.mjs), étage par étage :
+// c'est elle qui dit si le produit franchit le gouffre. Sans persona, la recette joue le
+// rôle de l'utilisateur cible du plan et ne note que la pyramide.
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { extraireJson } from "./analyste.mjs"
 import { enregistrer, usagesCodex } from "./couts.mjs"
 import { noterLimites, scriptCodex } from "./moteurs.mjs"
 import { libererPort, lireProfil } from "./profil.mjs"
 import { lirePersona, obtenirPersona } from "./personas.mjs"
-import { maj, noter, obtenir } from "./db.mjs"
+import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
+import { SCHEMA_PYRAMIDE, normaliserPyramide, pyramideEnCorrections, pyramideEnTexte, verdictPyramide } from "./pyramide.mjs"
 
 function consigne(projet, persona) {
   const f = persona.fiche ?? {}
+  const scenarios = persona.scenarios ?? []
   return `Tu fais la RECETTE d'un logiciel terminé, dans la peau de son utilisateur cible. Tu es exigeant, concret, et tu ne juges que ce que tu observes.
 
 Le produit « ${projet.nom} » tourne sur http://localhost:4100. Le code est dans le dossier courant (lis-le seulement pour trouver les écrans et les routes).
@@ -23,31 +29,38 @@ Tu es « ${persona.nom} » : ${f.resume ?? ""}
 ${f.problemes?.length ? `Tes problèmes : ${f.problemes.map((p) => p.probleme).join(" ; ")}.` : ""}
 ${f.objections?.length ? `Ce qui te ferait renoncer : ${f.objections.join(" ; ")}.` : ""}
 
-Joue chacun de ces scénarios pour de vrai, dans l'application en marche (Playwright : \`const { chromium } = require('playwright')\`, Chromium est installé ; curl pour l'API) :
-${persona.scenarios.map((s, i) => `${i + 1}. ${s.titre}
+${scenarios.length ? `Joue chacun de ces scénarios pour de vrai, dans l'application en marche (Playwright : \`const { chromium } = require('playwright')\`, Chromium est installé ; curl pour l'API) :
+${scenarios.map((s, i) => `${i + 1}. ${s.titre}
    Situation : ${s.situation}
-   ${s.etapes?.length ? `Étapes probables : ${s.etapes.join(" → ")}\n   ` : ""}Attendu : ${s.attendu}`).join("\n")}
+   ${s.etapes?.length ? `Étapes probables : ${s.etapes.join(" → ")}\n   ` : ""}Attendu : ${s.attendu}`).join("\n")}` : `Pas de scénario imposé : découvre le produit comme un nouvel utilisateur, dans l'application en marche (Playwright : \`const { chromium } = require('playwright')\`, Chromium est installé ; curl pour l'API). Fais ses parcours principaux de bout en bout, sur ordinateur (1440) et sur mobile (390).`}
+
+Puis note la pyramide de l'expérience du produit, étage par étage, de 0 à 10, d'après ce que tu as vécu (pas d'après le code) :
+${pyramideEnTexte()}
+Un étage est tenu à partir de 7. Sois sévère : 7 veut dire « un utilisateur exigeant serait satisfait ». Pour chaque étage, « observe » dit ce que tu as constaté (une phrase), et « pour_monter » donne LA modification concrète (un écran, ce qu'on change) qui ferait le plus monter la note.
 
 Règles :
-- Un scénario est « tenu » seulement si tu as obtenu le résultat attendu, comme le persona l'obtiendrait (sans connaître le code, sans contourner l'interface).
+${scenarios.length ? `- Un scénario est « tenu » seulement si tu as obtenu le résultat attendu, comme le persona l'obtiendrait (sans connaître le code, sans contourner l'interface).
 - « observe » dit ce que tu as réellement vu, en une ou deux phrases ; « ecart » dit ce qui manque ou gêne le persona (vide si tenu).
-- Enregistre une capture PNG par scénario dans /tmp/sorties/recette/captures/ (scenario-1.png, …), largeur 1440.
+- Enregistre une capture PNG par scénario dans /tmp/sorties/recette/captures/ (scenario-1.png, …), largeur 1440.` : "- Enregistre 2 à 4 captures PNG des moments clés dans /tmp/sorties/recette/captures/, largeur 1440."}
 
 Réponds UNIQUEMENT par ce JSON :
-{"scenarios": [{"titre": "…", "tenu": true, "observe": "…", "ecart": ""}], "resume": "une phrase : le persona serait-il convaincu ?"}`
+{"scenarios": [${scenarios.length ? `{"titre": "…", "tenu": true, "observe": "…", "ecart": ""}` : ""}], ${SCHEMA_PYRAMIDE}, "resume": "une phrase : l'utilisateur serait-il convaincu ?"}`
 }
 
 // Joue la recette sur un sha de la branche de base. Renvoie le résultat (aussi gardé en base).
 export async function jouerRecette(ctx, projetId, sha) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
-  const persona = projet.persona_id ? lirePersona(obtenirPersona(db, projet.persona_id)) : null
-  if (!persona?.scenarios?.length) return null
+  const fiche = projet.persona_id ? lirePersona(obtenirPersona(db, projet.persona_id)) : null
+  // Sans persona (ou sans scénario), l'utilisateur cible décrit par le plan : seule la pyramide est notée.
+  const persona = fiche?.scenarios?.length ? fiche : { nom: fiche?.nom ?? "l'utilisateur cible", fiche: fiche?.fiche ?? { resume: lirePlan(projet)?.resume ?? projet.prompt }, scenarios: [] }
+  const nomPersona = fiche?.scenarios?.length ? persona.nom : null
   const profil = lireProfil(projet)
   const serveur = config.verificateur.url
   const jeton = config.secrets.worker
-  noter(db, { projet: projetId, type: "recette", message: `Recette : ${persona.scenarios.length} scénario(s) caché(s) du persona « ${persona.nom} » joués sur ${sha.slice(0, 7)}` })
-  await ctx.notifier.progres(projet, `🎭 Recette : le vérificateur joue les ${persona.scenarios.length} scénarios cachés du persona « ${persona.nom} » sur le produit fini`).catch(() => {})
+  const annonce = nomPersona ? `les ${persona.scenarios.length} scénarios cachés du persona « ${persona.nom} », et note la pyramide de l'expérience` : "le produit fini comme un nouvel utilisateur, et note la pyramide de l'expérience"
+  noter(db, { projet: projetId, type: "recette", message: `Recette sur ${sha.slice(0, 7)} : le vérificateur joue ${annonce}` })
+  await ctx.notifier.progres(projet, `🎭 Recette : le vérificateur joue ${annonce}`).catch(() => {})
 
   let resultat
   try {
@@ -86,12 +99,12 @@ export async function jouerRecette(ctx, projetId, sha) {
       const x = (v.scenarios ?? [])[i] ?? {}
       return { titre: s.titre, tenu: x.tenu === true, observe: String(x.observe ?? "non joué").slice(0, 600), ecart: String(x.ecart ?? "").slice(0, 600) }
     })
-    resultat = { sha, le: new Date().toISOString(), persona: persona.nom, scenarios, tenus: scenarios.filter((s) => s.tenu).length, total: scenarios.length, resume: String(v.resume ?? "").slice(0, 400) }
+    resultat = { sha, le: new Date().toISOString(), persona: nomPersona, scenarios, tenus: scenarios.filter((s) => s.tenu).length, total: scenarios.length, pyramide: normaliserPyramide(v.pyramide), resume: String(v.resume ?? "").slice(0, 400) }
   } catch (error) {
-    resultat = { sha, le: new Date().toISOString(), persona: persona.nom, erreur: String(error.message).slice(0, 500), scenarios: [], tenus: 0, total: persona.scenarios.length }
+    resultat = { sha, le: new Date().toISOString(), persona: nomPersona, erreur: String(error.message).slice(0, 500), scenarios: [], tenus: 0, total: persona.scenarios.length }
   }
   maj(db, "projets", projetId, { recette: JSON.stringify(resultat) })
-  noter(db, { projet: projetId, type: "recette", message: resultat.erreur ? `Recette impossible : ${resultat.erreur}` : `Recette : ${resultat.tenus}/${resultat.total} scénario(s) tenu(s). ${resultat.resume}` })
+  noter(db, { projet: projetId, type: "recette", message: resultat.erreur ? `Recette impossible : ${resultat.erreur}` : `Recette : ${resultat.total ? `${resultat.tenus}/${resultat.total} scénario(s) tenu(s). ` : ""}${verdictPyramide(resultat.pyramide)} ${resultat.resume}`.trim() })
   return resultat
 }
 
@@ -103,12 +116,21 @@ export const lireRecette = (projet) => {
   }
 }
 
-// Les écarts de la recette, en demande de corrections (ce qu'on a observé, pas le scénario entier).
+// Les écarts de la recette, en demande de corrections (ce qu'on a observé, pas le scénario entier),
+// puis les étages de la pyramide à faire monter.
 export function ecartsEnCorrections(recette) {
   const ecarts = (recette?.scenarios ?? []).filter((s) => !s.tenu)
-  if (!ecarts.length) return ""
-  return [
-    `La recette du persona « ${recette.persona} » a relevé ${ecarts.length} écart(s) sur le produit fini. Corrige-les du point de vue du persona (ICP.md), sans casser ce qui marche :`,
-    ...ecarts.map((s) => `- ${s.titre} : ${s.ecart || s.observe}`),
-  ].join("\n")
+  const parties = []
+  if (ecarts.length) {
+    parties.push([
+      `La recette du persona « ${recette.persona} » a relevé ${ecarts.length} écart(s) sur le produit fini. Corrige-les du point de vue du persona (ICP.md), sans casser ce qui marche :`,
+      ...ecarts.map((s) => `- ${s.titre} : ${s.ecart || s.observe}`),
+    ].join("\n"))
+  }
+  const pyramide = pyramideEnCorrections(recette?.pyramide)
+  if (pyramide) parties.push(pyramide)
+  return parties.join("\n\n")
 }
+
+// Le nombre de points à corriger : les écarts, et les étages de la pyramide à faire monter.
+export const pointsACorriger = (recette) => ecartsEnCorrections(recette).split("\n").filter((l) => l.startsWith("- ")).length

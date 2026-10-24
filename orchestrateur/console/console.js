@@ -443,18 +443,38 @@ function blocReprise(p) {
   </section>`
 }
 
-// La recette : les scénarios cachés du persona, joués sur le produit fini.
+// La pyramide de l'expérience : chaque étage noté sur le produit fini, du sommet à la base,
+// le gouffre entre « Utilisable » et « Pratique ».
+function blocPyramide(r) {
+  if (!r.pyramide) return ""
+  const etages = r.pyramide.map((n, i) => ({ ...n, i })).reverse()
+  return html`<div class="pile" style="gap:6px">
+    <div><strong>Pyramide de l'expérience</strong><span class="aide" style="display:block">${r.verdict_pyramide}</span></div>
+    <ol style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;align-items:center;gap:4px">${etages.map((n) => html`
+      ${n.i === r.gouffre - 1 ? html`<li aria-hidden="true" class="aide" style="width:100%;text-align:center;border-top:1px dashed currentColor;padding-top:2px">le gouffre</li>` : ""}
+      <li title="${n.observe}" style="width:${46 + n.i * 9}%;min-width:190px;border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px;background:${(n.note ?? 0) >= r.seuil ? (n.i <= r.etage ? "#dcfce7" : "#fef9c3") : "#fee2e2"};color:#111827">
+        <span>${n.i === r.etage ? html`<strong>${n.nom}</strong>` : n.nom}</span><span class="mono">${n.note ?? "?"}/10</span>
+      </li>`)}</ol>
+    ${(() => {
+      const suivant = r.pyramide[r.etage + 1]
+      return suivant?.pour_monter ? html`<div class="aide"><strong>Pour monter à « ${suivant.nom} » :</strong> ${suivant.pour_monter}</div>` : ""
+    })()}
+  </div>`
+}
+
+// La recette : les scénarios cachés du persona (s'il y en a) et la pyramide, joués sur le produit fini.
 function blocRecette(p) {
   const r = p.recette
   if (!r) return ""
-  const ecarts = (r.scenarios ?? []).filter((s) => !s.tenu).length
-  return html`<section class="carte carte-p pile" aria-labelledby="recette"><div class="rangee" style="justify-content:space-between"><h2 id="recette">Recette du persona « ${r.persona} »</h2>
-    ${r.erreur ? html`<span class="badge rouge">impossible</span>` : html`<span class="badge ${r.tenus === r.total ? "vert" : "orange"}">${r.tenus}/${r.total} scénario(s) tenu(s)</span>`}</div>
+  const points = r.points ?? (r.scenarios ?? []).filter((s) => !s.tenu).length
+  return html`<section class="carte carte-p pile" aria-labelledby="recette"><div class="rangee" style="justify-content:space-between"><h2 id="recette">Recette${r.persona ? ` du persona « ${r.persona} »` : ""}</h2>
+    ${r.erreur ? html`<span class="badge rouge">impossible</span>` : r.total ? html`<span class="badge ${r.tenus === r.total ? "vert" : "orange"}">${r.tenus}/${r.total} scénario(s) tenu(s)</span>` : ""}</div>
     ${r.erreur ? html`<div class="aide">La recette n'a pas pu être jouée : ${r.erreur}</div>` : html`
       ${r.resume ? html`<p style="margin:0">${r.resume}</p>` : ""}
-      <ul style="margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:8px">${r.scenarios.map((s) => html`<li class="rangee" style="flex-wrap:nowrap;align-items:flex-start"><span class="badge ${s.tenu ? "vert" : "rouge"}">${s.tenu ? "tenu" : "écart"}</span><span><strong>${s.titre}</strong><span class="aide" style="display:block">${s.tenu ? s.observe : s.ecart || s.observe}</span></span></li>`)}</ul>
-      ${ecarts && ["livre", "en_production"].includes(p.statut) ? html`<div><button type="button" class="btn btn-s" data-action="corriger-recette">Corriger les ${ecarts} écart(s)</button></div>` : ""}`}
-    <div class="aide">Jouée sur ${String(r.sha ?? "").slice(0, 7)} par le vérificateur, dans la peau du persona. L'agent qui code n'a jamais vu ces scénarios.</div>
+      ${blocPyramide(r)}
+      ${r.total ? html`<ul style="margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:8px">${r.scenarios.map((s) => html`<li class="rangee" style="flex-wrap:nowrap;align-items:flex-start"><span class="badge ${s.tenu ? "vert" : "rouge"}">${s.tenu ? "tenu" : "écart"}</span><span><strong>${s.titre}</strong><span class="aide" style="display:block">${s.tenu ? s.observe : s.ecart || s.observe}</span></span></li>`)}</ul>` : ""}
+      ${points && ["livre", "en_production"].includes(p.statut) ? html`<div><button type="button" class="btn btn-s" data-action="corriger-recette">Corriger et monter d'un étage (${points} point(s))</button></div>` : ""}`}
+    <div class="aide">Jouée sur ${String(r.sha ?? "").slice(0, 7)} par le vérificateur${r.persona ? ", dans la peau du persona. L'agent qui code n'a jamais vu ces scénarios." : ", comme un nouvel utilisateur."}</div>
   </section>`
 }
 
@@ -1434,7 +1454,7 @@ const ACTIONS = {
   },
   "fermer-cle": () => { etat.cleCreee = null; rendre() },
   depart: (el) => { etat.depart = el.dataset.id; rendre() },
-  "corriger-recette": () => confirmer("Envoyer les écarts de la recette à l'analyste ? Il en fera un lot de corrections.") && agir(() => api("POST", `projets/${etat.projet.id}/corriger-recette`, {}), { succes: "Écarts transmis : l'analyste prépare un lot de corrections." }),
+  "corriger-recette": () => confirmer("Envoyer les écarts de la recette et les étages de la pyramide à faire monter à l'analyste ? Il en fera un lot de corrections.") && agir(() => api("POST", `projets/${etat.projet.id}/corriger-recette`, {}), { succes: "Écarts transmis : l'analyste prépare un lot de corrections." }),
   "persona-valider": () => agir(() => api("POST", `personas/${etat.persona.id}/valider`, {})),
   "persona-approfondir": () => agir(() => api("POST", `personas/${etat.persona.id}/approfondir`, { consignes: $("#consignes-persona")?.value ?? "" })),
   "persona-supprimer": async () => {

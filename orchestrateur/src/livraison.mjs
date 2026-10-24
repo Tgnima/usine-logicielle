@@ -18,6 +18,7 @@ import { escalader } from "./escalade.mjs"
 import { ecrireReglage, enregistrer, lireReglage } from "./couts.mjs"
 import { brancheDeBase } from "./profil.mjs"
 import { jouerRecette, lireRecette } from "./recette.mjs"
+import { pyramideEnCorrections, pyramideEnLignes, verdictPyramide } from "./pyramide.mjs"
 import { lirePersona, obtenirPersona, personaEnTexte } from "./personas.mjs"
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -179,8 +180,8 @@ export async function finaliserSiFini(ctx, projetId) {
     return true
   }
   const sha = await shaPrincipal(config, projet.depot, brancheDeBase(projet))
-  // La recette : les scénarios cachés du persona, joués sur ce qui va être livré (une fois par version).
-  if (projet.persona_id && lireRecette(projet)?.sha !== sha) await jouerRecette(ctx, projetId, sha).catch((e) => console.error("Recette :", e.message))
+  // La recette : les scénarios cachés du persona et la pyramide de l'expérience, sur ce qui va être livré (une fois par version).
+  if (lireRecette(projet)?.sha !== sha) await jouerRecette(ctx, projetId, sha).catch((e) => console.error("Recette :", e.message))
   // Un dépôt repris en mode direct : l'usine rend son travail par UNE pull request vers la branche
   // d'origine. Elle ne la fusionne jamais : c'est la personne qui décide.
   if (projet.origine) await ouvrirPRLivraison(ctx, projetId).catch((e) => noter(db, { projet: projetId, type: "erreur", message: `Pull request de livraison impossible : ${e.message}` }))
@@ -205,7 +206,8 @@ async function ouvrirPRLivraison(ctx, projetId) {
     ...plan.lots.map((l, i) => `- **Lot ${i + 1} : ${l.nom}** (${tout.filter((t) => t.lot === i + 1 && t.statut === "fusionnee").length}/${tout.filter((t) => t.lot === i + 1).length} tâches) : ${l.objectif}`),
     "",
     `Chaque tâche a été codée par un agent, testée par un vérificateur indépendant et fusionnée sur \`${projet.branche}\` par le code de l'usine. ${projet.plancher_tests} test(s) passent.`,
-    ...(recette && !recette.erreur ? ["", `### Recette du persona : ${recette.tenus}/${recette.total} scénario(s) tenu(s)`, ...recette.scenarios.map((s) => `- ${s.tenu ? "✅" : "❌"} ${s.titre}${s.tenu ? "" : ` : ${s.ecart || s.observe}`}`)] : []),
+    ...(recette && !recette.erreur && recette.total ? ["", `### Recette du persona : ${recette.tenus}/${recette.total} scénario(s) tenu(s)`, ...recette.scenarios.map((s) => `- ${s.tenu ? "✅" : "❌"} ${s.titre}${s.tenu ? "" : ` : ${s.ecart || s.observe}`}`)] : []),
+    ...(recette?.pyramide ? ["", "### Pyramide de l'expérience", "", verdictPyramide(recette.pyramide), "", "```", ...pyramideEnLignes(recette.pyramide, { gras: (t) => t }), "```"] : []),
     "",
     "Voir aussi : `MISSION.md`, `ICP.md`, `docs/PLAN.md`, `docs/INVENTAIRE.md`.",
     "",
@@ -291,6 +293,8 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
       mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),
       echanges: echangesRecents(db, projetId),
       persona: projet.persona_id ? personaEnTexte(lirePersona(obtenirPersona(db, projet.persona_id)) ?? { nom: "?", fiche: {} }) : null,
+      // Où en est le produit dans la pyramide : chaque correction en profite pour le faire monter d'un étage.
+      pyramide: lireRecette(projet)?.pyramide ? `${verdictPyramide(lireRecette(projet).pyramide)}\n${pyramideEnCorrections(lireRecette(projet).pyramide)}`.trim() : null,
     }
     // Un produit fabriqué avant les briefs de design en reçoit un, d'abord (docs/DESIGN.md).
     let plan = lirePlan(projet)

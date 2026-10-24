@@ -34,7 +34,8 @@ import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
 import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
 import { MODES_REPRISE } from "./reprise.mjs"
-import { ecartsEnCorrections, lireRecette } from "./recette.mjs"
+import { ecartsEnCorrections, lireRecette, pointsACorriger } from "./recette.mjs"
+import { GOUFFRE, SEUIL, etageAtteint, verdictPyramide } from "./pyramide.mjs"
 import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
 import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recevoirManifeste } from "./forge-github.mjs"
@@ -175,7 +176,7 @@ async function detailProjet(ctx, id) {
     persona_id: p.persona_id ?? null,
     inventaire: p.inventaire ? JSON.parse(p.inventaire) : null,
     profil: p.profil ? JSON.parse(p.profil) : null,
-    recette: lireRecette(p),
+    recette: lireRecette(p) && { ...lireRecette(p), etage: etageAtteint(lireRecette(p).pyramide), gouffre: GOUFFRE, seuil: SEUIL, verdict_pyramide: verdictPyramide(lireRecette(p).pyramide), points: pointsACorriger(lireRecette(p)) },
     pr_livraison: p.pr_livraison && p.depot ? `https://github.com/${p.depot}/pull/${p.pr_livraison}` : null,
     budget: (() => {
       const rc = reglagesCouts(db, config)
@@ -371,7 +372,7 @@ const ROUTES = [
   ["POST", /^\/api\/projets\/(\d+)\/corriger-recette$/, (ctx, [id], _c, qui) => {
     const p = obtenir(ctx.db, "projets", Number(id))
     const texte = ecartsEnCorrections(lireRecette(p))
-    if (!texte) throw erreur(409, "La recette n'a relevé aucun écart.")
+    if (!texte) throw erreur(409, "La recette n'a relevé aucun écart, et la pyramide est tenue.")
     return demanderCorrections(ctx, Number(id), texte, qui.email)
   }],
 

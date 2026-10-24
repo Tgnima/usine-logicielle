@@ -21,6 +21,7 @@ import { verifierBudgets } from "./budgets.mjs"
 import { garderCaptures } from "./suivi.mjs"
 import { decrireDefaut, relireSecurite } from "./relectures.mjs"
 import { facturationsEnCours, nomMode, noterLimites, scriptClaude, signalerFacturation } from "./moteurs.mjs"
+import { REGLE_PYRAMIDE } from "./pyramide.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -112,6 +113,7 @@ function consigne(ctx, projet, tache) {
       ? "- Design (si le produit a des écrans) : lis docs/DESIGN.md s'il existe, réutilise les composants et le style déjà présents dans le dépôt ; tes écrans seront jugés sur captures (ordinateur et mobile)."
       : "- Design (si le produit a des écrans, dossier client/) : lis docs/DESIGN.md s'il existe, construis avec client/src/ui et les jetons de couleur ; tes écrans seront jugés sur captures (ordinateur et mobile) avec sa grille.",
     "- Si tu lances un serveur pour essayer, arrête-le avant de terminer.",
+    `- ${REGLE_PYRAMIDE.replace(/\n/g, "\n  ")}\n  Sur les écrans de ta tâche, sans sortir de son périmètre : le produit sera noté étage par étage à la livraison.`,
   ]
   if (decisionsPrises.length) parties.push("", "Décisions humaines déjà prises sur ce projet (à respecter) :", ...decisionsPrises.map((d) => `- ${d.question} → ${d.reponse}`))
   if (tache.tentative > 0 && tache.retours) parties.push("", "Ta version précédente a été REFUSÉE. Motifs (corrige-les tous, sans repartir de zéro) :", tache.retours)

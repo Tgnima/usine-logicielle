@@ -21,6 +21,8 @@ import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
 import { adresses } from "./config.mjs"
 import { listerPersonas, trouverPersona } from "./personas.mjs"
+import { pyramideEnLignes, verdictPyramide } from "./pyramide.mjs"
+import { pointsACorriger } from "./recette.mjs"
 
 const tronquer = (t, n = 2900) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const section = (texte) => ({ type: "section", text: { type: "mrkdwn", text: tronquer(texte) } })
@@ -148,7 +150,8 @@ export async function demarrerSlack(ctx) {
         { type: "header", text: { type: "plain_text", text: tronquer(`Livré : ${r.nom}`, 150) } },
         section(`${r.resume}\n\n:globe_with_meridians: *Essayer :* ${r.apercu}${r.mails ? `\n:email: *Emails envoyés (capturés) :* ${r.mails}` : ""}\n:octocat: *Code :* <${r.depot}|${r.depot.replace("https://github.com/", "")}> (${r.sha.slice(0, 7)})`),
         section(r.lots.map((l, i) => `*Lot ${i + 1} : ${l.nom}*\n${l.taches.map((t) => `${t.statut === "fusionnee" ? ":white_check_mark:" : ":heavy_minus_sign:"} ${t.cle} ${t.titre}${t.pr ? ` <${r.depot}/pull/${t.pr}|#${t.pr}>` : ""}${t.statut === "abandonnee" ? " _(abandonnée)_" : ""}`).join("\n")}`).join("\n")),
-        ...(r.recette ? [section(tronquer(r.recette.erreur ? `:performing_arts: *Recette du persona « ${r.recette.persona} »* : impossible (${r.recette.erreur}).` : `:performing_arts: *Recette du persona « ${r.recette.persona} » : ${r.recette.tenus}/${r.recette.total} scénario(s) caché(s) tenu(s)*\n${r.recette.scenarios.map((s) => `${s.tenu ? ":white_check_mark:" : ":x:"} ${s.titre}${s.tenu ? "" : ` : ${s.ecart || s.observe}`}`).join("\n")}${r.recette.tenus < r.recette.total ? "\n_« Corriger » dans la console envoie ces écarts à l'analyste._" : ""}`, 2900))] : []),
+        ...(r.recette?.pyramide ? [section(tronquer(`:triangular_flag_on_post: *Pyramide de l'expérience* · ${verdictPyramide(r.recette.pyramide)}\n${pyramideEnLignes(r.recette.pyramide).join("\n")}${pointsACorriger(r.recette) ? "\n_« Corriger » dans la console fait monter le produit d'un étage._" : ""}`, 2900))] : []),
+        ...(r.recette && (r.recette.erreur || r.recette.total) ? [section(tronquer(r.recette.erreur ? `:performing_arts: *Recette${r.recette.persona ? ` du persona « ${r.recette.persona} »` : ""}* : impossible (${r.recette.erreur}).` : `:performing_arts: *Recette du persona « ${r.recette.persona} » : ${r.recette.tenus}/${r.recette.total} scénario(s) caché(s) tenu(s)*\n${r.recette.scenarios.map((s) => `${s.tenu ? ":white_check_mark:" : ":x:"} ${s.titre}${s.tenu ? "" : ` : ${s.ecart || s.observe}`}`).join("\n")}${r.recette.tenus < r.recette.total ? "\n_« Corriger » dans la console envoie ces écarts à l'analyste._" : ""}`, 2900))] : []),
         ...(r.pr_livraison ? [section(`:arrows_counterclockwise: *Pull request de livraison* vers ${r.origine?.depot ?? "le dépôt d'origine"} : <${r.pr_livraison}|à relire et fusionner toi-même>. L'usine ne la fusionne jamais.`)] : []),
         ...(ligneCoutProjet(ctx, projet.id) ? [{ type: "context", elements: [{ type: "mrkdwn", text: `:moneybag: ${ligneCoutProjet(ctx, projet.id)} · \`/usine couts ${projet.id}\` pour le détail` }] }] : []),
         { type: "context", elements: [{ type: "mrkdwn", text: `${r.tests} tests automatisés · ${r.refus} refus du vérificateur corrigés en autonomie · ${r.escalades} escalade(s) · ${r.decisions} décision(s) humaine(s)${r.duree_min ? ` · ${Math.floor(r.duree_min / 60)} h ${r.duree_min % 60} min de fabrication` : ""}` }] },

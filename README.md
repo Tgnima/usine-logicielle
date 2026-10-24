@@ -208,6 +208,19 @@ termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Da
    la peau du persona, sur ce qui va être livré. Le résultat est dans le rapport et la console ;
    *Corriger les écarts* en fait un lot de corrections.
 
+**La pyramide de l'expérience** (Stephen P. Anderson) est la grille de qualité de l'usine :
+Fonctionnel, Fiable, Utilisable, puis, au-dessus du « gouffre » où s'arrêtent la plupart des
+produits, Pratique, Agréable et Qui a du sens (`orchestrateur/src/pyramide.mjs`).
+- L'analyste en tient compte dans chaque plan : chaque lot après le premier a au moins un
+  critère Pratique ou Agréable, et le dernier un critère « Qui a du sens ».
+- Les agents la lisent dans leur consigne.
+- La recette note chaque étage de 0 à 10 sur le produit fini, avec ou sans persona (sans
+  persona, elle découvre le produit comme un nouvel utilisateur). Un étage est tenu à partir
+  de 7, et l'étage atteint est le plus haut tenu sans trou en dessous.
+- Le rapport (Slack, console, pull request de livraison) montre la pyramide.
+- *Corriger et monter d'un étage* envoie à l'analyste les écarts et les étages à faire monter.
+- Toute demande de correction ajoute un critère de l'étage suivant sur les écrans qu'elle touche.
+
 **Un domaine à soi** : `/usine domaine <n°> app.mon-entreprise.fr` sur un produit en
 production. L'usine donne l'enregistrement DNS à créer (A vers le serveur), vérifie toutes
 les 2 minutes, ajoute l'adresse à Caddy (certificat HTTPS) dès que le DNS est bon, et
