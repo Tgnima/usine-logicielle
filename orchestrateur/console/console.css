@@ -1,32 +1,40 @@
-/* La console de l'usine : un poste de pilotage sobre. Clair et sombre. */
+/* La console de l'usine, habillée du design system « Ciel Confiance » : un ciel en tête,
+   le travail sur fond clair, une encre marine et un bleu d'action. Clair et sombre. */
 :root {
   color-scheme: light;
-  --fond: #f3f4f1; --panneau: #eceee9; --surface: #ffffff; --surface-2: #f7f8f5;
-  --encre: #15181c; --texte: #3a4048; --doux: #565d66; --trait: #dee1dc; --trait-2: #eceeea; --champ: #c9cdc6;
-  --accent: #2b47c9; --accent-fort: #1f3496; --accent-fond: #e6eafa; --accent-texte: #ffffff;
-  --signal: #8a3e06; --signal-fond: #fbebdc; --signal-trait: #e8c9a8;
-  --ok: #14532d; --ok-point: #1d7a46; --ok-fond: #e3f1e8;
-  --danger: #a1261b; --danger-fond: #fdecea;
-  --code: #15181c; --code-texte: #d5d9df; --code-doux: #8b93a0;
+  --fond: #f2f8fd; --panneau: #ffffff; --surface: #ffffff; --surface-2: #e6f1fa;
+  --encre: #0e2a40; --texte: #2b4359; --doux: #52697e; --trait: #d3e4f2; --trait-2: #e6f1fa; --champ: #6f93b0;
+  --accent: #0a6db3; --accent-fort: #0b5f9c; --accent-fond: #dff0fc; --accent-texte: #ffffff;
+  --signal: #9a5800; --signal-fond: #fdf1dc; --signal-trait: #f0d3a0;
+  --ok: #11683f; --ok-point: #157a4a; --ok-fond: #e2f6ea;
+  --danger: #b3261e; --danger-fond: #fdecea;
+  --code: #0e2a40; --code-texte: #d6e6f3; --code-doux: #8ea9c0;
+  --ciel: #2f97e0; --ciel-voile: #d6edfc; --soleil: #ffd95c; --sur-soleil: #0e2a40;
+  --rayon-m: 12px; --rayon-l: 16px; --rayon-xl: 24px;
+  --ombre-carte: 0 1px 2px rgba(14, 42, 64, .06), 0 2px 8px rgba(14, 42, 64, .05);
+  --ombre-fenetre: 0 24px 64px rgba(14, 42, 64, .22);
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --fond: #101317; --panneau: #0b0d10; --surface: #171b20; --surface-2: #1d2228;
-    --encre: #eef0f2; --texte: #c9ced6; --doux: #9aa2ad; --trait: #2a3038; --trait-2: #232830; --champ: #3a414b;
-    --accent: #7d93f0; --accent-fort: #a5b4fc; --accent-fond: #1f2747; --accent-texte: #0b0d10;
-    --signal: #f5b27a; --signal-fond: #3a2412; --signal-trait: #6b4422;
-    --ok: #8fd6a8; --ok-point: #4cc27a; --ok-fond: #12301f;
-    --danger: #f19a91; --danger-fond: #3a1714;
-    --code: #0b0d10;
+    --fond: #0b1724; --panneau: #0e1c2b; --surface: #112233; --surface-2: #16304a;
+    --encre: #eaf4fc; --texte: #c8dbea; --doux: #9fb7cc; --trait: #24425f; --trait-2: #1a3550; --champ: #5b84a6;
+    --accent: #5cb9f2; --accent-fort: #8ccff7; --accent-fond: #14324d; --accent-texte: #06243a;
+    --signal: #f0b350; --signal-fond: #3a2a12; --signal-trait: #6b4f22;
+    --ok: #8fe0b3; --ok-point: #3fae78; --ok-fond: #1d4a33;
+    --danger: #ff8a7a; --danger-fond: #3a1714;
+    --code: #06121d;
+    --ciel-voile: #14324d; --soleil: #f0c53d;
+    --ombre-carte: 0 1px 2px rgba(0, 0, 0, .4);
+    --ombre-fenetre: 0 24px 64px rgba(0, 0, 0, .6);
   }
 }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 html, body { margin: 0 }
-body { background: var(--fond); color: var(--encre); font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif }
+body { background: var(--fond); color: var(--encre); font: 15px/1.5 "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased }
 a { color: var(--accent) } a:hover { color: var(--accent-fort) }
-.mono { font-family: "IBM Plex Mono", ui-monospace, monospace }
+.mono { font-family: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace }
 .cache { position: absolute; left: -9999px }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
 
@@ -34,46 +42,49 @@ a { color: var(--accent) } a:hover { color: var(--accent-fort) }
 .app { min-height: 100vh; display: flex; flex-wrap: wrap; align-items: stretch }
 .cote { flex: 1 1 232px; max-width: 100%; padding: 20px 16px; display: flex; flex-direction: column; gap: 24px; background: var(--panneau); border-right: 1px solid var(--trait) }
 .marque { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--encre) }
-.logo { width: 34px; height: 34px; border-radius: 8px; background: var(--encre); color: var(--fond); display: flex; align-items: center; justify-content: center; font-weight: 500 }
+.logo { width: 34px; height: 34px; border-radius: var(--rayon-m); background: var(--ciel); color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 500 }
 .marque strong { display: block; font-size: 15px } .marque small { color: var(--doux); font-size: 12px }
 .nav { display: flex; flex-direction: column; gap: 2px }
-.nav a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; color: var(--texte); text-decoration: none; font-weight: 500 }
-.nav a:hover { background: var(--trait); color: var(--encre) }
-.nav a[aria-current="page"] { background: var(--encre); color: var(--fond) }
+.nav a { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--rayon-m); color: var(--texte); text-decoration: none; font-weight: 500 }
+.nav a svg { color: var(--doux) }
+.nav a:hover { background: var(--surface-2); color: var(--encre) }
+.nav a[aria-current="page"] { background: var(--accent-fond); color: var(--encre); font-weight: 600 }
+.nav a[aria-current="page"] svg { color: var(--accent) }
 .cote-bas { margin-top: auto; display: flex; flex-direction: column; gap: 12px; font-size: 13px }
-.principal { flex: 999 1 560px; min-width: 0; padding: 24px 40px 56px; display: flex; flex-direction: column; gap: 24px }
+/* Le ciel : un voile bleu en tête de la page, qui se fond dans le fond clair. */
+.principal { flex: 999 1 560px; min-width: 0; padding: 24px 40px 56px; display: flex; flex-direction: column; gap: 24px; background: linear-gradient(180deg, var(--ciel-voile) 0, var(--fond) 260px) no-repeat }
 @media (max-width: 720px) { .principal { padding: 16px 16px 48px } .cote { border-right: 0; border-bottom: 1px solid var(--trait) } }
 
 .barre { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between }
-.recherche { flex: 1 1 320px; max-width: 520px; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--champ); border-radius: 8px; background: var(--surface); color: var(--doux); font: inherit; font-size: 14px; cursor: pointer; text-align: left }
+.recherche { flex: 1 1 320px; max-width: 520px; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border: 1px solid var(--trait); border-radius: 999px; background: var(--surface); color: var(--doux); font: inherit; font-size: 14px; cursor: pointer; text-align: left; box-shadow: var(--ombre-carte) }
 .touche { font-size: 12px; padding: 2px 6px; border: 1px solid var(--trait); border-radius: 4px }
 .etat-usine { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ok) }
 .point { width: 8px; height: 8px; border-radius: 999px; background: var(--ok-point); flex: none }
-.point.alerte { background: #b35309 } .point.panne { background: #c0392b } .point.inconnu { background: var(--doux) }
+.point.alerte { background: var(--signal) } .point.panne { background: var(--danger) } .point.inconnu { background: var(--doux) }
 
 /* Titres */
 .entete { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between }
-h1 { margin: 0; font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em }
+h1 { margin: 0; font-size: 30px; line-height: 1.25; font-weight: 700; letter-spacing: -0.015em; text-wrap: balance }
 .chapeau { margin: 6px 0 0; color: var(--doux); max-width: 760px }
 .retour { font-size: 14px; text-decoration: none }
 .surtitre { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--doux) }
 h2 { margin: 0; font-size: 17px; font-weight: 600 }
 
 /* Boutons et champs */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border-radius: 8px; font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; text-decoration: none; border: 1px solid transparent }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border-radius: var(--rayon-m); font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; text-decoration: none; border: 1px solid transparent; transition: background-color .15s }
 .btn-p { background: var(--accent); color: var(--accent-texte) } .btn-p:hover { background: var(--accent-fort); color: var(--accent-texte) }
-.btn-s { background: var(--surface); color: var(--encre); border-color: var(--champ) } .btn-s:hover { border-color: var(--encre); color: var(--encre) }
-.btn-d { background: var(--surface); color: var(--danger); border-color: var(--champ) } .btn-d:hover { border-color: var(--danger) }
+.btn-s { background: var(--surface-2); color: var(--encre) } .btn-s:hover { background: var(--trait); color: var(--encre) }
+.btn-d { background: var(--surface); color: var(--danger); border-color: var(--trait) } .btn-d:hover { background: var(--danger-fond); border-color: var(--danger) }
 .btn-petit { min-height: 36px; padding: 0 12px; font-size: 13px }
 .btn:disabled { opacity: .55; cursor: not-allowed }
-.champ { width: 100%; padding: 11px 14px; border: 1px solid var(--champ); border-radius: 8px; background: var(--surface); color: var(--encre); font: inherit }
+.champ { width: 100%; padding: 11px 14px; border: 1px solid var(--champ); border-radius: var(--rayon-m); background: var(--surface); color: var(--encre); font: inherit }
 .champ-discret { width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--encre); font: inherit }
 .champ-discret:hover { border-color: var(--trait) } .champ-discret:focus { background: var(--surface); outline: 2px solid var(--accent); outline-offset: 0 }
 label.titre-champ { font-weight: 600 }
 .aide { font-size: 13px; color: var(--doux) }
 
 /* Cartes et blocs */
-.carte { background: var(--surface); border: 1px solid var(--trait); border-radius: 12px }
+.carte { background: var(--surface); border: 1px solid var(--trait); border-radius: var(--rayon-l); box-shadow: var(--ombre-carte) }
 .carte-p { padding: 18px 20px }
 .grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px }
 .colonnes { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start }
@@ -82,7 +93,7 @@ label.titre-champ { font-weight: 600 }
 .pile { display: flex; flex-direction: column; gap: 10px }
 .rangee { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
 
-.a-traiter { display: flex; gap: 14px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--signal-trait); border-radius: 12px; text-decoration: none; color: var(--encre) }
+.a-traiter { display: flex; gap: 14px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--signal-trait); border-radius: var(--rayon-l); box-shadow: var(--ombre-carte); text-decoration: none; color: var(--encre) }
 .a-traiter .icone { width: 36px; height: 36px; flex: none; border-radius: 8px; background: var(--signal-fond); color: var(--signal); display: flex; align-items: center; justify-content: center }
 .a-traiter strong { display: block } .a-traiter span { font-size: 14px; color: var(--doux) }
 .a-traiter em { align-self: center; font-style: normal; font-weight: 600; color: var(--accent); font-size: 14px; margin-left: auto }
@@ -94,7 +105,7 @@ label.titre-champ { font-weight: 600 }
 .badge.rouge { background: var(--danger-fond); color: var(--danger) }
 
 .jauge { height: 6px; border-radius: 999px; background: var(--trait-2); overflow: hidden }
-.jauge > div { height: 100%; border-radius: 999px; background: var(--encre) }
+.jauge > div { height: 100%; border-radius: 999px; background: var(--ciel) }
 .jauge.verte > div { background: var(--ok-point) } .jauge.bleue > div { background: var(--accent) }
 
 table { border-collapse: collapse; width: 100% }
@@ -118,8 +129,8 @@ td .sous { font-size: 13px; color: var(--doux) }
 .etapes li.encours::before { background: var(--accent) } .etapes li.encours { color: var(--encre); font-weight: 600 }
 .onglets { display: flex; gap: 4px; border-bottom: 1px solid var(--trait); overflow-x: auto }
 .onglets button { min-height: 40px; padding: 0 14px; border: 0; background: none; font: inherit; font-size: 14px; cursor: pointer; margin-bottom: -1px; color: var(--doux); border-bottom: 2px solid transparent; white-space: nowrap }
-.onglets button[aria-selected="true"] { color: var(--encre); font-weight: 600; border-bottom-color: var(--encre) }
-.journal { background: var(--code); color: var(--code-texte); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.7; max-height: 460px; overflow: auto }
+.onglets button[aria-selected="true"] { color: var(--encre); font-weight: 600; border-bottom-color: var(--accent) }
+.journal { background: var(--code); color: var(--code-texte); border-radius: var(--rayon-l); padding: 14px 16px; font-size: 13px; line-height: 1.7; max-height: 460px; overflow: auto }
 .journal div { white-space: pre-wrap; word-break: break-word }
 .journal time { color: var(--code-doux); margin-right: 8px }
 .journal .t-refus { color: #f5b27a } .journal .t-fusion, .journal .t-validation, .journal .t-production { color: #7fd39b } .journal .t-erreur { color: #f19a91 }
@@ -131,7 +142,7 @@ td .sous { font-size: 13px; color: var(--doux) }
 .captures { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px }
 .captures figure { margin: 0 } .captures img { width: 100%; border-radius: 8px; border: 1px solid var(--trait); display: block; background: var(--surface-2) }
 .captures figcaption { font-size: 12px; color: var(--doux); margin-top: 4px }
-.bulle { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; word-break: break-word }
+.bulle { max-width: 85%; padding: 10px 14px; border-radius: var(--rayon-l); font-size: 14px; white-space: pre-wrap; word-break: break-word }
 .bulle.moi { align-self: flex-end; background: var(--accent-fond); border-bottom-right-radius: 4px }
 .bulle.usine { align-self: flex-start; background: var(--surface-2); border-bottom-left-radius: 4px }
 .bulle small { display: block; font-size: 12px; color: var(--doux) }
@@ -144,27 +155,27 @@ td .sous { font-size: 13px; color: var(--doux) }
 .criteres { margin: 2px 0 0; padding: 0 0 0 12px; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 14px }
 .criteres li { display: flex; gap: 6px; align-items: center }
 .lien-btn { border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 12px; min-height: 32px }
-.sombre { background: var(--encre); color: var(--fond); border-radius: 12px; padding: 18px 20px }
+.sombre { background: var(--encre); color: var(--fond); border-radius: var(--rayon-l); padding: 18px 20px }
 .sombre .aide { color: color-mix(in srgb, var(--fond) 72%, transparent) }
 .palette-couleurs { display: flex; gap: 6px } .palette-couleurs span { width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--trait) }
 
 /* Choix (radios en cartes) */
-.choix { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--trait); border-radius: 10px; cursor: pointer; font-size: 14px; background: var(--surface) }
+.choix { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--trait); border-radius: var(--rayon-m); cursor: pointer; font-size: 14px; background: var(--surface) }
 .choix:has(input:checked) { border-color: var(--accent); background: var(--accent-fond) }
 .choix input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent) }
 fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px }
 legend { font-weight: 600; margin-bottom: 8px; padding: 0 }
 .briques { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px }
-.brique { text-align: left; padding: 14px 16px; border-radius: 10px; cursor: pointer; font: inherit; color: var(--encre); background: var(--surface); border: 2px solid var(--trait) }
+.brique { text-align: left; padding: 14px 16px; border-radius: var(--rayon-l); cursor: pointer; font: inherit; color: var(--encre); background: var(--surface); border: 2px solid var(--trait) }
 .brique[aria-pressed="true"] { background: var(--accent-fond); border-color: var(--accent) }
 .brique span { display: block; font-size: 13px; color: var(--doux); margin-top: 4px }
 
 /* Messages */
-.message { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 10px; font-size: 14px }
+.message { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 16px; border-radius: var(--rayon-m); font-size: 14px }
 .message.ok { background: var(--ok-fond); color: var(--ok) }
 .message.erreur { background: var(--danger-fond); color: var(--danger) }
 .message.info { background: var(--accent-fond); color: var(--accent-fort) }
-.confirmer { border: 2px solid var(--encre); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px }
+.confirmer { border: 2px solid var(--accent); border-radius: var(--rayon-l); background: var(--surface); padding: 18px; display: flex; flex-direction: column; gap: 10px }
 .dns { display: grid; grid-template-columns: auto auto auto; gap: 4px 14px; font-size: 13px; background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto }
 .dns span:nth-child(-n+3) { color: var(--doux) }
 .cle-unique { background: var(--encre); color: var(--fond); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px }
@@ -173,12 +184,12 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0 }
 .chargement { padding: 48px; text-align: center; color: var(--doux) }
 
 /* Palette de commandes */
-dialog.palette { width: min(640px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--trait); border-radius: 12px; background: var(--surface); color: var(--encre); box-shadow: 0 24px 64px rgba(0, 0, 0, .25); margin-top: 12vh }
-dialog.palette::backdrop { background: rgba(15, 18, 22, .45) }
+dialog.palette { width: min(640px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--trait); border-radius: var(--rayon-xl); background: var(--surface); color: var(--encre); box-shadow: var(--ombre-fenetre); margin-top: 12vh; overflow: hidden }
+dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .palette input { width: 100%; border: 0; border-bottom: 1px solid var(--trait); padding: 16px 18px; font: inherit; font-size: 16px; background: transparent; color: var(--encre) }
 .palette input:focus { outline: none }
 .palette ul { list-style: none; margin: 0; padding: 6px; max-height: 360px; overflow: auto }
-.palette li button { width: 100%; text-align: left; display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 0; border-radius: 8px; background: none; color: var(--encre); font: inherit; cursor: pointer }
+.palette li button { width: 100%; text-align: left; display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 0; border-radius: var(--rayon-m); background: none; color: var(--encre); font: inherit; cursor: pointer }
 .palette li button[aria-selected="true"], .palette li button:hover { background: var(--accent-fond) }
 .palette li small { margin-left: auto; color: var(--doux); font-size: 12px }
 
@@ -189,7 +200,7 @@ dialog.palette::backdrop { background: rgba(15, 18, 22, .45) }
 .graph-legende { display: flex; justify-content: space-between; font-size: 12px; color: var(--doux) }
 
 /* Le direct : ce que fait l'agent, ligne par ligne */
-.direct { background: var(--code); color: var(--code-texte); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.65; height: 420px; overflow: auto }
+.direct { background: var(--code); color: var(--code-texte); border-radius: var(--rayon-l); padding: 14px 16px; font-size: 13px; line-height: 1.65; height: 420px; overflow: auto }
 .direct div { white-space: pre-wrap; word-break: break-word; padding: 1px 0 }
 .direct span { display: inline-block; width: 1.2em; color: var(--code-doux) }
 .direct .d-pensee { color: #ffffff } .direct .d-commande { color: #9fb4ff } .direct .d-ecriture { color: #f5d38a }
@@ -200,7 +211,7 @@ dialog.palette::backdrop { background: rgba(15, 18, 22, .45) }
 .btn-icone:hover { border-color: var(--trait); color: var(--encre); background: var(--surface-2) }
 .outils { display: flex; gap: 2px; align-items: center }
 .filtre { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--champ); background: var(--surface); color: var(--encre); font: inherit; font-size: 13px; cursor: pointer }
-.filtre[aria-pressed="true"] { background: var(--encre); border-color: var(--encre); color: var(--fond); font-weight: 600 }
+.filtre[aria-pressed="true"] { background: var(--accent-fond); border-color: var(--accent); color: var(--accent-fort); font-weight: 600 }
 .pieces { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px }
 .pieces li { display: flex; gap: 10px; align-items: center; font-size: 13px; padding: 6px 10px; border: 1px solid var(--trait); border-radius: 8px; background: var(--surface) }
 .pieces li .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }

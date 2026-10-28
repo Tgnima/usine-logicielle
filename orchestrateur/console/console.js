@@ -452,7 +452,7 @@ function blocPyramide(r) {
     <div><strong>Pyramide de l'expérience</strong><span class="aide" style="display:block">${r.verdict_pyramide}</span></div>
     <ol style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;align-items:center;gap:4px">${etages.map((n) => html`
       ${n.i === r.gouffre - 1 ? html`<li aria-hidden="true" class="aide" style="width:100%;text-align:center;border-top:1px dashed currentColor;padding-top:2px">le gouffre</li>` : ""}
-      <li title="${n.observe}" style="width:${46 + n.i * 9}%;min-width:190px;border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px;background:${(n.note ?? 0) >= r.seuil ? (n.i <= r.etage ? "#dcfce7" : "#fef9c3") : "#fee2e2"};color:#111827">
+      <li title="${n.observe}" style="width:${46 + n.i * 9}%;min-width:190px;border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px;background:${(n.note ?? 0) >= r.seuil ? (n.i <= r.etage ? "var(--ok-fond)" : "var(--signal-fond)") : "var(--danger-fond)"};color:var(--encre)">
         <span>${n.i === r.etage ? html`<strong>${n.nom}</strong>` : n.nom}</span><span class="mono">${n.note ?? "?"}/10</span>
       </li>`)}</ol>
     ${(() => {
