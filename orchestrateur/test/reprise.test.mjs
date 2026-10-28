@@ -2,7 +2,7 @@
 // personas, recette). Ce sont elles, pas les modèles, qui décident.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -165,7 +165,12 @@ test("moteurs : Claude et Codex ne lisent jamais l'entrée standard du script (e
   const ctx = { db, config: {} }
   const claude = scriptClaude(ctx, { args: "-p x", modele: "m", sortie: "/tmp/s" })
   const codex = scriptCodex(ctx, { args: "x", journal: "/tmp/j" })
-  for (const s of [claude, codex]) for (const ligne of s.split("\n").filter((l) => /(claude|codex exec) /.test(l) && /^\s*if /.test(l))) assert.match(ligne, /< \/dev\/null/)
+  for (const s of [claude, codex]) for (const ligne of s.split("\n").filter((l) => /(claude|codex exec) /.test(l) && /^\s*if /.test(l))) assert.match(ligne, /< '\/dev\/null'/)
+  // Une consigne, même très longue, passe par un fichier sur l'entrée standard, jamais en argument
+  // (au-delà de 128 Ko, Linux refuse : « Argument list too long »).
+  const avecConsigne = scriptClaude(ctx, { args: "-p", modele: "m", sortie: "/tmp/s", entree: "/tmp/c.md" }) + scriptCodex(ctx, { args: "-", journal: "/tmp/j", entree: "/tmp/c.md" })
+  assert.ok((avecConsigne.match(/< '\/tmp\/c\.md'/g)?.length ?? 0) >= 2)
+  for (const f of ["analyste", "personas", "relectures", "fabrique", "reprise", "recette", "verification"]) assert.doesNotMatch(readFileSync(new URL(`../src/${f}.mjs`, import.meta.url), "utf8"), /\$\(cat [^)]*consigne/, f)
   // Le même mécanisme qu'en vrai : un script lu par bash sur son entrée standard, la ligne d'après doit s'exécuter.
   const sortie = execFileSync("bash", ["-s"], { input: "cat < /dev/null > /dev/null\necho LIGNE_SUIVANTE\n" }).toString()
   assert.match(sortie, /LIGNE_SUIVANTE/)

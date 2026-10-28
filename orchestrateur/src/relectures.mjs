@@ -61,7 +61,7 @@ export async function relireSecurite(ctx, projet, tache, { dossier, base = "main
   const r = await executer(atelier, jeton, [
     "mkdir -p /tmp/sorties/relecture && cd /tmp/sorties/relecture",
     ecrireFichier("/tmp/sorties/relecture/consigne.md", consigneSecurite(projet, tache, borne)),
-    scriptClaude(ctx, { args: `-p "$(cat consigne.md)" --output-format json --tools "" --max-turns 2`, modele, sortie: "/tmp/sorties/relecture/reponse.json" }),
+    scriptClaude(ctx, { args: `-p --output-format json --tools "" --max-turns 2`, entree: "/tmp/sorties/relecture/consigne.md", modele, sortie: "/tmp/sorties/relecture/reponse.json" }),
   ].join("\n"), { minutes: 10 })
   if (noterLimites(ctx, "claude-code", r.marqueurs).epuise) return { graves: [], mineurs: [], resume: "relecture sautée : Claude à sa limite d'usage", indisponible: true }
   let sortie

@@ -174,7 +174,7 @@ async function fabriquer(ctx, projet, tache) {
     ": > /tmp/sorties/tache/agent.jsonl",
     // Abonnement, puis clé API, puis passerelle : la première façon qui n'est pas à sa limite.
     scriptClaude(ctx, {
-      args: `-p "$(cat /tmp/sorties/tache/consigne.md)" --dangerously-skip-permissions --max-turns 150 --output-format stream-json --verbose`,
+      args: `-p --dangerously-skip-permissions --max-turns 150 --output-format stream-json --verbose`, entree: "/tmp/sorties/tache/consigne.md",
       modele: tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele,
       sortie: "/tmp/sorties/tache/agent.jsonl",
       erreurs: "/tmp/sorties/tache/agent.err",

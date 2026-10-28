@@ -126,8 +126,10 @@ const FACTURATION_CODEX = `[^0-9]402[^0-9]|insufficient_quota|credit balance|ins
 const PREALABLE = { abonnement: "true", cle: null, passerelle: '[ -n "$AI_GATEWAY_API_KEY" ]' }
 
 // Le morceau de script bash qui lance Claude Code en essayant chaque façon disponible.
-//   args : les options de claude (sans le modèle) ; sortie : le fichier de résultat (json ou stream-json).
-export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null" }) {
+//   args : les options de claude (sans le modèle) ; sortie : le fichier de résultat (json ou stream-json) ;
+//   entree : le fichier de la consigne, lu sur l'entrée standard. Jamais en argument : Linux refuse
+//   un argument de plus de 128 Ko (« Argument list too long »), ce qu'atteint un gros projet.
+export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null", entree = "/dev/null" }) {
   const modes = modesDisponibles(ctx, "claude-code")
   const essais = modes.map((mode) => {
     // L'abonnement Claude n'existe dans l'atelier que par son jeton (console ou serveur).
@@ -139,9 +141,9 @@ export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null" 
     }[mode]
     return `if [ -z "$FAIT" ] && ${prealable}; then
   : > ${q(sortie)}
-  # < /dev/null : le script arrive par l'entrée standard de bash ; sans cela, Claude la lirait
+  # < fichier : le script arrive par l'entrée standard de bash ; sans cela, Claude la lirait
   # et avalerait toutes les lignes qui suivent (elles ne s'exécuteraient jamais).
-  if ${lancer} < /dev/null > ${q(sortie)} 2> ${q(erreurs)}; then CODE=0; else CODE=$?; fi
+  if ${lancer} < ${q(entree)} > ${q(sortie)} 2> ${q(erreurs)}; then CODE=0; else CODE=$?; fi
   # Seul le résultat final compte (le travail de l'agent peut parler de « rate limit »).
   R=$(grep '"type":"result"' ${q(sortie)} 2>/dev/null | tail -1)
   if echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '${FACTURATION_CLAUDE}'; then echo "@@ FACTURATION_${mode.toUpperCase()} $(echo "$R" | grep -oE '"result":"[^"]{0,200}' | cut -c11-)"
@@ -158,8 +160,9 @@ fi`
 }
 
 // La même chose pour Codex (le vérificateur et le relecteur design).
-//   args : les options après « codex exec » ; journal : le fichier où va la sortie --json.
-export function scriptCodex(ctx, { args, journal, marqueur = "CODEX_CODE" }) {
+//   args : les options après « codex exec » (« - » : la consigne est lue dans entree, comme pour Claude).
+//   journal : le fichier où va la sortie --json.
+export function scriptCodex(ctx, { args, journal, marqueur = "CODEX_CODE", entree = "/dev/null" }) {
   const modes = modesDisponibles(ctx, "codex")
   const essais = modes.map((mode) => {
     const prealable = { ...PREALABLE, cle: '[ -n "$OPENAI_API_KEY" ]' }[mode]
@@ -170,7 +173,7 @@ export function scriptCodex(ctx, { args, journal, marqueur = "CODEX_CODE" }) {
     }[mode]
     return `if [ -z "$FAIT" ] && ${prealable}; then
   : > ${q(journal)}
-  if ${lancer} < /dev/null > ${q(journal)} 2>&1; then CODE=0; else CODE=$?; fi
+  if ${lancer} < ${q(entree)} > ${q(journal)} 2>&1; then CODE=0; else CODE=$?; fi
   # Seules les erreurs du moteur comptent (le vérificateur peut tester une limite de requêtes).
   E=$(grep -E '"type":"(error|turn.failed)"' ${q(journal)} 2>/dev/null | tail -3)
   if [ -n "$E" ] && echo "$E" | grep -qiE '${FACTURATION_CODEX}'; then echo "@@ FACTURATION_${mode.toUpperCase()} $(echo "$E" | grep -oE '"message":"[^"]{0,200}' | head -1 | cut -c12-)"

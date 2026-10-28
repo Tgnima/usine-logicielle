@@ -189,8 +189,8 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
       "rm -rf /tmp/sorties/analyse && mkdir -p /tmp/sorties/analyse && cd /tmp/sorties/analyse",
       ...(projetId ? scriptPieces(config, projetId, "/tmp/sorties/analyse/pieces") : []),
       ecrireFichier("/tmp/sorties/analyse/consigne.md", texte),
-      ctx ? scriptClaude(ctx, { args: `-p "$(cat consigne.md)" --output-format json --system-prompt ${q(SYSTEME)} ${outils}`, modele, sortie: "/tmp/sorties/analyse/reponse.json" })
-        : `claude -p "$(cat consigne.md)" --output-format json --model ${q(modele)} --system-prompt ${q(SYSTEME)} ${outils} > reponse.json`,
+      ctx ? scriptClaude(ctx, { args: `-p --output-format json --system-prompt ${q(SYSTEME)} ${outils}`, entree: "/tmp/sorties/analyse/consigne.md", modele, sortie: "/tmp/sorties/analyse/reponse.json" })
+        : `claude -p --output-format json --model ${q(modele)} --system-prompt ${q(SYSTEME)} ${outils} < consigne.md > reponse.json`,
       "echo \"@@ ANALYSE_OK\"",
     ].join("\n")
     const r = await executer(config.atelier.url, config.secrets.worker, script, { minutes: 20 })

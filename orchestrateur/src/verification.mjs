@@ -194,7 +194,7 @@ export async function verifier(ctx, projet, tache, sha) {
     ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
     `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 180 node /tmp/sorties/verif/captures.cjs; fi`,
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt "$(cat /tmp/sorties/verif/consigne.md)"`, journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE" }),
+    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt -`, entree: "/tmp/sorties/verif/consigne.md", journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE" }),
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     "else tail -30 /tmp/sorties/verif/app.log; fi",
@@ -205,7 +205,7 @@ export async function verifier(ctx, projet, tache, sha) {
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
     "if [ -n \"$IMAGES\" ] && grep -q '\"approuve\"' /tmp/sorties/verif/verdict.txt 2>/dev/null; then",
-    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt "$(cat /tmp/sorties/verif/consigne-design.md)"`, journal: "/tmp/sorties/verif/design.log", marqueur: "DESIGN_CODE" }),
+    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt -`, entree: "/tmp/sorties/verif/consigne-design.md", journal: "/tmp/sorties/verif/design.log", marqueur: "DESIGN_CODE" }),
     "fi",
     LIBERER_PORT,
   ].join("\n"), { minutes: 40 })

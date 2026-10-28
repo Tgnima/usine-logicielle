@@ -187,7 +187,7 @@ export async function inventorier(ctx, projetId) {
       ecrireFichier("/tmp/sorties/inventaire/consigne.md", consigneInventaire(projet, persona, problemes)),
       "rm -f /tmp/sorties/inventaire/inventaire.json",
       scriptClaude(ctx, {
-        args: `-p "$(cat /tmp/sorties/inventaire/consigne.md)" --append-system-prompt ${q(SYSTEME)} --dangerously-skip-permissions --max-turns 120 --output-format stream-json --verbose`,
+        args: `-p --append-system-prompt ${q(SYSTEME)} --dangerously-skip-permissions --max-turns 120 --output-format stream-json --verbose`, entree: "/tmp/sorties/inventaire/consigne.md",
         modele: config.modeles?.inventaire?.modele ?? config.modeles.renfort?.modele ?? config.modeles.atelier.modele,
         sortie: "/tmp/sorties/inventaire/agent.jsonl",
         erreurs: "/tmp/sorties/inventaire/agent.err",
