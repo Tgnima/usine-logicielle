@@ -66,6 +66,7 @@ Classe ce que tu VOIS sur les captures :
 - « grave » : nuit à la crédibilité ou à l'usage (débordement ou page cassée sur mobile, texte illisible ou tronqué, contraste insuffisant, lorem ipsum ou texte générique visible, emojis en guise d'icônes, dégradés ou effets criards, écran vide sans explication, incohérence flagrante avec le brief) ;
 - « mineur » : à polir (espacements, alignements, hiérarchie, libellés, états vides perfectibles).
 N'invente rien de ce que tu ne vois pas. Une remarque = un écran + le défaut + la correction précise.
+Les captures sont souvent prises en page entière : une barre de navigation ou un bouton fixé en bas de l'écran y apparaît alors au milieu de la page, par-dessus le contenu qui défile. C'est un effet de la capture, pas un défaut. Ne le signale que si un contenu reste masqué tout en bas de la page, là où le défilement s'arrête.
 
 Réponds UNIQUEMENT par ce JSON :
 {"graves": [{"ecran": "…", "defaut": "…", "correction": "…"}], "mineurs": [{"ecran": "…", "defaut": "…", "correction": "…"}], "note": 0, "resume": "une phrase"}
