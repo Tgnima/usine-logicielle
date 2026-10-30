@@ -5,6 +5,7 @@
 // un clic, ou un commentaire « A », « B », « C » (ou une consigne libre) sur l'issue.
 import { maj, noter, obtenir } from "./db.mjs"
 import { lireReglage, reglagesCouts } from "./couts.mjs"
+import { presenterDecision } from "./presentation.mjs"
 import { MARQUE, ajouterEtiquettes, commenter, commentaires, creerIssue, fermerIssue, fusionnerPR, lireIssue, lirePR, retirerEtiquette } from "./github.mjs"
 
 const RAISONS = {
@@ -76,7 +77,8 @@ export async function escalader(ctx, { projetId, tacheId = null, raison, details
   // (Un projet en réorientation y reste : la tâche sera revue avec le nouveau plan.)
   if ((config.autonomie?.arret === "projet" || !tache) && obtenir(db, "projets", projetId).statut !== "reorientation") maj(db, "projets", projetId, { statut: "bloque" })
   noter(db, { projet: projetId, tache: tacheId, type: "escalade", message: `${sujet} : ${raison}` })
-  const ts = await ctx.notifier.escalade(projet, { id, sujet, raison: RAISONS[raison] ?? raison, details: String(details).slice(0, 1500), options: opts, issue: issue ? `https://github.com/${projet.depot}/issues/${issue.number}` : null }).catch((e) => console.error(e))
+  const presentation = presenterDecision({ raison, raisonTexte: RAISONS[raison] ?? raison, options: opts, tache: tache ? obtenir(db, "taches", tache.id) : null })
+  const ts = await ctx.notifier.escalade(projet, { id, sujet, raison: RAISONS[raison] ?? raison, details: String(details).slice(0, 1500), options: opts, presentation, issue: issue ? `https://github.com/${projet.depot}/issues/${issue.number}` : null }).catch((e) => console.error(e))
   if (ts) db.prepare("UPDATE escalades SET message_ts = ? WHERE id = ?").run(ts, id)
   return id
 }

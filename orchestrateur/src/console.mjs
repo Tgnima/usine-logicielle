@@ -35,7 +35,8 @@ import { page as pageCouts } from "./tableau.mjs"
 import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
 import { MODES_REPRISE } from "./reprise.mjs"
 import { lireReorientation } from "./reorientation.mjs"
-import { ecartsEnCorrections, lireRecette, pointsACorriger } from "./recette.mjs"
+import { ecartsEnCorrections, lireRecette, pointsACorriger, propositionsRecette } from "./recette.mjs"
+import { ETAPES_TACHE, attendDecision, etapeTache, normaliserQuestions, phase, presenterDecision } from "./presentation.mjs"
 import { GOUFFRE, SEUIL, etageAtteint, verdictPyramide } from "./pyramide.mjs"
 import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
@@ -78,16 +79,20 @@ function resumeProjet(ctx, p) {
   const plan = lirePlan(p)
   const a = p.slug ? adresses(config, p.slug) : null
   const c = bilanProjet(db, reglagesCouts(db, config), p.id)
+  const escalades = db.prepare("SELECT COUNT(*) AS n FROM escalades WHERE projet_id = ? AND statut = 'ouverte'").get(p.id).n
   return {
     id: p.id,
+    // La ligne de vie (cinq phases) et le seul signal qui compte : l'usine attend-elle l'humain ?
+    phase: phase({ statut: p.statut, plan, lot_livre: p.lot_livre ?? 0 }),
+    attend: attendDecision(p.statut, escalades),
     nom: p.nom ?? p.prompt.slice(0, 60),
     resume: plan?.resume ?? p.prompt.slice(0, 160),
-    brique: plan?.pile ? null : plan?.brique ?? (plan ? "webapp" : null),
+    brique: plan?.pile || !plan?.lots?.length ? null : plan.brique ?? "webapp",
     statut: p.statut,
     lot_livre: p.lot_livre,
     lots: plan?.lots?.length ?? 0,
     avancement: avancement(db, p),
-    escalades: db.prepare("SELECT COUNT(*) AS n FROM escalades WHERE projet_id = ? AND statut = 'ouverte'").get(p.id).n,
+    escalades,
     cout: c.mesure ? montant(reglagesCouts(db, config), c.api) : null,
     apercu: a && p.lot_livre && !p.apercu_retire ? a.apercu : null,
     production: a && p.statut === "en_production" ? a.production : null,
@@ -108,8 +113,8 @@ function aTraiter(ctx) {
   for (const p of db.prepare("SELECT * FROM projets WHERE statut IN ('plan_a_valider', 'questions', 'livre') ORDER BY id DESC").all()) {
     const plan = lirePlan(p)
     if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches` })
-    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: (plan?.questions ?? []).slice(0, 1).join("") })
-    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · livré`, detail: "à mettre en production ou à corriger" })
+    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "" })
+    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger" })
   }
   return liste
 }
@@ -147,7 +152,7 @@ async function detailProjet(ctx, id) {
   const p = obtenir(db, "projets", id)
   if (!p || p.statut === "supprime") throw erreur(404, "Projet introuvable.")
   const plan = lirePlan(p)
-  const t = taches(db, id).map((x) => ({ id: x.id, cle: x.cle, lot: x.lot, titre: x.titre, statut: x.statut, tentative: x.tentative, approche: x.approche, pr: x.pr, tests: x.tests, design: x.design ? JSON.parse(x.design) : null, retours: x.statut === "fusionnee" ? null : x.retours?.slice(0, 1500) ?? null }))
+  const t = taches(db, id).map((x) => ({ id: x.id, cle: x.cle, lot: x.lot, titre: x.titre, statut: x.statut, etape: etapeTache(x.statut), tentative: x.tentative, approche: x.approche, pr: x.pr, tests: x.tests, design: x.design ? JSON.parse(x.design) : null, retours: x.statut === "fusionnee" ? null : x.retours?.slice(0, 1500) ?? null }))
   let etapes = []
   try {
     etapes = JSON.parse(lireReglage(db, `suivi_${id}`, "[]"))
@@ -160,14 +165,21 @@ async function detailProjet(ctx, id) {
     taches: t,
     etapes,
     journal: db.prepare("SELECT id, le, type, message, tache_id FROM journal WHERE projet_id = ? ORDER BY id DESC LIMIT 80").all(id).reverse(),
-    escalades: db.prepare("SELECT id, tache_id, raison, options, cree_le FROM escalades WHERE projet_id = ? AND statut = 'ouverte' ORDER BY id").all(id).map((e) => ({ ...e, raison: RAISONS[e.raison] ?? e.raison, options: JSON.parse(e.options), tache: e.tache_id ? obtenir(db, "taches", e.tache_id)?.cle : null })),
+    escalades: db.prepare("SELECT id, tache_id, raison, options, cree_le FROM escalades WHERE projet_id = ? AND statut = 'ouverte' ORDER BY id").all(id).map((e) => {
+      const tache = e.tache_id ? obtenir(db, "taches", e.tache_id) : null
+      const options = JSON.parse(e.options)
+      return { ...e, raison: RAISONS[e.raison] ?? e.raison, options, tache: tache?.cle ?? null, presentation: presenterDecision({ raison: e.raison, raisonTexte: RAISONS[e.raison] ?? e.raison, options, tache }) }
+    }),
+    questions: normaliserQuestions(plan?.questions),
+    etapes_noms: ETAPES_TACHE,
     decisions: decisions(db, id).slice(-10),
     production_choix: choixProduction(config, p.production ? JSON.parse(p.production) : null),
     production_texte: p.production ? decrireChoix(JSON.parse(p.production)) : null,
     domaines: listerDomaines(db, id),
     domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id),
     ip_serveur: (await ipServeur(config).catch(() => []))[0] ?? null,
-    captures: capturesProjet(ctx, id),
+    // Chaque capture porte son lot : le volet « Produit » les montre lot par lot.
+    captures: capturesProjet(ctx, id).map((c) => ({ ...c, lot: t.find((x) => x.cle === c.tache)?.lot ?? null })),
     pieces: listerPieces(config, id).map((x) => ({ nom: x.nom, taille: x.taille })),
     video: etatVideo(ctx, id),
     estimation: plan?.lots?.length ? estimation(ctx, plan.lots.reduce((n, l) => n + l.taches.length, 0)) : null,
@@ -184,7 +196,7 @@ async function detailProjet(ctx, id) {
     })(),
     inventaire: p.inventaire ? JSON.parse(p.inventaire) : null,
     profil: p.profil ? JSON.parse(p.profil) : null,
-    recette: lireRecette(p) && { ...lireRecette(p), etage: etageAtteint(lireRecette(p).pyramide), gouffre: GOUFFRE, seuil: SEUIL, verdict_pyramide: verdictPyramide(lireRecette(p).pyramide), points: pointsACorriger(lireRecette(p)) },
+    recette: lireRecette(p) && { ...lireRecette(p), etage: etageAtteint(lireRecette(p).pyramide), gouffre: GOUFFRE, seuil: SEUIL, verdict_pyramide: verdictPyramide(lireRecette(p).pyramide), points: pointsACorriger(lireRecette(p)), propositions: propositionsRecette(lireRecette(p)) },
     pr_livraison: p.pr_livraison && p.depot ? `https://github.com/${p.depot}/pull/${p.pr_livraison}` : null,
     budget: (() => {
       const rc = reglagesCouts(db, config)
@@ -377,9 +389,11 @@ const ROUTES = [
     if (!r.ok) throw erreur(409, r.message)
     return r
   }],
-  ["POST", /^\/api\/projets\/(\d+)\/corriger-recette$/, (ctx, [id], _c, qui) => {
+  ["POST", /^\/api\/projets\/(\d+)\/corriger-recette$/, (ctx, [id], c, qui) => {
     const p = obtenir(ctx.db, "projets", Number(id))
-    const texte = ecartsEnCorrections(lireRecette(p))
+    // Sans choix : tous les points. Avec { garder: [index…], ajout } : les points cochés, et une demande en plus.
+    const garder = Array.isArray(c?.garder) ? c.garder.map(Number).filter(Number.isInteger) : null
+    const texte = ecartsEnCorrections(lireRecette(p), { garder, ajout: String(c?.ajout ?? "").slice(0, 2000) })
     if (!texte) throw erreur(409, "La recette n'a relevé aucun écart, et la pyramide est tenue.")
     return demanderCorrections(ctx, Number(id), texte, qui.email)
   }],
@@ -425,6 +439,18 @@ const ROUTES = [
   }],
   ["POST", /^\/api\/projets\/(\d+)\/relancer$/, (ctx, [id], _c, qui) => {
     const r = actions.relancerProjet(ctx, Number(id), qui.email)
+    if (!r.ok) throw erreur(409, r.message)
+    return r
+  }],
+  // Les réponses aux questions de l'analyste : une par question ({ option }, { libre } ou { auChoix }).
+  ["POST", /^\/api\/projets\/(\d+)\/reponses$/, async (ctx, [id], c, qui) => {
+    if (!Array.isArray(c.reponses)) throw erreur(400, "Réponses attendues sous forme de liste.")
+    const reponses = c.reponses.slice(0, 10).map((r) => ({
+      ...(Number.isInteger(r?.option) ? { option: r.option } : {}),
+      ...(r?.libre ? { libre: String(r.libre).slice(0, 2000) } : {}),
+      ...(r?.auChoix === true ? { auChoix: true } : {}),
+    }))
+    const r = await actions.repondreQuestions(ctx, Number(id), reponses, qui.email)
     if (!r.ok) throw erreur(409, r.message)
     return r
   }],

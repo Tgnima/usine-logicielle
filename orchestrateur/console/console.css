@@ -215,3 +215,69 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .pieces { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px }
 .pieces li { display: flex; gap: 10px; align-items: center; font-size: 13px; padding: 6px 10px; border: 1px solid var(--trait); border-radius: 8px; background: var(--surface) }
 .pieces li .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+/* --- Refonte : le produit au centre ------------------------------------------------------ */
+/* Le menu en deux groupes : le travail, puis l'usine. */
+.nav-groupe { padding: 14px 12px 4px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--doux) }
+
+/* La ligne de vie : cinq phases, la phase en cours remplie selon l'avancement. */
+.vie { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px }
+.vie li { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--doux) }
+.vie li i { display: block; height: 6px; border-radius: 999px; background: var(--trait-2) }
+.vie li.fait i { background: var(--ok-point) } .vie li.fait { color: var(--texte) }
+.vie li.courant { color: var(--encre); font-weight: 700 }
+.vie li.courant i { background: linear-gradient(90deg, var(--ciel) var(--rempli, 50%), var(--trait-2) var(--rempli, 50%)) }
+.vie small { font-weight: 500; color: var(--doux); font-size: 12px }
+
+/* L'accueil : la question d'abord. */
+.accueil { padding: 8px 0 4px }
+.accueil h1 { text-align: center; font-size: clamp(26px, 4vw, 34px) }
+.onglets-type { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center }
+.saisie { max-width: 760px; width: 100%; margin: 0 auto; background: var(--surface); border: 1px solid var(--champ); border-radius: var(--rayon-l); box-shadow: var(--ombre-carte); padding: 12px 12px 8px }
+.saisie:focus-within { outline: 2px solid var(--accent); outline-offset: 1px }
+.saisie textarea { width: 100%; border: 0; background: transparent; color: var(--encre); font: inherit; font-size: 16px; line-height: 1.55; resize: vertical; padding: 4px 6px; min-height: 76px }
+.saisie textarea:focus { outline: none }
+.saisie-bas { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; border-top: 1px solid var(--trait-2); padding-top: 8px }
+.pastille { border: 1px solid var(--trait); background: var(--surface); color: var(--texte); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; min-height: 34px }
+.pastille:hover { border-color: var(--accent); color: var(--encre) }
+
+/* La décision attendue : en tête, sur toute la largeur. */
+.decision { border-color: var(--signal-trait); background: color-mix(in srgb, var(--signal-fond) 55%, var(--surface)) }
+.decision .vu { margin: 4px 0 0; padding-left: 18px; font-size: 14px; color: var(--texte) }
+.options-decision { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px }
+.choix-decision { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--rayon-m); border: 1px solid var(--trait); background: var(--surface); color: var(--encre); font: inherit; cursor: pointer; min-height: 44px }
+.choix-decision span { font-size: 13px; color: var(--doux) }
+.choix-decision:hover { border-color: var(--accent) }
+.choix-decision.recommande { border: 2px solid var(--accent); background: var(--accent-fond) }
+
+/* Le plan en lecture. */
+.fonctions { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; color: var(--texte) }
+.criteres-lecture { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 14px }
+
+/* La fabrication en deux volets : le fil à gauche, le produit à droite. */
+.volets { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start }
+.volet { display: flex; flex-direction: column; gap: 16px; min-width: 0 }
+@media (max-width: 1100px) { .volets { grid-template-columns: 1fr } }
+.technique > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--doux) }
+.lots li button { all: unset; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 6px }
+.lots li button[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px }
+.lots li button:focus-visible { outline: 2px solid var(--accent) }
+.capture-grande { margin: 0; display: flex; flex-direction: column; gap: 6px }
+.capture-grande img { width: 100%; display: block; border-radius: var(--rayon-m); border: 1px solid var(--trait); background: var(--surface-2) }
+.capture-grande figcaption { font-size: 12px; color: var(--doux) }
+
+/* La mise en ligne : les réglages en une phrase, puis le moment « en ligne ». */
+.recap { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px }
+.recap dt { color: var(--doux) } .recap dd { margin: 0; color: var(--encre); font-weight: 600 }
+.en-ligne { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; padding: 20px 22px; border-radius: var(--rayon-l); background: linear-gradient(135deg, var(--ciel), var(--accent)); color: #ffffff }
+.en-ligne h2 { color: #ffffff; font-size: 20px }
+.en-ligne .url { font-size: 13px; background: rgba(255, 255, 255, .18); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere }
+.btn-blanc { background: #ffffff; color: #0e2a40 } .btn-blanc:hover { background: #eaf4fc; color: #0e2a40 }
+.btn-voile { background: rgba(255, 255, 255, .14); color: #ffffff; border-color: rgba(255, 255, 255, .55) } .btn-voile:hover { background: rgba(255, 255, 255, .26); color: #ffffff }
+
+/* La suite de la recette : des cases à cocher. */
+.suite { border-top: 1px solid var(--trait-2); padding-top: 14px }
+.coche { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer }
+.coche input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none }
+@media (max-width: 720px) { .vie li { font-size: 11px } .vie small { display: none } }
+@media (max-width: 720px) { .etapes { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 10px } }

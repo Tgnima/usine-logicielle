@@ -122,7 +122,9 @@ export const lireRecette = (projet) => {
 
 // Les écarts de la recette, en demande de corrections (ce qu'on a observé, pas le scénario entier),
 // puis les étages de la pyramide à faire monter.
-export function ecartsEnCorrections(recette) {
+// garder : les index des points retenus (dans l'ordre de propositionsRecette), null pour tous ;
+// ajout : une demande de la personne, ajoutée à la fin.
+export function ecartsEnCorrections(recette, { garder = null, ajout = "" } = {}) {
   const ecarts = (recette?.scenarios ?? []).filter((s) => !s.tenu)
   const parties = []
   if (ecarts.length) {
@@ -133,8 +135,16 @@ export function ecartsEnCorrections(recette) {
   }
   const pyramide = pyramideEnCorrections(recette?.pyramide)
   if (pyramide) parties.push(pyramide)
-  return parties.join("\n\n")
+  if (!garder && !ajout.trim()) return parties.join("\n\n")
+  // Une sélection : chaque paragraphe ne garde que ses points retenus, et disparaît s'il n'en a plus.
+  let n = -1
+  const retenus = parties.map((p) => p.split("\n").filter((l) => !l.startsWith("- ") || (n++, !garder || garder.includes(n)))).filter((lignes) => lignes.some((l) => l.startsWith("- "))).map((l) => l.join("\n"))
+  if (ajout.trim()) retenus.push(`Demande de la personne qui a validé la recette :\n- ${ajout.trim()}`)
+  return retenus.join("\n\n")
 }
+
+// Les points de la recette, un par ligne, dans l'ordre : ce que la console propose de cocher.
+export const propositionsRecette = (recette) => ecartsEnCorrections(recette).split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2))
 
 // Le nombre de points à corriger : les écarts, et les étages de la pyramide à faire monter.
 export const pointsACorriger = (recette) => ecartsEnCorrections(recette).split("\n").filter((l) => l.startsWith("- ")).length

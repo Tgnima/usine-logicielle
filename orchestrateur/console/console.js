@@ -40,6 +40,24 @@ const STATUTS = {
 }
 const BRIQUES = { webapp: "Application web", site: "Site vitrine", api: "API", pwa: "Application mobile" }
 const badgeStatut = (s) => html`<span class="badge ${(STATUTS[s] ?? ["", ""])[1]}">${(STATUTS[s] ?? [s])[0]}</span>`
+
+// La ligne de vie d'un projet : cinq phases (la phase et son état viennent du serveur).
+const PHASES = ["Comprendre", "Planifier", "Fabriquer", "Recette", "En ligne"]
+function ligneDeVie(p) {
+  const ph = p.phase
+  if (!ph) return ""
+  const a = p.avancement
+  const pctFab = a?.total ? Math.round((a.finies / a.total) * 100) : 0
+  const fini = p.statut === "en_production"
+  return html`<ol class="vie" aria-label="Où en est le projet">${PHASES.map((nom, i) => {
+    const cls = i < ph.index || (fini && i === ph.index) ? "fait" : i === ph.index ? "courant" : ""
+    const remplissage = i === ph.index && !fini ? (i === 2 ? pctFab : 50) : null
+    return html`<li class="${cls}" ${i === ph.index ? brut('aria-current="step"') : ""}><i style="${remplissage !== null ? `--rempli:${remplissage}%` : ""}"></i>${nom}${i === 2 && i === ph.index && p.lots ? html`<small>lot ${Math.min(p.lots, (p.lot_livre ?? 0) + 1)} sur ${p.lots}</small>` : ""}</li>`
+  })}</ol>`
+}
+// La pastille qui compte : l'usine attend-elle une décision ?
+const ATTENTES = { decision: "Ta décision est attendue", questions: "L'analyste attend tes réponses", plan: "Le plan attend ta validation", livre: "Prêt à mettre en ligne", echec: "À relancer" }
+const pastilleAttente = (p) => (p.attend?.oui ? html`<span class="badge orange">${ATTENTES[p.attend.quoi] ?? "À traiter"}</span>` : "")
 const heure = (le) => {
   const d = new Date(String(le).replace(" ", "T") + (String(le).includes("Z") ? "" : "Z"))
   return isNaN(d) ? "" : d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
@@ -83,6 +101,10 @@ const etat = {
   personas: null,
   persona: null,
   personaScenarios: null, // les scénarios en cours d'édition (ajout, retrait)
+  questions: null, // les réponses en cours aux questions de l'analyste : { projet, i, reponses }
+  planVue: "lecture", // le plan à valider : lecture (par défaut) | edition
+  prodReglages: false, // la mise en ligne : les réglages dépliés
+  produit: { projet: null, lot: null, i: 0 }, // le volet Produit : le lot et la capture affichés
 }
 
 function lireRoute() {
@@ -175,12 +197,9 @@ function vueProjets() {
   const projets = r.projets.filter(FILTRES[etat.filtre] ?? FILTRES.tous)
   return html`
     ${barreHaut()}
-    <div class="entete">
-      <div><h1>Projets</h1><p class="chapeau">Ce qui se fabrique, ce qui attend une décision, ce qui est en ligne.</p></div>
-      <a href="#/nouveau" class="btn btn-p">+ Nouveau projet</a>
-    </div>
     ${messageGlobal()}
     ${bandeauPremiersPas()}
+    ${saisieAccueil()}
     ${r.a_traiter.length ? html`<section aria-labelledby="a-traiter" class="pile">
       <h2 id="a-traiter" class="surtitre">À traiter · ${r.a_traiter.length}</h2>
       <div class="grille">${r.a_traiter.map((x) => html`<a class="a-traiter" href="#/projets/${x.projet}">
@@ -192,16 +211,15 @@ function vueProjets() {
       <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="tous">Projets</h2>
         <div class="rangee" role="group" aria-label="Filtrer les projets">${[["actifs", "Actifs"], ["production", "En production"], ["archives", "Abandonnés"], ["tous", "Tous"]].map(([id, nom]) => html`<button type="button" class="filtre" data-action="filtre" data-id="${id}" aria-pressed="${String(etat.filtre === id)}">${nom} · ${compte(id)}</button>`)}</div></div>
       ${projets.length ? html`<div class="tableau"><table style="min-width:860px">
-        <thead><tr><th>Projet</th><th>Type</th><th>État</th><th>Avancement</th><th>Coût</th><th>Adresses</th></tr></thead>
+        <thead><tr><th>Projet</th><th>Où il en est</th><th>Avancement</th><th title="Ce qu'aurait coûté le calcul au tarif des API (les abonnements coûtent moins)">Coût estimé</th><th>Adresses</th></tr></thead>
         <tbody>${projets.map((p) => {
           const a = p.avancement
           const pct = a.total ? Math.round((a.finies / a.total) * 100) : 0
           return html`<tr>
-            <td><a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a><div class="sous">${p.resume}</div></td>
-            <td>${p.repris ? "Dépôt repris" : BRIQUES[p.brique] ?? "—"}</td>
-            <td>${badgeStatut(p.statut)}${p.escalades ? html` <span class="badge orange">${p.escalades} décision</span>` : ""}</td>
+            <td><a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a><div class="sous">${p.resume}</div><div class="sous">${p.repris ? "Dépôt repris" : BRIQUES[p.brique] ?? ""}</div></td>
+            <td><div class="rangee" style="gap:6px"><span class="badge ${p.statut === "en_production" ? "vert" : ["echec"].includes(p.statut) ? "rouge" : "bleu"}">${p.phase?.nom ?? (STATUTS[p.statut] ?? [p.statut])[0]}</span>${pastilleAttente(p)}</div><div class="sous">${p.phase?.etat ?? ""}</div></td>
             <td style="min-width:180px"><div class="rangee" style="flex-wrap:nowrap"><div class="jauge ${p.statut === "en_production" || p.statut === "livre" ? "verte" : ""}" style="flex:1"><div style="width:${pct}%"></div></div><span class="mono aide">${a.finies}/${a.total}</span></div>
-              <div class="sous">${a.en_cours ? `${a.en_cours.cle} ${a.en_cours.statut === "verification" ? "en vérification" : "en cours"}` : p.apercu_vie && p.apercu_vie !== "—" ? `aperçu : ${p.apercu_vie}` : ""}</div></td>
+              <div class="sous">${a.en_cours ? `En cours : ${a.en_cours.titre}` : p.apercu_vie && p.apercu_vie !== "—" ? `aperçu : ${p.apercu_vie}` : ""}</div></td>
             <td class="mono">${p.cout ?? "—"}</td>
             <td>${p.production ? html`<a href="${p.production}" target="_blank" rel="noopener">production</a>` : ""}${p.production && p.apercu ? " · " : ""}${p.apercu ? html`<a href="${p.apercu}" target="_blank" rel="noopener">aperçu</a>` : ""}${!p.production && !p.apercu ? html`<span class="aide">pas encore</span>` : ""}</td>
           </tr>`
@@ -212,6 +230,25 @@ function vueProjets() {
       <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Serveur</div><div style="font-size:22px;font-weight:700">${r.serveur?.disque !== null && r.serveur ? `Disque ${r.serveur.disque} %` : "—"}</div><div class="aide">${r.serveur?.memoire !== null && r.serveur ? `mémoire ${r.serveur.memoire} %` : ""}</div></a>
       <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Version de l'usine</div><div style="font-size:22px;font-weight:700">${r.usine.mise_a_jour?.disponible ? "Mise à jour disponible" : "À jour"}</div><div class="aide">${r.usine.mise_a_jour?.version ? `version ${r.usine.mise_a_jour.version}` : ""}</div></a>
     </section>`
+}
+
+// L'accueil commence par la question : décrire le besoin et lancer, sans quitter la page.
+// Les pièces jointes, le persona et la reprise d'un dépôt restent sur « Nouveau projet ».
+function saisieAccueil() {
+  const choix = [["webapp", "Application web"], ["pwa", "Mobile"], ["site", "Site"], ["api", "API"]]
+  const exemples = [["CRM léger", "Un CRM léger pour une équipe de 5 commerciaux : contacts, opportunités, relances."], ["Site d'architectes", "Le site vitrine d'un cabinet d'architectes, avec réalisations et formulaire de contact."], ["API ERP ↔ boutique", "Une API qui relie notre ERP à la boutique en ligne : stocks et commandes."], ["Suivi des congés", "Le suivi des congés de l'équipe : demandes, validation par le manager, calendrier."]]
+  return html`<section class="accueil" aria-labelledby="accueil-titre">
+    <form class="pile" data-form="nouveau" style="gap:12px">
+      <h1 id="accueil-titre">Que veux-tu construire ?</h1>
+      <div class="onglets-type" role="group" aria-label="Type de produit">${choix.map(([id, nom]) => html`<button type="button" class="filtre" data-action="brique" data-id="${id}" aria-pressed="${String(etat.brique === id)}">${nom}</button>`)}</div>
+      <div class="saisie">
+        <label class="cache" for="demande">La demande</label>
+        <textarea id="demande" name="prompt" rows="3" required minlength="20" placeholder="Décris le besoin comme à un collègue : qui l'utilise, les écrans clés, ce qui n'est pas demandé."></textarea>
+        <div class="saisie-bas"><a class="lien-btn" style="padding-left:0" href="#/nouveau">Pièces jointes, persona, dépôt existant…</a><button type="submit" class="btn btn-p btn-petit">Lancer l'analyse</button></div>
+      </div>
+      <div class="rangee" style="justify-content:center">${exemples.map(([nom, texte]) => html`<button type="button" class="pastille" data-action="exemple" data-texte="${texte}">${nom}</button>`)}</div>
+    </form>
+  </section>`
 }
 
 function vueNouveau() {
@@ -474,16 +511,110 @@ function blocRecette(p) {
       ${r.resume ? html`<p style="margin:0">${r.resume}</p>` : ""}
       ${blocPyramide(r)}
       ${r.total ? html`<ul style="margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:8px">${r.scenarios.map((s) => html`<li class="rangee" style="flex-wrap:nowrap;align-items:flex-start"><span class="badge ${s.tenu ? "vert" : "rouge"}">${s.tenu ? "tenu" : "écart"}</span><span><strong>${s.titre}</strong><span class="aide" style="display:block">${s.tenu ? s.observe : s.ecart || s.observe}</span></span></li>`)}</ul>` : ""}
-      ${points && ["livre", "en_production"].includes(p.statut) ? html`<div><button type="button" class="btn btn-s" data-action="corriger-recette">Corriger et monter d'un étage (${points} point(s))</button></div>` : ""}`}
+      ${points && r.propositions?.length && ["livre", "en_production"].includes(p.statut) ? html`<div class="pile suite" style="gap:8px">
+        <strong>La suite proposée</strong><span class="aide">Coche ce que l'usine doit corriger : l'analyste en fait un lot de corrections.</span>
+        ${r.propositions.map((x, i) => html`<label class="coche"><input type="checkbox" name="garder" value="${i}" checked><span>${x}</span></label>`)}
+        <label class="cache" for="recette-ajout">Ajouter une demande</label><input id="recette-ajout" class="champ" placeholder="Ajouter une demande…">
+        <div><button type="button" class="btn btn-p" data-action="corriger-recette">Lancer ces corrections</button></div>
+      </div>` : ""}`}
     <div class="aide">Jouée sur ${String(r.sha ?? "").slice(0, 7)} par le vérificateur${r.persona ? ", dans la peau du persona. L'agent qui code n'a jamais vu ces scénarios." : ", comme un nouvel utilisateur."}</div>
   </section>`
 }
 
-// Les étapes d'une tâche, d'après son statut.
-function etapesTache(t) {
-  const noms = ["Agent", "Contrôle", "Sécurité", "Vérificateur", "Design", "Fusion"]
-  const fait = t.statut === "fusionnee" ? 6 : t.statut === "verification" ? 3 : 0
-  return html`<ol class="etapes" aria-label="Étapes de la tâche">${noms.map((n, i) => html`<li class="${i < fait ? "fait" : i === fait && t.statut !== "fusionnee" ? "encours" : ""}">${n}</li>`)}</ol>`
+// Les étapes d'une fonction, nommées pour l'utilisateur (la liste et l'étape viennent du serveur).
+function etapesTache(t, noms) {
+  const fait = t.etape ?? 0
+  return html`<ol class="etapes" aria-label="Étapes de la fonction">${noms.map((n, i) => html`<li class="${i < fait ? "fait" : i === fait ? "encours" : ""}">${n}</li>`)}</ol>`
+}
+
+// Une décision attendue : en tête de page, ce qui bloque en une phrase, ce que le contrôle a vu,
+// la recommandation de l'usine, et chaque choix avec sa conséquence.
+function blocDecision(p, e) {
+  const d = e.presentation
+  const avecConsigne = d.options.some((o) => o.cle === "A")
+  return html`<section class="carte carte-p pile decision" aria-labelledby="decision-${e.id}">
+    <div class="surtitre" style="color:var(--signal)">Ta décision</div>
+    <h2 id="decision-${e.id}">${d.titre}</h2>
+    <p style="margin:0;color:var(--texte)">L'usine s'est arrêtée parce que ${d.raison}.</p>
+    ${d.vu.length ? html`<div><strong style="font-size:14px">Ce que le contrôle a vu</strong><ul class="vu">${d.vu.map((x) => html`<li>${nettoyer(x)}</li>`)}</ul></div>` : ""}
+    ${d.pourquoi ? html`<div class="message info"><span><strong>L'usine recommande : ${d.options.find((o) => o.recommande)?.libelle ?? ""}.</strong> ${d.pourquoi}</span></div>` : ""}
+    ${avecConsigne ? html`<label class="titre-champ" for="consigne-${e.id}">Ta consigne pour l'agent <span class="aide" style="font-weight:400">· facultative, utilisée si l'usine reprend</span></label>
+      <textarea id="consigne-${e.id}" class="champ" rows="2" placeholder="Ex. : filtre sur la date du dernier email envoyé, pas sur la date de création du contact."></textarea>` : ""}
+    <div class="options-decision">${d.options.map((o) => html`<button type="button" class="choix-decision${o.recommande ? " recommande" : ""}" data-action="decider" data-id="${e.id}" data-choix="${o.cle}">
+      <strong>${o.libelle}${o.recommande ? html` <span class="badge bleu">recommandé</span>` : ""}</strong><span>${o.consequence || o.detail}</span></button>`)}</div>
+    ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" class="lien-btn" style="align-self:flex-start;padding-left:0" data-action="ouvrir-reorienter">Ou changer de direction pour tout le projet</button>` : ""}
+  </section>`
+}
+
+// Les questions de l'analyste, une à la fois : les options (la recommandée est cochée d'avance),
+// une réponse libre, ou « laisser l'analyste choisir ».
+function blocQuestions(p) {
+  const qs = p.questions ?? []
+  if (!qs.length) return ""
+  if (etat.questions?.projet !== p.id) etat.questions = { projet: p.id, i: 0, reponses: qs.map((q) => (q.recommande !== null ? { option: q.recommande } : {})) }
+  const s = etat.questions
+  const q = qs[s.i]
+  const r = s.reponses[s.i] ?? {}
+  const derniere = s.i === qs.length - 1
+  return html`<section class="carte carte-p pile" style="gap:14px" aria-labelledby="questions-titre">
+    <div class="barre"><h2 id="questions-titre">L'analyste a ${qs.length > 1 ? `${qs.length} questions` : "une question"} avant de planifier</h2><span class="aide">Question ${s.i + 1} sur ${qs.length}</span></div>
+    <fieldset class="pile" style="gap:8px"><legend style="font-weight:600;font-size:16px;margin-bottom:8px">${q.question}</legend>
+      ${q.options.map((o, j) => html`<label class="choix"><input type="radio" name="question" value="${j}" ${r.option === j && !r.libre ? "checked" : ""}><span><strong>${o.libelle}</strong>${j === q.recommande ? html` <span class="badge bleu">recommandé</span>` : ""}${o.detail ? html`<br><span class="aide">${o.detail}</span>` : ""}</span></label>`)}
+      <label class="titre-champ" for="question-libre" style="margin-top:4px">${q.options.length ? "Ou ta réponse" : "Ta réponse"}</label>
+      <input id="question-libre" class="champ" value="${r.libre ?? ""}" placeholder="${q.options.length ? "Autre chose…" : ""}">
+    </fieldset>
+    <div class="barre">
+      <button type="button" class="lien-btn" style="padding-left:0" data-action="questions-auto">Laisser l'analyste choisir${derniere ? "" : " pour la suite"}</button>
+      <div class="rangee">${s.i > 0 ? html`<button type="button" class="btn btn-s" data-action="questions-aller" data-id="${s.i - 1}">Précédente</button>` : ""}${derniere ? html`<button type="button" class="btn btn-p" data-action="questions-envoyer">Envoyer les réponses</button>` : html`<button type="button" class="btn btn-p" data-action="questions-aller" data-id="${s.i + 1}">Suivante</button>`}</div>
+    </div>
+  </section>`
+}
+// La réponse en cours de saisie (le texte libre passe avant l'option cochée).
+function noterReponse() {
+  const s = etat.questions
+  if (!s) return
+  const libre = $("#question-libre")?.value.trim()
+  const coche = document.querySelector("input[name=question]:checked")
+  s.reponses[s.i] = libre ? { libre } : coche ? { option: Number(coche.value) } : s.reponses[s.i] ?? {}
+}
+
+// Le plan, à lire d'abord : pour chaque lot, ce qu'on pourra faire et les fonctions ; les critères
+// se déplient. L'éditeur détaillé reste à un clic (« Modifier en détail »).
+function blocPlanLecture(p) {
+  const plan = p.plan
+  const d = plan.design
+  const e = p.estimation
+  const nb = plan.lots.reduce((n, l) => n + l.taches.length, 0)
+  return html`
+    <div class="colonnes">
+      <div class="colonne-large">
+        ${plan.sens?.promesse ? html`<section class="carte carte-p pile"><div class="surtitre">Ce que le produit change</div><p style="margin:0;font-size:17px;font-weight:600">${plan.sens.promesse}</p>${plan.sens.moment ? html`<div class="aide">${plan.sens.moment}</div>` : ""}</section>` : ""}
+        ${plan.lots.map((lot, i) => html`<section class="carte carte-p pile" aria-label="Lot ${i + 1}">
+          <div class="mono aide">LOT ${i + 1} · ${lot.taches.length} fonction${lot.taches.length > 1 ? "s" : ""}</div>
+          ${lot.objectif ? html`<div><div class="aide">À la fin de ce lot</div><h2 style="font-size:17px">${lot.objectif}</h2></div>` : html`<h2 style="font-size:17px">${lot.nom}</h2>`}
+          <ul class="fonctions">${lot.taches.map((t) => html`<li>${t.titre}</li>`)}</ul>
+          <details><summary class="aide" style="cursor:pointer">Ce qui sera vérifié · ${lot.taches.reduce((n, t) => n + t.criteres.length, 0)} critère(s)</summary>
+            <ul class="criteres-lecture">${lot.taches.map((t) => t.criteres.map((c) => html`<li><span class="aide">${t.titre} :</span> ${c}</li>`))}</ul></details>
+        </section>`)}
+        ${plan.hors_perimetre?.length ? html`<div class="aide"><strong>Pas dans ce plan :</strong> ${plan.hors_perimetre.join(" · ")}</div>` : ""}
+      </div>
+      <aside class="colonne-etroite" aria-label="Décision sur le plan">
+        <div class="sombre pile">
+          <div class="aide">${BRIQUES[plan.brique ?? "webapp"] ?? "Dépôt repris"} · ${plan.lots.length} lots · ${nb} fonctions</div>
+          ${e?.disponible ? html`<div style="font-size:14px">Estimation : <strong>${e.cout}</strong> · <strong>${e.duree}</strong> de calcul</div><div class="aide">d'après les ${e.mesurees} fonctions déjà fabriquées par l'usine</div>` : ""}
+          <button type="button" class="btn" style="background:var(--fond);color:var(--encre)" data-action="valider-plan">Valider le plan et lancer</button>
+          <div class="aide">Première validation. La seconde viendra sur le produit fini.</div>
+        </div>
+        <div class="carte carte-p pile">
+          <label class="titre-champ" for="revision">Demander un changement</label>
+          <textarea id="revision" class="champ" rows="3" placeholder="Ex. : la signature du client n'est pas utile, mais il faut un mode sombre."></textarea>
+          <div><button type="button" class="btn btn-s" data-action="message" data-source="revision">Envoyer à l'analyste</button></div>
+        </div>
+        ${d ? html`<div class="carte carte-p pile"><strong>Brief de design</strong><p style="margin:0;font-size:14px;color:var(--texte)">${d.intention ?? ""}</p>
+          ${d.palette ? html`<div class="palette-couleurs" aria-label="Palette">${Object.entries(d.palette).slice(0, 6).map(([k, v]) => html`<span title="${k} ${v}" style="background:${/^#[0-9a-f]{3,8}$/i.test(v) ? v : "transparent"}"></span>`)}</div>` : ""}</div>` : ""}
+        <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="plan-vue" data-id="edition">Modifier en détail</button><button type="button" class="lien-btn" data-action="confirmer" data-quoi="abandonner">Abandonner ce plan</button></div>
+      </aside>
+    </div>`
 }
 
 // Le plan en cours de modification (une copie, tant qu'il n'est pas enregistré).
@@ -499,7 +630,8 @@ function blocPlan(p) {
   return html`
     <div class="colonnes">
       <form class="colonne-large" data-form="plan">
-        <p class="aide" style="margin:0">Tout est modifiable : titres, descriptions, critères, dépendances, ordre des tâches et des lots. Les critères doivent rester observables sur l'application en marche. Les numéros se recalculent seuls.</p>
+        <div class="barre"><p class="aide" style="margin:0;flex:1;min-width:260px">Tout est modifiable : titres, descriptions, critères, dépendances, ordre des tâches et des lots. Les critères doivent rester observables sur l'application en marche. Les numéros se recalculent seuls.</p>
+          ${etat.planModifie ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="plan-vue" data-id="lecture">Revenir à la lecture</button>`}</div>
         ${plan.lots.map((lot, i) => html`<section class="carte lot" aria-label="Lot ${i + 1}">
           <div class="lot-tete">
             <span class="mono aide">LOT ${i + 1}</span>
@@ -562,91 +694,117 @@ function blocFabrication(p) {
   const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
   const onglet = ongletActif(p)
   const lotCourant = enCours?.lot ?? Math.min(plan.lots.length, p.lot_livre + 1)
-  const lotsAbandonnes = new Set(plan.lots.map((_, i) => i + 1).filter((n) => {
-    const ts = p.taches.filter((t) => t.lot === n)
-    return ts.length && ts.every((t) => t.statut === "abandonnee")
-  }))
   const tachesLot = p.taches.filter((t) => t.lot === lotCourant)
-  const STT = { fusionnee: ["fusionnée", "ok"], en_cours: ["en cours", "actif"], verification: ["en vérif.", "actif"], prete: ["prête", ""], attente: ["en attente", ""], bloquee: ["bloquée", "actif"], abandonnee: ["abandonnée", ""] }
+  const STT = { fusionnee: ["ajoutée", "ok"], en_cours: ["en cours", "actif"], verification: ["essayée", "actif"], prete: ["à faire", ""], attente: ["à faire", ""], bloquee: ["à décider", "actif"], abandonnee: ["retirée", ""] }
   const discussion = p.journal.filter((j) => ["demande", "decision", "corrections", "diagnostic", "validation", "plan", "design", "abandon", "production", "domaine"].includes(j.type))
+  const essai = enCours && (enCours.approche || enCours.tentative)
   return html`
-    <section class="carte carte-p" aria-label="Lots">
-      <div class="barre" style="font-size:14px"><strong>Lots</strong><span class="aide">${p.avancement.fusionnees} tâches fusionnées sur ${p.avancement.total}</span></div>
-      <ol class="lots">${plan.lots.map((_, i) => {
-        const n = i + 1
-        const cls = lotsAbandonnes.has(n) ? "abandonne" : n <= p.lot_livre ? "livre" : n === lotCourant && ["fabrication", "corrections", "creation"].includes(p.statut) ? "courant" : ""
-        return html`<li class="mono ${cls}" title="Lot ${n} : ${plan.lots[i].nom}">${n}</li>`
-      })}</ol>
-      ${plan.lots[lotCourant - 1] ? html`<div style="margin-top:10px;font-size:14px">Lot ${lotCourant} · <strong>${plan.lots[lotCourant - 1].nom}</strong></div>` : ""}
-    </section>
-    <div class="colonnes">
-      <div class="colonne-large">
-        <section class="carte carte-p pile" style="gap:14px" aria-label="Tâche en cours">
+    <div class="volets">
+      <div class="volet">
+        <section class="carte carte-p pile" style="gap:14px" aria-labelledby="en-ce-moment">
           ${enCours ? html`
-            <div class="barre"><div><span class="mono aide">${enCours.cle}</span> <strong style="font-size:17px">${enCours.titre}</strong></div>
-              ${enCours.approche || enCours.tentative ? html`<span style="font-size:13px;color:var(--signal);font-weight:600">${enCours.approche ? `approche ${enCours.approche + 1} · modèle renforcé` : `correction ${enCours.tentative}`}</span>` : ""}</div>
-            ${etapesTache(enCours)}` : html`<div class="barre"><strong>${p.statut === "en_production" ? "En production" : p.statut === "livre" ? "Tous les lots sont livrés" : "Aucune tâche en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">l'usine passe à la suite</span>` : ""}</div>`}
-          <div class="onglets" role="tablist" aria-label="Vues du projet">
-            ${[...(enCours ? [["direct", "● En direct"]] : []), ["journal", "Journal"], ["captures", `Captures${p.captures.length ? ` · ${p.captures.length}` : ""}`], ["discussion", "Discussion"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(onglet === id)}" tabindex="${onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
-          </div>
-          <div role="tabpanel" id="panneau" aria-labelledby="onglet-${onglet}">
-          ${onglet === "direct" ? html`<div class="direct mono" role="log" aria-live="off" id="direct">${dessinerDirect()}</div>
-            <div class="aide">${enCours.statut === "verification" ? "Le vérificateur reconstruit l'application et teste les critères." : "L'agent code dans son atelier."} Mis à jour toutes les 3 secondes ; les secrets sont masqués.</div>` : ""}
-          ${onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
-            ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
-            ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
-          </div>` : ""}
-          ${onglet === "captures" ? (p.captures.length ? html`<div class="captures">${p.captures.map((c) => html`<figure><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture ${c.fichier} de la tâche ${c.tache}" loading="lazy"></a><figcaption>${c.tache} · ${c.fichier}</figcaption></figure>`)}</div>` : html`<div class="vide">Les captures arrivent avec chaque tâche vérifiée (ordinateur et mobile).</div>`) : ""}
-          ${onglet === "discussion" ? html`<div class="pile" style="gap:12px">
-            ${discussion.slice(-20).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type} · ${heure(j.le)}</small>${nettoyer(j.message.length > 900 ? j.message.slice(0, 900) + "…" : j.message)}</div>`)}
-            <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
-              <input id="message-libre" class="champ" placeholder="Une précision… (pendant la fabrication, elle part à la livraison ; pour changer de cap : « Changer de direction »)">
-              <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
-          </div>` : ""}
-          </div>
+            <div class="surtitre" id="en-ce-moment">En ce moment · lot ${lotCourant} sur ${plan.lots.length}</div>
+            <strong style="font-size:17px">Je construis : ${enCours.titre}</strong>
+            ${essai ? html`<span class="aide">${enCours.approche ? `Méthode ${enCours.approche + 1}` : `Essai ${enCours.tentative + 1}`} : la version précédente a été refusée par le contrôle, l'usine la reprend.</span>` : ""}
+            ${etapesTache(enCours, p.etapes_noms ?? [])}`
+          : html`<strong id="en-ce-moment">${p.statut === "en_production" ? "En ligne" : p.statut === "livre" ? "Tous les lots sont livrés" : p.statut === "creation" ? "L'usine prépare le dépôt et le socle" : "Aucune fonction en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">L'usine passe à la suite.</span>` : ""}`}
+          <details class="technique" id="technique" ${etat.techniqueOuvert ? "open" : ""}><summary>Détail technique : direct, journal, pull requests</summary>
+            <div class="pile" style="margin-top:12px">
+              ${enCours ? html`<div class="aide mono">${enCours.cle}${enCours.pr ? ` · PR #${enCours.pr}` : ""}${enCours.approche ? ` · approche ${enCours.approche + 1}, modèle renforcé` : enCours.tentative ? ` · correction ${enCours.tentative}` : ""}</div>` : ""}
+              <div class="onglets" role="tablist" aria-label="Détail technique">
+                ${[...(enCours ? [["direct", "● En direct"]] : []), ["journal", "Journal"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(onglet === id)}" tabindex="${onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
+              </div>
+              <div role="tabpanel" id="panneau" aria-labelledby="onglet-${onglet}">
+              ${onglet === "direct" ? html`<div class="direct mono" role="log" aria-live="off" id="direct">${dessinerDirect()}</div>
+                <div class="aide">${enCours.statut === "verification" ? "Le vérificateur reconstruit l'application et teste les critères." : "L'agent code dans son atelier."} Mis à jour toutes les 3 secondes ; les secrets sont masqués.</div>` : ""}
+              ${onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
+                ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
+                ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
+              </div>` : ""}
+              </div>
+            </div>
+          </details>
+        </section>
+        <section class="carte carte-p pile" style="gap:12px" aria-labelledby="fil-titre">
+          <h2 id="fil-titre" style="font-size:15px">Le fil</h2>
+          ${discussion.slice(-12).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type === "demande" || j.type === "decision" ? "Toi" : "L'usine"} · ${heure(j.le)}</small>${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
+          <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
+            <input id="message-libre" class="champ" placeholder="Une précision pour l'usine…">
+            <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
+          <div class="aide">Pendant la fabrication, une précision part avec la prochaine livraison. Pour changer de cap : « Changer de direction ».</div>
         </section>
       </div>
-      <aside class="colonne-etroite" aria-label="Tâches et décisions">
-        ${p.escalades.map((e) => html`<section class="carte carte-p pile" style="border-color:var(--signal-trait)">
-          <h2 style="font-size:15px;color:var(--signal)">Décision attendue${e.tache ? ` · ${e.tache}` : ""}</h2>
-          <p style="margin:0;font-size:14px;color:var(--texte)">${e.raison}</p>
-          <label class="cache" for="consigne-${e.id}">Consigne (facultative)</label>
-          <textarea id="consigne-${e.id}" class="champ" rows="2" placeholder="Consigne pour l'agent (facultatif)"></textarea>
-          ${e.options.map((o) => html`<button type="button" class="btn btn-s" style="justify-content:flex-start;text-align:left" data-action="decider" data-id="${e.id}" data-choix="${o.cle}" title="${o.detail}">${o.cle} · ${o.libelle}</button>`)}
-          ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" class="lien-btn" style="align-self:flex-start;padding-left:0" data-action="ouvrir-reorienter">Ou changer de direction pour tout le projet</button>` : ""}
-        </section>`)}
-        ${tachesLot.length ? html`<section class="carte carte-p"><h2 style="font-size:15px;margin-bottom:10px">Lot ${lotCourant} · tâches</h2>
-          <ul class="taches">${tachesLot.map((t) => html`<li><span class="cle mono">${t.cle}</span><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></section>` : ""}
-        ${p.depot ? html`<section class="carte carte-p pile" style="font-size:14px"><strong>Liens</strong>
-          <a href="${p.depot}" target="_blank" rel="noopener">Code sur GitHub</a>
-          ${p.apercu ? html`<a href="${p.apercu}" target="_blank" rel="noopener">Aperçu</a>` : ""}
-          ${p.production ? html`<a href="${p.production}" target="_blank" rel="noopener">Production</a>` : ""}</section>` : ""}
-      </aside>
+      <div class="volet">
+        ${blocProduit(p)}
+        ${tachesLot.length ? html`<section class="carte carte-p"><h2 style="font-size:15px;margin-bottom:10px">Lot ${lotCourant} · ${plan.lots[lotCourant - 1]?.nom ?? ""}</h2>
+          <ul class="taches">${tachesLot.map((t) => html`<li><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></section>` : ""}
+      </div>
     </div>`
 }
 
+// Le produit, à droite : les captures du contrôle (ordinateur et mobile), lot par lot, et le lien
+// vers l'aperçu. Pas de cadre intégré : les produits et le portier refusent d'être affichés dans
+// une autre page, c'est leur protection.
+function blocProduit(p) {
+  const plan = p.plan ?? { lots: [] }
+  const lotsAvecCaptures = [...new Set(p.captures.map((c) => c.lot).filter(Boolean))].sort((a, b) => a - b)
+  if (etat.produit.projet !== p.id) etat.produit = { projet: p.id, lot: null, i: 0 }
+  const lot = etat.produit.lot ?? lotsAvecCaptures.at(-1) ?? null
+  const caps = p.captures.filter((c) => c.lot === lot)
+  const i = Math.min(etat.produit.i, Math.max(0, caps.length - 1))
+  const c = caps[i]
+  const adresse = p.production ?? p.apercu
+  return html`<section class="carte carte-p pile produit" style="gap:12px" aria-labelledby="produit-titre">
+    <div class="barre"><h2 id="produit-titre" style="font-size:15px">Le produit</h2>${adresse ? html`<a class="btn btn-s btn-petit" href="${adresse}" target="_blank" rel="noopener">${p.production ? "Ouvrir le produit" : "Ouvrir l'aperçu"}</a>` : ""}</div>
+    <ol class="lots" aria-label="Lots">${plan.lots.map((l, j) => {
+      const n = j + 1
+      const cls = n <= p.lot_livre ? "livre" : n === Math.min(plan.lots.length, p.lot_livre + 1) && ["fabrication", "corrections", "creation"].includes(p.statut) ? "courant" : ""
+      return lotsAvecCaptures.includes(n)
+        ? html`<li class="mono ${cls}"><button type="button" data-action="produit-lot" data-id="${n}" aria-pressed="${String(lot === n)}" title="Lot ${n} : ${l.nom}">${n}</button></li>`
+        : html`<li class="mono ${cls}" title="Lot ${n} : ${l.nom}">${n}</li>`
+    })}</ol>
+    ${c ? html`<figure class="capture-grande"><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture du lot ${lot} : ${c.fichier}"></a>
+        <figcaption>Lot ${lot} · ${plan.lots[lot - 1]?.nom ?? ""} · ${i + 1} sur ${caps.length}</figcaption></figure>
+      ${caps.length > 1 ? html`<div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="produit-capture" data-id="${(i - 1 + caps.length) % caps.length}" aria-label="Capture précédente">←</button><button type="button" class="btn btn-s btn-petit" data-action="produit-capture" data-id="${(i + 1) % caps.length}" aria-label="Capture suivante">→</button></div>` : ""}`
+    : html`<div class="vide">${p.lot_livre ? "Pas de capture pour ce lot." : "Le produit apparaîtra ici dès le premier lot livré : le contrôle prend des captures, sur ordinateur et sur mobile, de chaque fonction vérifiée."}</div>`}
+  </section>`
+}
+
+// La mise en ligne : les réglages en une phrase (modifiables), puis un seul bouton.
+const LIBELLES_PROD = {
+  donnees: { vide: "Base vide", demo: "Données de démo" },
+  emails: { captures: "Capturés : rien ne part", reels: "Réels, vers les destinataires autorisés" },
+  acces: { protege: "Protégé par la page de connexion", public: "Public, sans connexion" },
+  horloge: { reelle: "Réelle", acceleree: "Accélérée (un jour = une minute)" },
+}
 function blocProduction(p) {
+  if (p.statut === "mise_en_production") return html`<div class="message info pile" style="align-items:flex-start"><strong>Mise en ligne en cours</strong>
+    <span>Sauvegarde des données, construction de la dernière version vérifiée, bascule sans coupure. Cette page se met à jour toute seule.</span></div>`
   if (!["livre", "en_production"].includes(p.statut)) return ""
   const c = p.production_choix ?? {}
   const radio = (nom, val, titre, sous) => html`<label class="choix"><input type="radio" name="${nom}" value="${val}" ${c[nom] === val ? "checked" : ""}><span><strong>${titre}</strong>${sous ? html`<br><span class="aide">${sous}</span>` : ""}</span></label>`
+  const enProd = p.statut === "en_production"
   return html`
     <div class="colonnes">
-      <section class="carte carte-p colonne-large" aria-labelledby="prod" style="gap:20px">
-        <h2 id="prod">${p.statut === "en_production" ? "Production · changer les réglages" : "Mettre en production"}</h2>
-        ${p.production_texte ? html`<div class="aide">Réglages actuels : ${p.production_texte}</div>` : ""}
-        <form class="pile" style="gap:18px" data-form="production">
-          <fieldset><legend>Données au démarrage</legend><div class="grille">${radio("donnees", "vide", "Base vide", "les vraies données arrivent avec l'usage")}${radio("donnees", "demo", "Données de démo", "pour une présentation")}</div></fieldset>
-          <fieldset><legend>Emails</legend><div class="grille">${radio("emails", "captures", "Capturés", "rien ne part, visibles dans Mailpit")}${radio("emails", "reels", "Réels, destinataires autorisés", "seulement vers la liste ci-dessous")}</div>
-            <label class="aide" for="destinataires">Destinataires autorisés (adresses ou @domaine, séparés par des virgules)</label>
-            <input id="destinataires" name="destinataires_autorises" class="champ" value="${(c.destinataires_autorises ?? []).join(", ")}"></fieldset>
-          <fieldset><legend>Accès</legend><div class="grille">${radio("acces", "protege", "Protégé", "page de connexion de l'usine")}${radio("acces", "public", "Public", "ouvert à tous, sans connexion")}</div></fieldset>
-          <fieldset><legend>Horloge</legend><div class="grille">${radio("horloge", "reelle", "Réelle")}${radio("horloge", "acceleree", "Accélérée", "un jour = une minute (démo)")}</div></fieldset>
-          <div class="confirmer" role="alertdialog" aria-labelledby="conf-prod" id="conf-production" hidden>
-            <strong id="conf-prod" style="font-size:16px">Mettre ${p.nom} en production ?</strong>
-            <ul style="margin:0;padding-left:18px;font-size:14px;color:var(--texte)"><li>Dernière version vérifiée, avec les réglages ci-dessus.</li><li>Bascule sans coupure ; sauvegarde des données avant.</li><li>Ta validation est tracée dans le dépôt d'état.</li></ul>
-            <div class="rangee"><button type="submit" class="btn btn-p">Oui, mettre en production</button><button type="button" class="btn btn-s" data-action="annuler" data-quoi="production">Annuler</button></div>
+      <section class="carte carte-p colonne-large" aria-labelledby="prod" style="gap:18px">
+        <h2 id="prod">${enProd ? "Réglages de la production" : "Mettre en ligne"}</h2>
+        <form class="pile" style="gap:16px" data-form="production">
+          <dl class="recap">${Object.entries(LIBELLES_PROD).map(([cle, l]) => html`<dt>${{ donnees: "Données", emails: "Emails", acces: "Accès", horloge: "Horloge" }[cle]}</dt><dd>${l[c[cle]] ?? "—"}${cle === "emails" && c.emails === "reels" && c.destinataires_autorises?.length ? ` (${c.destinataires_autorises.join(", ")})` : ""}</dd>`)}</dl>
+          <div class="pile" style="gap:16px" id="prod-reglages" ${etat.prodReglages ? "" : "hidden"}>
+            <fieldset><legend>Données au démarrage</legend><div class="grille">${radio("donnees", "vide", "Base vide", "les vraies données arrivent avec l'usage")}${radio("donnees", "demo", "Données de démo", "pour une présentation")}</div></fieldset>
+            <fieldset><legend>Emails</legend><div class="grille">${radio("emails", "captures", "Capturés", "rien ne part, visibles dans Mailpit")}${radio("emails", "reels", "Réels, destinataires autorisés", "seulement vers la liste ci-dessous")}</div>
+              <label class="aide" for="destinataires">Destinataires autorisés (adresses ou @domaine, séparés par des virgules)</label>
+              <input id="destinataires" name="destinataires_autorises" class="champ" value="${(c.destinataires_autorises ?? []).join(", ")}"></fieldset>
+            <fieldset><legend>Accès</legend><div class="grille">${radio("acces", "protege", "Protégé", "page de connexion de l'usine")}${radio("acces", "public", "Public", "ouvert à tous, sans connexion")}</div></fieldset>
+            <fieldset><legend>Horloge</legend><div class="grille">${radio("horloge", "reelle", "Réelle")}${radio("horloge", "acceleree", "Accélérée", "un jour = une minute (démo)")}</div></fieldset>
           </div>
-          <div class="rangee" id="btn-production"><button type="button" class="btn btn-p" data-action="confirmer" data-quoi="production">${p.statut === "en_production" ? "Appliquer en production" : "Mettre en production"}</button></div>
+          <div><button type="button" class="lien-btn" style="padding-left:0" data-action="prod-reglages">${etat.prodReglages ? "Masquer les réglages" : "Modifier les réglages"}</button></div>
+          <div class="confirmer" role="alertdialog" aria-labelledby="conf-prod" id="conf-production" hidden>
+            <strong id="conf-prod" style="font-size:16px">${enProd ? `Appliquer ces réglages à ${p.nom} ?` : `Mettre ${p.nom} en ligne ?`}</strong>
+            <ul style="margin:0;padding-left:18px;font-size:14px;color:var(--texte)"><li>Dernière version vérifiée, avec les réglages ci-dessus.</li><li>Bascule sans coupure ; sauvegarde des données avant.</li><li>Ta validation est tracée dans le dépôt d'état.</li></ul>
+            <div class="rangee"><button type="submit" class="btn btn-p">${enProd ? "Oui, appliquer" : "Oui, mettre en ligne"}</button><button type="button" class="btn btn-s" data-action="annuler" data-quoi="production">Annuler</button></div>
+          </div>
+          <div class="rangee" id="btn-production"><button type="button" class="btn btn-p" data-action="confirmer" data-quoi="production">${enProd ? "Appliquer en production" : "Mettre en ligne"}</button></div>
         </form>
         <div class="pile" style="border-top:1px solid var(--trait-2);padding-top:16px">
           <label class="titre-champ" for="corrections">Demander des corrections</label>
@@ -665,13 +823,28 @@ function blocProduction(p) {
               <div class="aide">${d.message ?? "vérifié toutes les 2 minutes"}</div>` : ""}
             <div><button type="button" class="btn btn-d btn-petit" data-action="retirer-domaine" data-hote="${d.hote}">Retirer</button></div>
           </div>`)}
-          ${p.statut === "en_production" ? html`<form class="rangee" style="flex-wrap:nowrap" data-form="domaine"><label class="cache" for="hote">Nouveau domaine</label><input id="hote" name="hote" class="champ" placeholder="app.mon-entreprise.fr"><button type="submit" class="btn btn-s">Ajouter</button></form>` : html`<div class="aide">Un domaine personnalisé s'ajoute une fois le produit en production.</div>`}
+          ${enProd ? html`<form class="rangee" style="flex-wrap:nowrap" data-form="domaine"><label class="cache" for="hote">Nouveau domaine</label><input id="hote" name="hote" class="champ" placeholder="app.mon-entreprise.fr"><button type="submit" class="btn btn-s">Ajouter</button></form>` : html`<div class="aide">Un domaine personnalisé s'ajoute une fois le produit en ligne.</div>`}
         </section>
         ${p.apercu ? html`<section class="carte carte-p pile"><h2 style="font-size:15px">Aperçu</h2>
           <div style="font-size:14px">${p.apercu_garde ? "Gardé sans limite de durée." : `Durée de vie : ${p.apercu_vie}.`}</div>
           <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="apercu" data-quoi="prolonger">Prolonger</button>${p.apercu_garde ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="apercu" data-quoi="garder">Garder</button>`}<button type="button" class="btn btn-d btn-petit" data-action="apercu" data-quoi="retirer">Retirer</button></div></section>` : ""}
       </aside>
     </div>`
+}
+
+// Le produit est en ligne : l'adresse et ce qu'on fait ensuite.
+function blocEnLigne(p) {
+  if (p.statut !== "en_production" || !p.production) return ""
+  return html`<section class="en-ligne" aria-labelledby="en-ligne-titre">
+    <div class="pile" style="gap:6px;min-width:0"><h2 id="en-ligne-titre">${p.nom} est en ligne</h2><span class="url mono">${p.production.replace(/^https?:\/\//, "")}</span></div>
+    <div class="rangee">
+      <a class="btn btn-blanc" href="${p.production}" target="_blank" rel="noopener">Ouvrir</a>
+      <button type="button" class="btn btn-voile" data-action="copier" data-texte="${p.production}">Copier l'adresse</button>
+      <a class="btn btn-voile" href="#/acces">Inviter des utilisateurs</a>
+      <button type="button" class="btn btn-voile" data-action="aller" data-cible="hote">Ajouter un domaine</button>
+      ${p.video?.fichier ? "" : html`<button type="button" class="btn btn-voile" data-action="video">Générer la vidéo</button>`}
+    </div>
+  </section>`
 }
 
 // La vidéo de présentation du projet : un bouton, et la vidéo quand elle est prête.
@@ -766,32 +939,32 @@ function vueProjet() {
     ${barreHaut()}
     <div class="entete">
       <div><a class="retour" href="#/">← Projets</a>
-        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgeStatut(p.statut)}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.repris ? html`<span class="badge">Dépôt repris</span>` : ""}${p.persona ? html`<a class="badge bleu" href="#/personas/${p.persona_id}" style="text-decoration:none">Persona : ${p.persona}</a>` : ""}${p.cout ? html`<span class="badge mono">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
+        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${pastilleAttente(p)}${["echec", "arrete", "abandonne"].includes(p.statut) ? badgeStatut(p.statut) : ""}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.repris ? html`<span class="badge">Dépôt repris</span>` : ""}${p.persona ? html`<a class="badge bleu" href="#/personas/${p.persona_id}" style="text-decoration:none">Persona : ${p.persona}</a>` : ""}${p.cout ? html`<span class="badge mono" title="Coût estimé au tarif des API${p.budget ? `, sur un budget de ${p.budget}` : ""}">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
         <p class="chapeau">${p.resume}</p></div>
       <div class="rangee">
         ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" class="btn btn-s" data-action="ouvrir-reorienter" aria-controls="reorienter" aria-expanded="${String(Boolean(etat.reorienterOuvert))}">Changer de direction</button>` : ""}
-        ${p.apercu ? html`<a class="btn btn-s" href="${p.apercu}" target="_blank" rel="noopener">Ouvrir l'aperçu</a>` : ""}
+        ${p.production ? html`<a class="btn btn-s" href="${p.production}" target="_blank" rel="noopener">Ouvrir le produit</a>` : p.apercu ? html`<a class="btn btn-s" href="${p.apercu}" target="_blank" rel="noopener">Ouvrir l'aperçu</a>` : ""}
         ${p.depot ? html`<a class="btn btn-s" href="${p.depot}" target="_blank" rel="noopener">Code</a>` : ""}
       </div>
     </div>
+    ${ligneDeVie(p)}
     ${messageGlobal()}
+    ${blocEnLigne(p)}
+    ${p.escalades.map((e) => blocDecision(p, e))}
     ${p.statut === "analyse" ? html`<div class="message info"><span>${p.repris && !p.inventaire ? "L'usine fait l'inventaire du dépôt (pile, commandes, ce qui marche) et le met au contrat d'hébergement ; puis l'analyste prépare le plan." : "L'analyste étudie la demande et prépare le plan."} Cette page se met à jour toute seule.</span></div>` : ""}
     ${p.statut === "echec" ? blocEchec(p) : ""}
     ${blocReprise(p)}
-    ${p.statut === "questions" ? html`<section class="carte carte-p pile"><h2>L'analyste a des questions</h2>
-      <ol style="margin:0;padding-left:20px">${(p.plan?.questions ?? []).map((q) => html`<li>${q}</li>`)}</ol>
-      <label class="cache" for="reponses">Tes réponses</label><textarea id="reponses" class="champ" rows="5" placeholder="Réponds librement, dans l'ordre des questions."></textarea>
-      <div><button type="button" class="btn btn-p" data-action="message" data-source="reponses">Envoyer les réponses</button></div></section>` : ""}
-    ${p.statut === "reorientation" ? html`<div class="message info pile" style="align-items:flex-start"><span><strong>Réorientation en cours.</strong> L'usine termine la tâche en cours, puis l'analyste refait la suite du plan. Cette page se met à jour toute seule.</span>
+    ${p.statut === "questions" ? blocQuestions(p) : ""}
+    ${p.statut === "reorientation" ? html`<div class="message info pile" style="align-items:flex-start"><span><strong>Réorientation en cours.</strong> L'usine termine la fonction en cours, puis l'analyste refait la suite du plan. Cette page se met à jour toute seule.</span>
       <span class="aide">${p.reorientation?.consigne ?? ""}</span>
       <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-projet">Relancer l'analyste</button><button type="button" class="btn btn-s btn-petit" data-action="annuler-reorientation">Garder l'ancien plan</button></div></div>` : ""}
-    ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : blocPlan(p)) : ""}
-    ${blocReorienter(p)}
+    ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : etat.planVue === "edition" || etat.planModifie ? blocPlan(p) : blocPlanLecture(p)) : ""}
+    ${etat.reorienterOuvert ? blocReorienter(p) : ""}
     ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
     ${blocRecette(p)}
     ${blocProduction(p)}
     ${blocVideo(p)}
-    <details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine et la zone sensible</summary>
+    <details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine, supprimer le projet</summary>
       <p style="white-space:pre-wrap;color:var(--texte)">${p.prompt}</p>
       <div class="confirmer" role="alertdialog" aria-labelledby="conf-sup" id="conf-supprimer" hidden><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
         <div style="font-size:14px">L'aperçu et la production s'arrêtent et la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.</div>
@@ -1123,6 +1296,9 @@ function rendre() {
     d2.scrollTop = d2.scrollHeight
     if (!etat.direct || etat.direct.projet !== etat.route.id) suivreDirect()
   }
+  // Premiers pas quitte le menu une fois tout l'essentiel fait (l'assistant se rouvre depuis les Réglages).
+  const pp = document.querySelector("[data-nav=demarrer]")
+  if (pp) pp.hidden = Boolean(etat.premiersPas?.termine) && etat.route.vue !== "demarrer"
   for (const a of document.querySelectorAll(".nav a")) {
     const actif = a.dataset.nav === ({ projet: "projets", persona: "personas" }[etat.route.vue] ?? etat.route.vue)
     if (actif) a.setAttribute("aria-current", "page")
@@ -1179,7 +1355,8 @@ function enSaisie() {
   if (a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && $("#principal").contains(a)) return true
   if (etat.planModifie || etat.confirmer || etat.occupe) return true
   if ([...document.querySelectorAll("#principal video")].some((v) => !v.paused)) return true
-  return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio])")].some((x) => x.value && x.defaultValue !== x.value)
+  if ([...document.querySelectorAll("#principal input[type=checkbox]")].some((x) => x.checked !== x.defaultChecked)) return true
+  return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio]):not([type=checkbox])")].some((x) => x.value && x.defaultValue !== x.value)
 }
 
 function bloquer(oui) {
@@ -1215,6 +1392,13 @@ async function agir(fonction, { succes } = {}) {
   }
 }
 const confirmer = (texte) => window.confirm(texte)
+
+// Les réponses aux questions de l'analyste partent ensemble.
+async function envoyerReponses() {
+  const s = etat.questions
+  const r = await agir(() => api("POST", `projets/${etat.projet.id}/reponses`, { reponses: s.reponses }), { succes: "Réponses transmises : l'analyste prépare le plan." })
+  if (r) etat.questions = null
+}
 
 // La fiche d'un persona, lue dans son formulaire (une liste = une entrée par ligne).
 function lireFichePersona(f) {
@@ -1534,7 +1718,48 @@ const ACTIONS = {
   },
   "fermer-cle": () => { etat.cleCreee = null; rendre() },
   depart: (el) => { etat.depart = el.dataset.id; rendre() },
-  "corriger-recette": () => confirmer("Envoyer les écarts de la recette et les étages de la pyramide à faire monter à l'analyste ? Il en fera un lot de corrections.") && agir(() => api("POST", `projets/${etat.projet.id}/corriger-recette`, {}), { succes: "Écarts transmis : l'analyste prépare un lot de corrections." }),
+  "corriger-recette": () => {
+    const garder = [...document.querySelectorAll("input[name=garder]:checked")].map((x) => Number(x.value))
+    const ajout = $("#recette-ajout")?.value.trim() ?? ""
+    if (!garder.length && !ajout) {
+      etat.message = { type: "erreur", texte: "Coche au moins un point, ou ajoute une demande." }
+      return afficherMessages()
+    }
+    return agir(() => api("POST", `projets/${etat.projet.id}/corriger-recette`, { garder, ajout }), { succes: "Transmis : l'analyste prépare un lot de corrections." })
+  },
+  "questions-aller": (el) => { noterReponse(); etat.questions.i = Number(el.dataset.id); rendre() },
+  "questions-auto": () => {
+    noterReponse()
+    const s = etat.questions
+    for (let i = s.i; i < s.reponses.length; i++) if (i > s.i || !s.reponses[i]?.libre) s.reponses[i] = { auChoix: true }
+    return envoyerReponses()
+  },
+  "questions-envoyer": () => { noterReponse(); return envoyerReponses() },
+  "plan-vue": (el) => { etat.planVue = el.dataset.id; rendre(); window.scrollTo({ top: 0 }) },
+  "prod-reglages": () => {
+    // Les choix déjà faits restent dans le formulaire : on bascule seulement l'affichage.
+    etat.prodReglages = !etat.prodReglages
+    const bloc = $("#prod-reglages")
+    if (bloc) bloc.hidden = !etat.prodReglages
+    const b = $("[data-action=prod-reglages]")
+    if (b) b.textContent = etat.prodReglages ? "Masquer les réglages" : "Modifier les réglages"
+  },
+  "produit-lot": (el) => { etat.produit.lot = Number(el.dataset.id); etat.produit.i = 0; rendre() },
+  "produit-capture": (el) => { etat.produit.i = Number(el.dataset.id); rendre() },
+  copier: async (el) => {
+    try {
+      await navigator.clipboard.writeText(el.dataset.texte)
+      etat.message = { type: "ok", texte: "Adresse copiée." }
+    } catch {
+      etat.message = { type: "erreur", texte: `Copie impossible ici : ${el.dataset.texte}` }
+    }
+    afficherMessages()
+  },
+  aller: (el) => {
+    const cible = $(`#${el.dataset.cible}`)
+    cible?.scrollIntoView({ behavior: "smooth", block: "center" })
+    cible?.focus({ preventScroll: true })
+  },
   "persona-valider": () => agir(() => api("POST", `personas/${etat.persona.id}/valider`, {})),
   "persona-approfondir": () => agir(() => api("POST", `personas/${etat.persona.id}/approfondir`, { consignes: $("#consignes-persona")?.value ?? "" })),
   "persona-supprimer": async () => {
@@ -1686,6 +1911,7 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("toggle", (e) => {
   if (e.target.id === "zone-sensible") etat.detailsOuvert = e.target.open
   if (e.target.id === "reorienter") etat.reorienterOuvert = e.target.open
+  if (e.target.id === "technique") etat.techniqueOuvert = e.target.open
 }, true)
 
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------
@@ -1752,6 +1978,10 @@ window.addEventListener("hashchange", () => {
   etat.cleCreee = null
   etat.invitation = null
   etat.personaScenarios = null
+  // Chaque projet s'ouvre sur le plan en lecture, les réglages de mise en ligne repliés.
+  etat.planVue = "lecture"
+  etat.prodReglages = false
+  etat.reorienterOuvert = false
   if (etat.route.vue !== "projet") etat.onglet = null
   etat.direct = null
   rendre()

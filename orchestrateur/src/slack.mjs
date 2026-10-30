@@ -23,6 +23,7 @@ import { adresses } from "./config.mjs"
 import { listerPersonas, trouverPersona } from "./personas.mjs"
 import { pyramideEnLignes, verdictPyramide } from "./pyramide.mjs"
 import { pointsACorriger } from "./recette.mjs"
+import { normaliserQuestions } from "./presentation.mjs"
 
 const tronquer = (t, n = 2900) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const section = (texte) => ({ type: "section", text: { type: "mrkdwn", text: tronquer(texte) } })
@@ -41,7 +42,7 @@ export function notificateurConsole() {
   const dire = (projet, texte) => console.log(`\n[${projet?.nom ?? `projet ${projet?.id}`}] ${texte}\n`)
   return {
     etape: async (projet, texte) => dire(projet, texte),
-    questions: async (projet, questions) => dire(projet, `Questions de l'analyste :\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n→ node src/cli.mjs repondre ${projet.id} "…"`),
+    questions: async (projet, questions) => dire(projet, `Questions de l'analyste :\n${normaliserQuestions(questions).map((q, i) => `${i + 1}. ${q.question}${q.options.length ? ` (${q.options.map((o) => o.libelle).join(" / ")})` : ""}`).join("\n")}\n→ node src/cli.mjs repondre ${projet.id} "…"`),
     plan: async (projet, plan) => dire(projet, `Plan à valider : ${plan.nom} (${plan.lots.length} lots, ${plan.lots.reduce((n, l) => n + l.taches.length, 0)} tâches)\n→ node src/cli.mjs plan ${projet.id} · valider ${projet.id} · corriger ${projet.id} "…"`),
     escalade: async (projet, e) => dire(projet, `ESCALADE ${e.id} : ${e.sujet} — ${e.raison}\n${e.options.map((o) => `${o.cle} · ${o.libelle}`).join("  ")}\n→ node src/cli.mjs decider ${e.id} A "consigne"   (ou ${e.issue})`),
     escaladeResolue: async (projet, _e, texte) => dire(projet, texte),
@@ -79,7 +80,7 @@ export async function demarrerSlack(ctx) {
     etape: (projet, texte, boutons) => poster(projet, boutons?.length ? { text: texte, blocks: [section(texte), { type: "actions", elements: boutons.map((b) => bouton(b.texte, b.action, b.valeur)) }] } : { text: texte }),
     questions: (projet, questions) => poster(projet, {
       text: "L'analyste a besoin de précisions",
-      blocks: [section(`:question: *L'analyste a besoin de précisions avant de planifier :*\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`), { type: "actions", elements: [bouton("Répondre", "questions_repondre", projet.id, "primary"), versConsole(projet, "questions")] }],
+      blocks: [section(`:question: *L'analyste a besoin de précisions avant de planifier :*\n${normaliserQuestions(questions).map((q, i) => `${i + 1}. ${q.question}${q.options.length ? `\n      ${q.options.map((o, j) => `${j === q.recommande ? "◉" : "○"} ${o.libelle}`).join("   ")}` : ""}`).join("\n")}${normaliserQuestions(questions).some((q) => q.recommande !== null) ? "\n_◉ : le choix que l'analyste recommande._" : ""}`), { type: "actions", elements: [bouton("Répondre", "questions_repondre", projet.id, "primary"), versConsole(projet, "questions")] }],
     }),
     plan: (projet, plan) => {
       // Une réorientation : les lots gardés en une ligne, les nouveaux en détail.
@@ -100,10 +101,11 @@ export async function demarrerSlack(ctx) {
     escalade: (projet, e) => poster(projet, {
       text: `Décision requise : ${e.sujet}`,
       blocks: [
-        section(`:rotating_light: *Décision requise : ${e.sujet}*\n${e.raison}.${e.issue ? `\n<${e.issue}|Issue GitHub assignée>` : ""}`),
-        section(`\`\`\`${tronquer(e.details, 1800)}\`\`\``),
-        section(e.options.map((o) => `*${o.cle}* · ${o.libelle} : ${o.detail}`).join("\n")),
-        { type: "actions", elements: [...e.options.map((o) => bouton(`${o.cle} · ${o.libelle}`, `esc_${o.cle}`, `${e.id}:${o.cle}`, o.cle === "A" ? "primary" : o.cle === "C" ? "danger" : undefined)), ...(e.options.some((o) => o.cle === "A") ? [bouton("A avec une consigne…", "esc_consigne", e.id)] : []), versConsole(projet, "escalade")] },
+        section(`:rotating_light: *Ta décision : ${e.presentation?.titre ?? e.sujet}*\n${e.raison}.${e.issue ? `\n<${e.issue}|Issue GitHub assignée>` : ""}`),
+        ...(e.presentation?.pourquoi ? [section(`:bulb: *L'usine recommande : ${e.presentation.options.find((o) => o.recommande)?.libelle ?? ""}.* ${e.presentation.pourquoi}`)] : []),
+        section((e.presentation?.options ?? e.options).map((o) => `*${o.cle}* · ${o.libelle} : ${o.consequence || o.detail}`).join("\n")),
+        { type: "context", elements: [{ type: "mrkdwn", text: tronquer(`Détail technique : ${e.details}`, 1900) }] },
+        { type: "actions", elements: [...(e.presentation?.options ?? e.options).map((o) => bouton(`${o.cle} · ${o.libelle}${o.recommande ? " (recommandé)" : ""}`, `esc_${o.cle}`, `${e.id}:${o.cle}`, o.recommande || (!e.presentation?.recommande && o.cle === "A") ? "primary" : o.cle === "C" ? "danger" : undefined)), ...(e.options.some((o) => o.cle === "A") ? [bouton("A avec une consigne…", "esc_consigne", e.id)] : []), versConsole(projet, "escalade")] },
       ],
     }),
     // Le message de suivi : un seul par projet, mis à jour à chaque étape.
@@ -354,20 +356,41 @@ export async function demarrerSlack(ctx) {
   app.action("questions_repondre", async (args) => {
     if (!(await garde(args))) return
     const projet = obtenir(db, "projets", Number(args.body.actions[0].value))
-    const questions = JSON.parse(projet.plan ?? "{}").questions ?? []
+    const questions = normaliserQuestions(JSON.parse(projet.plan ?? "{}").questions)
+    const texte = (t) => ({ type: "plain_text", text: tronquer(t, 75) })
+    // Une question à options : un choix (l'option recommandée est présélectionnée, « au choix de
+    // l'analyste » en dernier), et un champ libre facultatif qui passe avant le choix.
+    const blocs = questions.flatMap((q, i) => q.options.length
+      ? [
+          { type: "input", block_id: `q${i}`, label: { type: "plain_text", text: tronquer(q.question, 1900) }, element: {
+            type: "radio_buttons", action_id: "v",
+            options: [...q.options.map((o, j) => ({ text: texte(`${o.libelle}${j === q.recommande ? " (recommandé)" : ""}`), ...(o.detail ? { description: texte(o.detail) } : {}), value: String(j) })), { text: texte("Au choix de l'analyste"), value: "auto" }],
+            ...(q.recommande !== null ? { initial_option: { text: texte(`${q.options[q.recommande].libelle} (recommandé)`), ...(q.options[q.recommande].detail ? { description: texte(q.options[q.recommande].detail) } : {}), value: String(q.recommande) } } : {}),
+          } },
+          { type: "input", block_id: `l${i}`, optional: true, label: { type: "plain_text", text: "Ou ta réponse" }, element: { type: "plain_text_input", action_id: "v" } },
+        ]
+      : [{ type: "input", block_id: `l${i}`, label: { type: "plain_text", text: tronquer(q.question, 1900) }, element: { type: "plain_text_input", action_id: "v", multiline: true } }])
     await app.client.views.open({
       trigger_id: args.body.trigger_id,
       view: {
         type: "modal", callback_id: "modal_questions", private_metadata: String(projet.id),
         title: { type: "plain_text", text: "Répondre à l'analyste" }, submit: { type: "plain_text", text: "Envoyer" },
-        blocks: questions.map((q, i) => ({ type: "input", block_id: `q${i}`, label: { type: "plain_text", text: tronquer(q, 1900) }, element: { type: "plain_text_input", action_id: "v", multiline: true } })),
+        blocks: blocs,
       },
     })
   })
   app.view("modal_questions", async ({ ack, view, body }) => {
     await ack()
-    const reponses = Object.keys(view.state.values).sort().map((k) => view.state.values[k].v.value ?? "")
-    await actions.repondreQuestions(ctx, Number(view.private_metadata), reponses, body.user.name ?? body.user.id)
+    const v = view.state.values
+    const projetId = Number(view.private_metadata)
+    const questions = normaliserQuestions(JSON.parse(obtenir(db, "projets", projetId)?.plan ?? "{}").questions)
+    const reponses = questions.map((_q, i) => {
+      const libre = v[`l${i}`]?.v?.value?.trim()
+      if (libre) return { libre }
+      const choix = v[`q${i}`]?.v?.selected_option?.value
+      return choix === "auto" ? { auChoix: true } : choix !== undefined ? { option: Number(choix) } : {}
+    })
+    await actions.repondreQuestions(ctx, projetId, reponses, body.user.name ?? body.user.id)
   })
   for (const cle of ["A", "B", "C"]) {
     app.action(`esc_${cle}`, async (args) => {

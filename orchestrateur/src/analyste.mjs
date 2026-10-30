@@ -80,6 +80,9 @@ ${repris ? "" : `  "brique": "${Object.keys(BRIQUES).join(" | ")}",\n`}  "lots":
 
 Règles du plan :
 1. Si la demande est trop floue pour planifier, remplis seulement "questions" (3 au plus, précises) et laisse "lots" vide.
+   Chaque question est un objet { "question": "…", "options": [{ "libelle": "…", "detail": "ce que ce choix implique, en une phrase" }], "recommande": 0 } :
+   2 à 4 options courtes et distinctes (la personne peut toujours répondre autre chose), et "recommande" est l'index de l'option
+   que tu conseilles, ou null. Une question vraiment ouverte (un nom, une liste à fournir) a "options": [].
 ${repris
     ? "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 répare ce que l'inventaire dit cassé et donne au persona une première valeur visible. On part du code existant : chaque tâche dit ce qu'elle garde, change ou ajoute."
     : "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 pose le socle et un premier écran visible."}
