@@ -93,6 +93,9 @@ export async function etatUsine(ctx) {
     const applis = s.conteneurs.filter((x) => /^usine-(apercu|prod)-/.test(x.nom))
     const arretees = applis.filter((x) => x.etat !== "running")
     ajouter("applications", arretees.length ? "alerte" : "ok", arretees.length ? `arrêtée(s) : ${arretees.map((x) => x.nom.replace(/^usine-/, "")).join(", ")}` : `${applis.length} en ligne`)
+    // Le déployeur n'arrive plus à comparer l'usine à GitHub : elle se croirait à jour.
+    const e = s.mise_a_jour?.erreur
+    if (e) ajouter("mises à jour", "alerte", `vérification impossible depuis ${new Date(e.depuis).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} : ${e.message}`)
   }
   ajouter("orchestrateur", "ok", "en marche")
 

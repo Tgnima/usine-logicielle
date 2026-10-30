@@ -475,14 +475,23 @@ async function entretenir() {
 
 // --- La mise à jour de l'usine ----------------------------------------------------------
 // Vérifier : le dépôt de l'usine (monté au même chemin) est comparé à GitHub.
+// Un échec n'est plus muet : il est journalisé (au changement de message) et publié dans le
+// bilan de santé (mise_a_jour.erreur), sinon l'usine se croit à jour sans l'être.
 async function verifierMiseAJour() {
   if (!USINE_DIR || !DEPOT_USINE || !existsSync(join(USINE_DIR, ".git"))) return
   const git = (args, options = {}) => lancer("git", ["-c", `safe.directory=${USINE_DIR}`, "-C", USINE_DIR, ...args], options)
-  const f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: "usine" })
-  if (f.code !== 0) return
+  // 3 minutes au plus : un fetch bloqué ne doit pas suspendre les vérifications suivantes.
+  const f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: "usine", minutes: 3 })
+  if (f.code !== 0) {
+    const message = (f.sortie.trim().split("\n").filter(Boolean).slice(-3).join(" · ") || (f.code === null ? "interrompu au bout de 3 min" : `code ${f.code}`)).slice(0, 400)
+    if (miseAJour.erreur?.message !== message) log(`Vérification de mise à jour impossible (git fetch ${DEPOT_USINE}) : ${message}`)
+    miseAJour = { ...miseAJour, erreur: { message, depuis: miseAJour.erreur?.depuis ?? horodatage(), le: horodatage() } }
+    return
+  }
+  if (miseAJour.erreur) log(`Vérification de mise à jour rétablie (en échec depuis ${miseAJour.erreur.depuis}).`)
   await lancer("chown", ["-R", "1000:1000", join(USINE_DIR, ".git")])
   const commits = (await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/main"])).sortie.split("\n").filter(Boolean)
-  miseAJour = { ...miseAJour, disponible: commits.length, commits: commits.slice(0, 15), version: (await git(["rev-parse", "--short", "HEAD"])).sortie.trim(), verifie_le: horodatage() }
+  miseAJour = { ...miseAJour, erreur: null, disponible: commits.length, commits: commits.slice(0, 15), version: (await git(["rev-parse", "--short", "HEAD"])).sortie.trim(), verifie_le: horodatage() }
 }
 
 // Appliquer : un conteneur d'aide (il survit au redémarrage du déployeur) remet le dépôt
