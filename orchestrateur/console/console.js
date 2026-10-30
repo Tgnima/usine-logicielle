@@ -71,7 +71,7 @@ const ICONES = {
 
 // --- État ----------------------------------------------------------------------------
 const etat = {
-  route: { vue: "projets" },
+  route: { vue: "accueil" },
   resume: null,
   projet: null,
   sante: null,
@@ -134,7 +134,8 @@ function lireRoute() {
   const m = h.match(/^\/projets\/(\d+)/)
   if (m) return { vue: "projet", id: Number(m[1]) }
   // « Nouveau projet » n'est plus une page : la saisie de l'accueil prend le focus.
-  if (h.startsWith("/nouveau")) return { vue: "projets", nouveau: true }
+  if (h.startsWith("/nouveau")) return { vue: "accueil", nouveau: true }
+  if (h === "/projets") return { vue: "projets" }
   const mp = h.match(/^\/personas\/(\d+)/)
   if (mp) return { vue: "persona", id: Number(mp[1]) }
   if (h.startsWith("/personas")) return { vue: "personas" }
@@ -147,7 +148,7 @@ function lireRoute() {
   if (h.startsWith("/reglages")) return { vue: "reglages", section: "integrations" }
   const d = h.match(/^\/demarrer(?:\/([a-z]+))?/)
   if (d) return { vue: "demarrer", etape: d[1] ?? null }
-  return { vue: "projets" }
+  return { vue: "accueil" }
 }
 
 // --- Vues ----------------------------------------------------------------------------
@@ -273,14 +274,7 @@ function vueProjets() {
   return html`
     ${barreHaut()}
     ${messageGlobal()}
-    ${saisieAccueil()}
-    ${r.a_traiter.length ? html`<section aria-labelledby="a-traiter" class="pile">
-      <h2 id="a-traiter" class="surtitre">À traiter · ${r.a_traiter.length}</h2>
-      <div class="grille">${r.a_traiter.map((x) => html`<a class="a-traiter" href="#/projets/${x.projet}">
-        <span class="icone">${ICONES[x.type] ?? ICONES.decision}</span>
-        <span style="flex:1;min-width:0"><strong>${x.titre}</strong><span>${x.detail}</span></span>
-        <em>${x.type === "plan" ? "Relire" : x.type === "livre" ? "Décider" : "Répondre"}</em></a>`)}</div>
-    </section>` : ""}
+    <div class="entete"><div><h1>Tous les projets</h1><p class="chapeau">Où en est chaque projet, ce qu'il a coûté, ses adresses.</p></div><a class="btn btn-p" href="#/nouveau">+ Nouveau projet</a></div>
     <section class="carte" aria-labelledby="tous">
       <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="tous">Projets</h2>
         <div class="rangee" role="group" aria-label="Filtrer les projets">${[["actifs", "Actifs"], ["production", "En production"], ["archives", "Abandonnés"], ["tous", "Tous"]].map(([id, nom]) => html`<button type="button" class="filtre" data-action="filtre" data-id="${id}" aria-pressed="${String(etat.filtre === id)}">${nom} · ${compte(id)}</button>`)}</div></div>
@@ -299,11 +293,36 @@ function vueProjets() {
           </tr>`
         })}</tbody></table></div>` : html`<div class="vide">${r.projets.length ? "Aucun projet dans ce filtre." : "Aucun projet pour l'instant : décris le premier ci-dessus."}</div>`}
     </section>
-    <section class="grille" aria-label="Résumé de l'usine">
-      <a class="carte carte-p" href="#/reglages/utilisation" style="text-decoration:none;color:inherit"><div class="aide">Budget du mois</div><div style="font-size:22px;font-weight:700">${r.couts.pct !== null ? `${r.couts.pct} % utilisé` : r.couts.mois}</div><div class="aide">${r.couts.budget ? `${r.couts.mois} sur ${r.couts.budget} (équivalent API)` : "pas de budget mensuel"}</div></a>
-      <a class="carte carte-p" href="#/reglages/etat" style="text-decoration:none;color:inherit"><div class="aide">Serveur</div><div style="font-size:22px;font-weight:700">${r.serveur?.disque !== null && r.serveur ? `Disque ${r.serveur.disque} %` : "—"}</div><div class="aide">${r.serveur?.memoire !== null && r.serveur ? `mémoire ${r.serveur.memoire} %` : ""}</div></a>
-      <a class="carte carte-p" href="#/reglages/etat" style="text-decoration:none;color:inherit"><div class="aide">Version de l'usine</div><div style="font-size:22px;font-weight:700">${r.usine.mise_a_jour?.disponible ? "Mise à jour disponible" : "À jour"}</div><div class="aide">${r.usine.mise_a_jour?.version ? `version ${r.usine.mise_a_jour.version}` : ""}</div></a>
-    </section>`
+`
+}
+
+// L'accueil, minimaliste : la question, et une seule ligne quand un projet attend une réponse.
+function vueAccueil() {
+  const attente = etat.resume?.a_traiter ?? []
+  const projets = new Set(attente.map((x) => x.projet)).size
+  return html`
+    ${barreHaut()}
+    ${messageGlobal()}
+    <div class="accueil-vide">
+      ${saisieAccueil()}
+      ${attente.length ? html`<a class="ligne-attente" href="#/projets/${attente[0].projet}"><span class="point-projet pp-attend" aria-hidden="true"></span>
+        <span style="flex:1">${projets === 1 ? attente[0].titre : `${projets} projets attendent ta réponse · d'abord ${attente[0].titre}`}</span><span aria-hidden="true">→</span></a>` : ""}
+    </div>`
+}
+
+// La barre de gauche : les projets comme des conversations, un point de couleur pour leur état.
+function listeProjetsCote() {
+  const r = etat.resume
+  if (!r) return html`<li class="aide" style="padding:6px 12px">Chargement…</li>`
+  const actifs = r.projets.filter((p) => p.statut !== "abandonne")
+  const archives = r.projets.length - actifs.length
+  return html`${actifs.length ? actifs.map((p) => {
+    const ton = p.attend?.oui ? "pp-attend" : p.statut === "en_production" ? "pp-en-ligne" : p.statut === "echec" ? "pp-echec" : ""
+    const quoi = p.attend?.oui ? ATTENTES[p.attend.quoi] ?? "À traiter" : p.phase?.etat ?? (STATUTS[p.statut] ?? [p.statut])[0]
+    return html`<li><a href="#/projets/${p.id}" title="${quoi}" ${brut(etat.route.vue === "projet" && etat.route.id === p.id ? 'aria-current="page"' : "")}>
+      <span class="point-projet ${ton}" aria-hidden="true"></span><span class="nom-projet">${p.nom ?? "Nouveau projet"}</span><span class="cache">, ${quoi}</span></a></li>`
+  }) : html`<li class="aide" style="padding:6px 12px">Aucun projet pour l'instant.</li>`}
+  ${archives ? html`<li><a class="aide" href="#/projets" data-action="voir-archives">Archives · ${archives}</a></li>` : ""}`
 }
 
 // Les types de produit, dits simplement (la clé reste celle de la brique).
@@ -1453,8 +1472,9 @@ function vueHistorique() {
 }
 
 // --- Rendu et chargement ------------------------------------------------------------------
+let dernierCote = ""
 function rendre() {
-  const vue = { projets: vueProjets, projet: vueProjet, reglages: vueReglages, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer }[etat.route.vue]
+  const vue = { accueil: vueAccueil, projets: vueProjets, projet: vueProjet, reglages: vueReglages, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer }[etat.route.vue]
   const m = $("#principal")
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
@@ -1478,8 +1498,10 @@ function rendre() {
   // Premiers pas quitte le menu une fois tout l'essentiel fait (l'assistant se rouvre depuis les Réglages).
   const pp = document.querySelector("[data-nav=demarrer]")
   if (pp) pp.hidden = Boolean(etat.premiersPas?.termine) && etat.route.vue !== "demarrer"
-  for (const a of document.querySelectorAll(".nav a")) {
-    const actif = a.dataset.nav === ({ projet: "projets", persona: "personas" }[etat.route.vue] ?? etat.route.vue)
+  const liste = listeProjetsCote()[BRUT]
+  if (liste !== dernierCote) { $("#liste-projets").innerHTML = liste; dernierCote = liste }
+  for (const a of document.querySelectorAll(".nav a, .projets-cote [data-nav]")) {
+    const actif = a.dataset.nav === ({ persona: "personas" }[etat.route.vue] ?? etat.route.vue)
     if (actif) a.setAttribute("aria-current", "page")
     else a.removeAttribute("aria-current")
   }
@@ -1503,8 +1525,8 @@ async function charger({ silencieux = false } = {}) {
     const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; prevenir(x); rendre() } })]
     const sec = r.vue === "reglages" ? r.section : null
     const charge = (chemin, cle) => taches.push(api("GET", chemin).then((x) => { if (frais()) { etat[cle] = x; rendre() } }))
-    if (r.vue === "projets" && !etat.estimation) charge("estimation", "estimation")
-    if (["projets", "personas", "projet"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
+    if (r.vue === "accueil" && !etat.estimation) charge("estimation", "estimation")
+    if (["accueil", "personas", "projet"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
     if (r.vue === "persona") charge(`personas/${r.id}`, "persona")
     if (sec === "historique") charge(`historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`, "historique")
     if (r.vue === "projet") charge(`projets/${r.id}`, "projet")
@@ -1513,11 +1535,11 @@ async function charger({ silencieux = false } = {}) {
     if (sec === "equipe" || r.vue === "demarrer") charge("acces", "acces")
     if (["integrations", "utilisation", "regles"].includes(sec) || r.vue === "demarrer") charge("reglages", "reglages")
     if (sec === "integrations" || r.vue === "demarrer") charge("fournisseurs", "fournisseurs")
-    if (!etat.premiersPas || ["projets", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
+    if (!etat.premiersPas || ["accueil", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
       if (!frais()) return
       etat.premiersPas = x
       // Une usine neuve s'ouvre sur ses premiers pas.
-      if (r.vue === "projets" && !location.hash && !x.termine && !x.masque && !etat.premiersPasVus) { etat.premiersPasVus = true; location.hash = "#/demarrer"; return }
+      if (r.vue === "accueil" && !location.hash && !x.termine && !x.masque && !etat.premiersPasVus) { etat.premiersPasVus = true; location.hash = "#/demarrer"; return }
       rendre()
     }))
     await Promise.all(taches)
@@ -1920,6 +1942,11 @@ const ACTIONS = {
   "fermer-cle": () => { etat.cleCreee = null; rendre() },
   // Passer de « décrire » à « terminer une application existante » garde ce qui a été écrit.
   depart: (el) => { const t = $("#demande")?.value; etat.depart = el.dataset.id; rendre(); if (t) $("#demande").value = t; $(etat.depart === "depot" ? "#adresse" : "#demande")?.focus() },
+  menu: (el) => {
+    const ouvert = $("#cote").classList.toggle("ouvert")
+    el.setAttribute("aria-expanded", String(ouvert))
+  },
+  "voir-archives": () => { etat.filtre = "archives"; if (location.hash === "#/projets") rendre(); else location.hash = "#/projets" },
   fenetre: (el) => {
     etat.fenetre = el.dataset.quoi
     if (el.dataset.quoi === "inviter" && !etat.acces) charger({ silencieux: true })
@@ -2221,6 +2248,8 @@ window.addEventListener("keydown", (e) => {
 // --- Démarrage ---------------------------------------------------------------------------
 window.addEventListener("hashchange", () => {
   etat.route = lireRoute()
+  $("#cote").classList.remove("ouvert")
+  $("[data-action=menu]")?.setAttribute("aria-expanded", "false")
   etat.message = null
   etat.confirmer = null
   etat.planModifie = false

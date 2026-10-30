@@ -400,3 +400,32 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .fil li.ok .fil-picto { background: var(--ok-fond); color: var(--ok) }
 .fil-texte { margin-top: 2px; color: var(--texte); font-size: 14px; white-space: pre-wrap; word-break: break-word }
 .fil time { flex: none; white-space: nowrap }
+
+/* --- La barre de gauche porte les projets ; l'accueil ne garde que la question --- */
+.cote-haut { display: flex; align-items: center; justify-content: space-between; gap: 8px }
+.cote-corps { display: flex; flex-direction: column; gap: 20px; flex: 1; min-height: 0 }
+.menu-mobile { display: none }
+.nouveau-projet { justify-content: flex-start }
+.projets-cote { display: flex; flex-direction: column; gap: 6px }
+.projets-cote .barre { padding: 0 4px 0 12px }
+.projets-cote ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px }
+.projets-cote li a { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 12px; border-radius: var(--rayon-m); color: var(--texte); text-decoration: none; font-size: 14px }
+.projets-cote li a:hover { background: var(--surface-2); color: var(--encre) }
+.projets-cote li a[aria-current="page"] { background: var(--accent-fond); color: var(--encre); font-weight: 600 }
+.nom-projet { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.point-projet { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--accent) }
+.point-projet.pp-attend { background: var(--signal); box-shadow: 0 0 0 3px var(--signal-fond) }
+.point-projet.pp-en-ligne { background: var(--ok-point) } .point-projet.pp-echec { background: var(--danger) }
+.accueil-vide { min-height: 62vh; display: flex; flex-direction: column; justify-content: center; gap: 18px }
+.ligne-attente { max-width: 760px; width: 100%; margin: 0 auto; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--signal-trait); border-radius: var(--rayon-l); background: var(--surface); color: var(--encre); text-decoration: none; font-size: 14px; font-weight: 600 }
+.ligne-attente:hover { border-color: var(--signal); color: var(--encre) }
+@media (min-width: 721px) {
+  .app { flex-wrap: nowrap }
+  .cote { flex: 0 0 260px; position: sticky; top: 0; height: 100vh; overflow-y: auto }
+}
+@media (max-width: 720px) {
+  .cote { padding: 12px 16px; gap: 12px }
+  .menu-mobile { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px }
+  .cote-corps { display: none }
+  .cote.ouvert .cote-corps { display: flex }
+}
