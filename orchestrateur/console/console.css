@@ -281,3 +281,13 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .coche input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none }
 @media (max-width: 720px) { .vie li { font-size: 11px } .vie small { display: none } }
 @media (max-width: 720px) { .etapes { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 10px } }
+
+/* Les publics (personas), en liste simple. */
+.liste-publics { list-style: none; margin: 0; padding: 0 }
+.liste-publics li { padding: 14px 16px; border-bottom: 1px solid var(--trait-2); display: flex; flex-direction: column; gap: 4px }
+.liste-publics li:last-child { border-bottom: 0 }
+/* L'état de l'usine en une phrase, avant le détail des services. */
+.etat-general.ok { border-color: var(--ok-point) } .etat-general.alerte { border-color: var(--signal-trait) } .etat-general.panne { border-color: var(--danger) }
+.etat-general.ok h2 { color: var(--ok) } .etat-general.panne h2 { color: var(--danger) }
+.soucis { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px }
+.soucis li { display: flex; gap: 10px; align-items: baseline }

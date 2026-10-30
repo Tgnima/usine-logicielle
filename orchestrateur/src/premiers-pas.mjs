@@ -35,39 +35,39 @@ export async function premiersPas(ctx) {
   const etapes = [
     {
       id: "ia", obligatoire: true, fait: claude && codex,
-      titre: "Choisir ton fournisseur d'IA",
-      detail: !tests.le ? "Pose ton abonnement ou tes clés (Claude pour coder, Codex pour vérifier), puis teste les connexions."
-        : claude && codex ? "Claude et Codex répondent." : `${claude ? "Claude répond" : "Claude ne répond pas encore"} · ${codex ? "Codex répond" : "Codex ne répond pas encore"}.`,
-      aller: "#/reglages", action: "Régler les fournisseurs",
+      titre: "Brancher l'intelligence artificielle",
+      detail: !tests.le ? "L'usine a besoin de deux IA : Claude, qui construit, et ChatGPT, qui contrôle. Colle ton abonnement ou ta clé, puis lance le test."
+        : claude && codex ? "Claude et ChatGPT répondent : c'est prêt." : `${claude ? "Claude répond" : "Claude ne répond pas encore"} · ${codex ? "ChatGPT répond" : "ChatGPT ne répond pas encore"}.`,
+      aller: "#/reglages", action: "Brancher l'IA",
     },
     {
       id: "github", obligatoire: true, fait: !!github.ok,
-      titre: "Connecter GitHub",
-      detail: github.ok ? `Les dépôts des produits seront créés chez ${github.login}.` : "Chaque produit reçoit son dépôt : le code, une pull request par tâche, les issues du plan.",
-      aller: "#/reglages", action: "Connecter GitHub",
+      titre: "Brancher GitHub, où le code est rangé",
+      detail: github.ok ? `Le code de chaque application sera rangé sur le compte ${github.login}.` : "Chaque application a son propre espace sur GitHub, où l'usine range son code. Un clic pour connecter ton compte.",
+      aller: "#/reglages", action: "Brancher GitHub",
     },
     {
       id: "courriel", obligatoire: false, fait: courrielConfigure(),
       titre: "Envoyer les invitations par email",
-      detail: courrielConfigure() ? "Les invitations partent par email." : "Facultatif : sans serveur d'envoi, tu transmets toi-même les liens d'invitation.",
+      detail: courrielConfigure() ? "Les invitations partent par email." : "Sans envoi d'emails, tu copies le lien d'invitation et tu le transmets toi-même. Un technicien peut l'activer sur le serveur.",
       aller: "#/acces", action: "Voir les accès",
     },
     {
       id: "equipe", obligatoire: false, fait: utilisateurs.filter((u) => u.actif !== 0 && u.actif !== false).length > 1,
       titre: "Inviter ton équipe",
-      detail: "Facultatif : des administrateurs pour piloter l'usine, des membres pour tester les produits.",
+      detail: "Des administrateurs pour piloter l'usine avec toi, des membres pour essayer les applications.",
       aller: "#/acces", action: "Inviter",
     },
     {
       id: "persona", obligatoire: false, fait: n("SELECT COUNT(*) AS n FROM personas WHERE statut = 'valide'") > 0,
-      titre: "Décrire tes utilisateurs (personas)",
-      detail: "Facultatif mais utile : l'analyste construit le plan pour eux, et la recette les fait jouer.",
-      aller: "#/personas", action: "Créer un persona",
+      titre: "Décrire les personnes pour qui tu construis",
+      detail: "Utile : l'usine construit pour elles, puis essaie l'application à leur place avant de te la livrer.",
+      aller: "#/personas", action: "Décrire un public",
     },
     {
       id: "projet", obligatoire: true, fait: n("SELECT COUNT(*) AS n FROM projets") > 0,
       titre: "Lancer ton premier projet",
-      detail: "Décris ce que tu veux construire : l'analyste propose un plan, tu le relis, la fabrication se suit en direct.",
+      detail: "Décris ce que tu veux en quelques phrases : l'usine te propose un plan, tu le valides, puis tu suis la construction.",
       aller: "#/nouveau", action: "Nouveau projet",
     },
   ]
