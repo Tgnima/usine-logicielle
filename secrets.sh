@@ -22,7 +22,9 @@ set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
 # Tous les secrets connus. Ajouter un secret : ici, puis dans docker-compose.yml.
-SECRETS=(GITHUB_TOKEN DEPLOY_TOKEN WORKER_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY AI_GATEWAY_API_KEY SLACK_BOT_TOKEN SLACK_APP_TOKEN SMTP_USER SMTP_PASS PORTIER_SECRET PORTIER_API_TOKEN)
+SECRETS=(GITHUB_TOKEN DEPLOY_TOKEN WORKER_TOKEN ATELIER_TOKEN VERIFICATEUR_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY AI_GATEWAY_API_KEY SLACK_BOT_TOKEN SLACK_APP_TOKEN SMTP_USER SMTP_PASS PORTIER_SECRET PORTIER_API_TOKEN)
+# Les jetons internes, générés par l'usine (jamais à coller) : un par serveur de travaux.
+GENERES=(PORTIER_SECRET PORTIER_API_TOKEN WORKER_TOKEN ATELIER_TOKEN VERIFICATEUR_TOKEN)
 CLE=/etc/usine/age.key
 CHIFFRE=secrets.sops.env
 SORTIE=/run/usine-secrets
@@ -97,10 +99,9 @@ migrer() {
       if [ -n "$valeur" ]; then VALEURS[$nom]="$valeur"; trouves=$((trouves + 1)); fi
     done
   fi
-  # Le secret du portier (signature des sessions) et son jeton d'API : générés s'ils manquent.
-  [ -n "${VALEURS[PORTIER_SECRET]:-}" ] || VALEURS[PORTIER_SECRET]=$(openssl rand -hex 32)
-  [ -n "${VALEURS[PORTIER_API_TOKEN]:-}" ] || VALEURS[PORTIER_API_TOKEN]=$(openssl rand -hex 32)
-  [ -n "${VALEURS[WORKER_TOKEN]:-}" ] || VALEURS[WORKER_TOKEN]=$(openssl rand -hex 32)
+  # Le secret du portier (signature des sessions), son jeton d'API et les jetons des serveurs
+  # de travaux : générés s'ils manquent.
+  for nom in "${GENERES[@]}"; do [ -n "${VALEURS[$nom]:-}" ] || VALEURS[$nom]=$(openssl rand -hex 32); done
   # Chiffrement : le clair ne passe que par un fichier temporaire en mémoire, effacé
   # dans TOUS les cas (succès, erreur, interruption) grâce au piège de sortie.
   CLAIR=$(mktemp -p /dev/shm usine.XXXXXX)
@@ -131,6 +132,11 @@ dechiffrer() {
   sudo_si_besoin install -d -m 0750 -o root -g "$GID_CONTENEURS" "$SORTIE"
   local nom valeur
   lire_chiffres
+  # Une mise à jour a ajouté un jeton interne (ATELIER_TOKEN…) : il est généré et chiffré d'abord,
+  # sinon le conteneur qui l'attend ne démarrerait pas.
+  for nom in "${GENERES[@]}"; do
+    if [ -z "${VALEURS[$nom]:-}" ]; then migrer; return; fi
+  done
   for nom in "${SECRETS[@]}"; do
     valeur="${VALEURS[$nom]:-}"
     local f="$SORTIE/$(echo "$nom" | tr 'A-Z' 'a-z')"

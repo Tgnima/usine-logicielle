@@ -67,6 +67,9 @@ const verifierMdp = (mdp, hash) => {
   const calcule = scryptSync(mdp, Buffer.from(sel, "hex"), 64)
   return timingSafeEqual(calcule, Buffer.from(attendu, "hex"))
 }
+// Un email inconnu coûte le même calcul qu'un mauvais mot de passe : la durée de la réponse
+// ne dit pas quels comptes existent.
+const HASH_FICTIF = hacher(randomBytes(16).toString("hex"))
 const signer = (texte) => createHmac("sha256", CLE).update(texte).digest("base64url")
 const egal = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
@@ -75,9 +78,17 @@ function creerSession(u, hote) {
   const corps = `${u.id}.${u.version}.${Buffer.from(hote).toString("base64url")}.${Math.floor(Date.now() / 1000) + DUREE_SESSION}`
   return `${corps}.${signer(corps)}`
 }
+// Plusieurs cookies « usine_session » peuvent arriver (une application peut en poser un pour tout
+// le domaine, pour masquer la vraie session) : chacun est essayé, seul un cookie signé compte.
 function lireSession(req, hote) {
-  const cookie = Object.fromEntries(String(req.headers.cookie ?? "").split(/;\s*/).filter(Boolean).map((c) => [c.slice(0, c.indexOf("=")), c.slice(c.indexOf("=") + 1)]))
-  const valeur = cookie.usine_session
+  const valeurs = String(req.headers.cookie ?? "").split(/;\s*/).filter((c) => c.startsWith("usine_session=")).map((c) => c.slice("usine_session=".length))
+  for (const valeur of valeurs.slice(0, 5)) {
+    const u = lireUneSession(valeur, hote)
+    if (u) return u
+  }
+  return null
+}
+function lireUneSession(valeur, hote) {
   if (!valeur) return null
   const parties = valeur.split(".")
   if (parties.length !== 5) return null
@@ -94,7 +105,7 @@ function application(hote) {
   if (hote === `usine-tableau.${BASE}` || hote === `console.${BASE}`) return { slug: "tableau", admin: true, nom: "Console de l'usine" }
   if (hote === `connexion.${BASE}`) return { slug: "portail", admin: false, nom: "Mes applications" }
   const m = hote.match(new RegExp(`^([a-z0-9-]+)(\\.apercu)?\\.${BASE.replace(/[.]/g, "\\.")}$`))
-  const slug = m?.[1] ?? db.prepare("SELECT slug FROM applis WHERE liens LIKE ?").get(`%://${hote}"%`)?.slug ?? null
+  const slug = m?.[1] ?? db.prepare("SELECT slug FROM applis WHERE liens LIKE ? ESCAPE '\\'").get(`%://${hote.replace(/[\\%_]/g, (c) => `\\${c}`)}"%`)?.slug ?? null
   const a = slug ? db.prepare("SELECT * FROM applis WHERE slug = ?").get(slug) : null
   return { slug, admin: false, nom: a?.nom ?? slug ?? hote }
 }
@@ -130,7 +141,14 @@ function tropDEchecs(cle) {
   echecs.set(cle, liste)
   return liste.length >= 5
 }
-const echec = (cle) => echecs.set(cle, [...(echecs.get(cle) ?? []), Date.now()])
+const echec = (cle) => {
+  if (echecs.size > 50_000) echecs.clear()
+  echecs.set(cle, [...(echecs.get(cle) ?? []), Date.now()].slice(-20))
+}
+setInterval(() => {
+  const limite = Date.now() - 15 * 60_000
+  for (const [cle, liste] of echecs) if (!liste.some((t) => t > limite)) echecs.delete(cle)
+}, 5 * 60_000).unref()
 
 // --- Pages ------------------------------------------------------------------------
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
@@ -265,7 +283,7 @@ createServer(async (req, res) => {
         return envoyerHtml(res, 429, formConnexion({ retour, email, appli, erreur: "Trop d'essais. Réessaie dans 15 minutes." }))
       }
       const u = db.prepare("SELECT * FROM utilisateurs WHERE email = ? AND actif = 1").get(email)
-      if (!u || !u.hash || !verifierMdp(String(f.mot_de_passe ?? ""), u.hash)) {
+      if (!verifierMdp(String(f.mot_de_passe ?? ""), u?.hash || HASH_FICTIF) || !u?.hash) {
         echec(`ip:${ip}`)
         echec(`email:${email}`)
         noter(email, "échec de connexion", ip)
@@ -278,6 +296,7 @@ createServer(async (req, res) => {
 
     // 3. Invitation : la personne choisit son mot de passe.
     if (url.pathname === "/_portier/invitation") {
+      if (req.method === "POST" && req.headers.origin && req.headers.origin !== `https://${hote}`) return envoyerHtml(res, 403, page("Refusé", "<h1>Requête refusée</h1>"))
       const jeton = req.method === "POST" ? null : url.searchParams.get("jeton")
       const f = req.method === "POST" ? await formulaire(req) : {}
       const j = String(jeton ?? f.jeton ?? "")
@@ -318,7 +337,7 @@ createServer(async (req, res) => {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return envoyerJson(res, 400, { erreur: "email invalide" })
         const existant = db.prepare("SELECT id FROM utilisateurs WHERE email = ?").get(email)
         const role = corps.role === "admin" ? "admin" : "membre"
-        const applis = JSON.stringify(Array.isArray(corps.applis) ? corps.applis.map(String) : [])
+        const applis = JSON.stringify(Array.isArray(corps.applis) ? corps.applis.map(String).filter((a) => a === "*" || /^[a-z0-9-]{1,40}$/.test(a)) : [])
         const uid = existant?.id ?? Number(db.prepare("INSERT INTO utilisateurs (email, nom, role, applis) VALUES (?, ?, ?, ?)").run(email, corps.nom ?? null, role, applis).lastInsertRowid)
         if (existant) db.prepare("UPDATE utilisateurs SET role = ?, applis = ?, actif = 1, version = version + 1 WHERE id = ?").run(role, applis, uid)
         noter(email, `invité (${role}) par ${corps.par ?? "?"}`, "api")
@@ -328,7 +347,9 @@ createServer(async (req, res) => {
       if (ressource === "utilisateurs" && id && req.method === "PATCH") {
         const u = db.prepare("SELECT * FROM utilisateurs WHERE id = ?").get(Number(id))
         if (!u) return envoyerJson(res, 404, { erreur: "inconnu" })
-        db.prepare("UPDATE utilisateurs SET role = ?, applis = ?, actif = ?, version = version + 1 WHERE id = ?").run(corps.role ?? u.role, corps.applis ? JSON.stringify(corps.applis) : u.applis, corps.actif === undefined ? u.actif : corps.actif ? 1 : 0, u.id)
+        if (corps.role !== undefined && !["admin", "membre"].includes(corps.role)) return envoyerJson(res, 400, { erreur: "rôle inconnu" })
+        if (corps.applis !== undefined && (!Array.isArray(corps.applis) || corps.applis.some((a) => a !== "*" && !/^[a-z0-9-]{1,40}$/.test(String(a))))) return envoyerJson(res, 400, { erreur: "applications invalides" })
+        db.prepare("UPDATE utilisateurs SET role = ?, applis = ?, actif = ?, version = version + 1 WHERE id = ?").run(corps.role ?? u.role, corps.applis ? JSON.stringify(corps.applis.map(String)) : u.applis, corps.actif === undefined ? u.actif : corps.actif ? 1 : 0, u.id)
         return envoyerJson(res, 200, { ok: true })
       }
       if (ressource === "utilisateurs" && id && req.method === "DELETE") {

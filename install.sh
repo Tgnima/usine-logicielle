@@ -38,6 +38,18 @@ poser() {
 [ -f usine.config.yml ] || { cp usine.config.example.yml usine.config.yml; echo "• usine.config.yml créé (le contrat : à relire)"; }
 [ -f caddy/Caddyfile ] || printf ':80 {\n\trespond "Usine logicielle" 200\n}\n' > caddy/Caddyfile
 
+# Le domaine d'exemple du contrat : remplacé par celui de CE serveur (son IP publique, via sslip.io),
+# jamais laissé pointer ailleurs.
+if grep -qE '^\s*base:\s*203-0-113-10\.sslip\.io' usine.config.yml; then
+  ip=$(curl -fsS --max-time 10 https://api.ipify.org || true)
+  if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    sed -i -E "s/^(\s*base:\s*)203-0-113-10\.sslip\.io/\1${ip//./-}.sslip.io/" usine.config.yml
+    echo "• domaine.base : ${ip//./-}.sslip.io (IP publique de ce serveur)"
+  else
+    echo "IP publique introuvable : indique domaine.base dans usine.config.yml, puis relance."; exit 1
+  fi
+fi
+
 # Le domaine des adresses (connexion, aperçus) : celui du contrat.
 if [ -z "$(valeur DOMAINE_BASE)" ]; then
   base=$(grep -E '^\s*base:' usine.config.yml | head -1 | sed -E 's/^\s*base:\s*([^ #]+).*/\1/')
@@ -68,7 +80,7 @@ bash secrets.sh migrer
 
 manque=()
 etat=$(bash secrets.sh verifier)
-for v in GITHUB_TOKEN WORKER_TOKEN; do echo "$etat" | grep -qE "^$v +rempli" || manque+=("$v"); done
+for v in GITHUB_TOKEN WORKER_TOKEN ATELIER_TOKEN VERIFICATEUR_TOKEN; do echo "$etat" | grep -qE "^$v +rempli" || manque+=("$v"); done
 [ -n "$(valeur DEPOT_ETAT)" ] || manque+=("DEPOT_ETAT")
 if [ ${#manque[@]} -gt 0 ]; then
   echo
@@ -80,6 +92,9 @@ fi
 # Les fournisseurs d'IA ne sont plus obligatoires ici : ils se posent aussi dans la console.
 echo "$etat" | grep -qE "^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|AI_GATEWAY_API_KEY) +rempli" || echo "• Aucun accès à Claude sur le serveur : pose-le dans la console (Réglages, Fournisseurs d'IA)."
 echo "$etat" | grep -qE "^SLACK_BOT_TOKEN +rempli" || echo "• Pas de jetons Slack : l'usine se pilotera par la CLI (voir README)."
+if echo "$etat" | grep -qE "^SLACK_BOT_TOKEN +rempli" && [ -z "$(valeur ADMIN_USER_IDS)" ]; then
+  echo "• ADMIN_USER_IDS est vide : personne ne pourra valider ni décider depuis Slack (la console, si). Ajoute tes identifiants Slack (U…) dans .env."
+fi
 
 docker volume create "$(valeur CODEX_VOLUME)" >/dev/null  # existe déjà s'il est réutilisé
 echo "• Construction des images (Claude Code, Codex et Playwright en dernière version)…"

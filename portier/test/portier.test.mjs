@@ -118,6 +118,25 @@ test("une clé d'API ouvre ses applications, et elles seules, jusqu'à sa révoc
   assert.equal((await avec(`prospecta.${BASE}`)).status, 401)
 })
 
+test("un faux cookie posé pour tout le domaine ne masque pas la vraie session", async () => {
+  const c = await appel("/_portier/connexion", { methode: "POST", corps: form({ email: "alice@exemple.fr", mot_de_passe: "un mot de passe solide", retour: "/" }), entetes: formEntetes })
+  const vrai = c.headers.get("set-cookie").split(";")[0]
+  const v = await appel("/_portier/verifier", { entetes: { cookie: `${vrai}; usine_session=1.1.eA.9999999999.faux` } })
+  assert.equal(v.status, 200)
+})
+
+test("l'API refuse un rôle ou des applications inventés", async () => {
+  const [u] = await (await api("utilisateurs")).json()
+  assert.equal((await api(`utilisateurs/${u.id}`, "PATCH", { role: "superadmin" })).status, 400)
+  assert.equal((await api(`utilisateurs/${u.id}`, "PATCH", { applis: ["../x"] })).status, 400)
+})
+
+test("une adresse avec des jokers SQL ne désigne aucune application", async () => {
+  const { cle } = await (await api("cles", "POST", { nom: "jokers", applis: ["prospecta"], par: "test" })).json()
+  const r = await appel("/_portier/verifier", { hote: "%", entetes: { authorization: `Bearer ${cle}`, "x-forwarded-uri": "/api/x" } })
+  assert.equal(r.status, 401)
+})
+
 test("cinq échecs bloquent les essais", async () => {
   let dernier
   for (let i = 0; i < 6; i++) dernier = await appel("/_portier/connexion", { hote: `x${i}.${BASE}`, methode: "POST", corps: form({ email: "bob@exemple.fr", mot_de_passe: "faux" }), entetes: formEntetes })

@@ -46,3 +46,25 @@ export function domainesValides(fichiers, base, max = 5) {
   }
   return resultat
 }
+
+// Les noms réservés aux adresses de l'usine elle-même : jamais celui d'un produit.
+export const RESERVES = new Set(["mails", "console", "connexion", "usine-tableau", "apercu", "portier"])
+
+// L'adresse d'un environnement est celle que l'usine lui donne, rien d'autre : un état souhaité
+// ne peut pas prendre l'adresse de la console, du portail ou d'un autre produit.
+export function hotesValides(s, base) {
+  if (RESERVES.has(s?.produit)) return false
+  if (!base) return /^[a-z0-9.-]+$/.test(s?.hote ?? "") && (!s?.hote_mails || /^[a-z0-9.-]+$/.test(s.hote_mails))
+  const attendu = s.environnement === "apercu" ? `${s.produit}.apercu.${base}` : `${s.produit}.${base}`
+  return s.hote === attendu && (!s.hote_mails || s.hote_mails === `mails.apercu.${base}`)
+}
+
+// Le sous-réseau du réseau Docker d'un produit : un /27 de PLAGE choisi d'après son nom
+// (essai n : la case suivante, si celle-ci est prise). 2 048 produits tiennent dans un /16.
+export function sousReseau(produit, essai = 0, plage = "10.231.0.0/16") {
+  const [a, b] = plage.split(".").map(Number)
+  let h = 0
+  for (const c of String(produit)) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  const cas = (h + essai) % 2048
+  return `${a}.${b}.${cas >> 3}.${(cas & 7) * 32}/27`
+}

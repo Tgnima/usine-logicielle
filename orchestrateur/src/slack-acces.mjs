@@ -200,6 +200,7 @@ export function brancherAcces(app, ctx, { estAdmin }) {
     }
   })
   app.view("modal_acces_ajout", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     const v = view.state.values
     const role = v.role.v.selected_option.value
     const applis = (v.applis.v.selected_options ?? []).map((o) => o.value)

@@ -27,10 +27,16 @@ export function chargerConfig() {
     slack: { canal: env.SLACK_CANAL ?? c.slack?.canal ?? "", admins: (env.ADMIN_USER_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean) },
     dataDir: env.DATA_DIR ?? "/app/data",
     etatDir: env.ETAT_DIR ?? "/app/etat",
-    atelier: { id: "atelier-1", url: env.ATELIER_URL ?? "http://atelier-1:8080" },
-    verificateur: { url: env.VERIFICATEUR_URL ?? "http://verificateur:8080" },
+    // Chaque serveur de travaux a son propre jeton : un agent de l'atelier (qui peut lire le sien)
+    // ne peut pas commander le vérificateur, qui le juge. worker_token reste dans l'orchestrateur.
+    atelier: { id: "atelier-1", url: env.ATELIER_URL ?? "http://atelier-1:8080", jeton: secret("atelier_token") || secret("worker_token") },
+    verificateur: { url: env.VERIFICATEUR_URL ?? "http://verificateur:8080", jeton: secret("verificateur_token") || secret("worker_token") },
   }
 }
+
+// Qui administre l'usine depuis Slack. Une liste vide ne donne les droits à personne (et non
+// à tout l'espace de travail) ; « * » les donne à tous, seulement si on l'écrit exprès.
+export const estAdminSlack = (admins, user) => admins.includes("*") || (Boolean(user) && admins.includes(user))
 
 // Les adresses publiques d'un produit.
 export const adresses = (config, slug) => {

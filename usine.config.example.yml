@@ -3,14 +3,15 @@
 # appliquées par le CODE de l'orchestrateur, pas laissées au bon vouloir des agents.
 
 github:
-  proprietaire: Tgnima          # compte ou organisation qui reçoit les dépôts des produits
+  proprietaire:                # TON compte ou ton organisation GitHub (vide : celui connecté dans la console)
   visibilite: private           # private | public
   depot_etat: usine-etat        # le dépôt de l'état souhaité, que le déployeur tire
 
 domaine:
   # Aperçus : <produit>.apercu.<base>  ·  production : <produit>.<base>
   # sslip.io résout tout seul vers l'IP du serveur : aucun DNS à configurer pour la démo.
-  base: 45-93-21-17.sslip.io
+  # 203-0-113-10 est un exemple : install.sh le remplace par l'IP de ce serveur.
+  base: 203-0-113-10.sslip.io
   https: true
 
 modeles:
