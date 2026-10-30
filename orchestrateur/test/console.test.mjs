@@ -175,6 +175,16 @@ test("audit : l'invitation part nettoyée, et un refus du portier garde son mess
   assert.match(refus.corps.erreur, /refuse : email invalide/)
 })
 
+test("connecteurs : le catalogue sans clé, un identifiant inconnu en 404, une adresse non https refusée", async () => {
+  const r = await json(await appel("/api/connecteurs"))
+  assert.equal(r.statut, 200)
+  assert.ok(r.corps.connecteurs.some((c) => c.id === "documentation") && r.corps.connecteurs.every((c) => !c.serveur))
+  assert.equal((await appel("/api/connecteurs/inconnu", { methode: "PUT", corps: { actif: true, roles: ["plan"] } })).status, 404)
+  assert.equal((await appel("/api/connecteurs", { methode: "POST", corps: { nom: "Outil", adresse: "http://outil.exemple.test" } })).status, 400)
+  const a = await json(await appel("/api/connecteurs/documentation", { methode: "PUT", corps: { actif: true, roles: ["plan"] } }))
+  assert.equal(a.statut, 200)
+})
+
 test("aucun fichier hors de la console, aucune capture hors de son dossier", async () => {
   assert.equal((await appel("/..%2f..%2fsrc%2fconsole.mjs")).status, 404)
   assert.equal((await appel("/api/captures/1/T1/..%2f..%2fusine.db")).status, 404)

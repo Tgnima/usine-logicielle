@@ -194,7 +194,7 @@ export async function verifier(ctx, projet, tache, sha) {
     ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
     `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 180 node /tmp/sorties/verif/captures.cjs; fi`,
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt -`, entree: "/tmp/sorties/verif/consigne.md", journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE" }),
+    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt -`, entree: "/tmp/sorties/verif/consigne.md", journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE", role: "verification" }),
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     "else tail -30 /tmp/sorties/verif/app.log; fi",

@@ -28,6 +28,7 @@ import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evo
 import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
 import { envoiDisponible } from "./courriel.mjs"
+import { ajouterConnecteur, effacerCleConnecteur, listerConnecteurs, poserCleConnecteur, reglerConnecteur, retirerConnecteur, testerConnecteur } from "./connecteurs.mjs"
 import { direct } from "./direct.mjs"
 import { etatVideo, fichierVideo, genererVideo } from "./video.mjs"
 import { enregistrerPieces, listerPieces, verifierPieces } from "./pieces.mjs"
@@ -527,6 +528,15 @@ const ROUTES = [
   ["POST", /^\/api\/fournisseurs\/tester$/, (ctx) => testerFournisseurs(ctx)],
   ["POST", /^\/api\/fournisseurs\/chatgpt$/, (ctx, _p, _c, qui) => connecterChatGPT(ctx, qui.email)],
   ["GET", /^\/api\/fournisseurs\/chatgpt$/, (ctx) => etatChatGPT(ctx)],
+
+  // Les connecteurs : des outils (serveurs MCP) pour les IA de l'usine. Chaque champ est vérifié dans connecteurs.mjs.
+  ["GET", /^\/api\/connecteurs$/, (ctx) => listerConnecteurs(ctx)],
+  ["POST", /^\/api\/connecteurs$/, (ctx, _p, c, qui) => ajouterConnecteur(ctx, { nom: c.nom, adresse: c.adresse, cle: c.cle }, qui.email)],
+  ["PUT", /^\/api\/connecteurs\/([a-z0-9-]{1,40})$/, (ctx, [id], c, qui) => reglerConnecteur(ctx, id, { actif: c.actif === true, roles: c.roles }, qui.email)],
+  ["PUT", /^\/api\/connecteurs\/([a-z0-9-]{1,40})\/cle$/, (ctx, [id], c, qui) => poserCleConnecteur(ctx, id, c.valeur, qui.email)],
+  ["DELETE", /^\/api\/connecteurs\/([a-z0-9-]{1,40})\/cle$/, (ctx, [id], _c, qui) => effacerCleConnecteur(ctx, id, qui.email)],
+  ["POST", /^\/api\/connecteurs\/([a-z0-9-]{1,40})\/tester$/, (ctx, [id], _c, qui) => testerConnecteur(ctx, id, qui.email)],
+  ["DELETE", /^\/api\/connecteurs\/([a-z0-9-]{1,40})$/, (ctx, [id], _c, qui) => retirerConnecteur(ctx, id, qui.email)],
 
   ["GET", /^\/api\/acces$/, async (ctx) => {
     const noms = Object.fromEntries(ctx.db.prepare("SELECT slug, nom FROM projets WHERE slug IS NOT NULL").all().map((p) => [p.slug, p.nom]))

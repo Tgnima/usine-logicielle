@@ -1422,13 +1422,12 @@ function vueConnecteurs() {
   const f = etat.filtreConnecteurs
   const liste = k.connecteurs.filter((c) => !f || (f === "actifs" ? c.actif : c.famille === f))
   const actifs = k.connecteurs.filter((c) => c.actif)
-  const usages = actifs.reduce((n, c) => n + (c.usage?.semaine ?? 0), 0)
   const conseil = k.connecteurs.find((c) => c.conseille && !c.actif)
   return html`
     ${entete}
     <div class="carte carte-p resume-connecteurs">
       <div><strong>${actifs.length ? `${actifs.length} connecteur${actifs.length > 1 ? "s" : ""} actif${actifs.length > 1 ? "s" : ""}` : "Aucun connecteur actif"}</strong>
-        <span class="aide">${usages ? ` · utilisés ${usages} fois cette semaine` : actifs.length ? " · pas encore utilisés cette semaine" : " · les IA travaillent avec ce qu'elles savent déjà"}</span></div>
+        <span class="aide">${actifs.length ? " · les IA s'en servent dès leur prochaine tâche" : " · les IA travaillent avec ce qu'elles savent déjà"}</span></div>
       ${conseil ? html`<div class="conseil-connecteur"><span><span class="badge bleu">conseillé</span> <strong>${conseil.nom}</strong> <span class="aide">· ${conseil.apport}</span></span>
         <button type="button" class="btn btn-p btn-petit" data-action="fenetre" data-quoi="connecteur-${conseil.id}">Activer</button></div>` : ""}
     </div>
@@ -1471,7 +1470,7 @@ function fenetreConnecteur(id) {
       </fieldset>
       ${bloque ? html`<div class="aide">Colle d'abord la clé ci-dessus pour pouvoir l'activer.</div>` : ""}
       <div class="barre" style="flex-wrap:wrap;gap:10px">
-        <span class="aide">${c.usage?.dernier_le ? `Dernier usage : ${dateCourte(c.usage.dernier_le)}` : c.actif ? "Pas encore utilisé" : ""}</span>
+        <span class="aide">${c.test ? `Dernier test le ${dateCourte(c.test.le)} : ${c.test.ok ? "il répond" : "pas de réponse"}` : c.actif ? "Pas encore testé" : ""}</span>
         <div class="rangee" style="gap:8px">
           ${c.actif ? html`<button type="button" class="btn btn-s" data-action="tester-connecteur" data-id="${c.id}">Tester</button><button type="submit" name="actif" value="non" class="btn btn-s">Désactiver</button>` : ""}
           <button type="submit" name="actif" value="oui" class="btn btn-p" ${bloque ? "disabled" : ""}>${c.actif ? "Enregistrer" : "Activer"}</button>

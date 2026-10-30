@@ -191,6 +191,7 @@ export async function inventorier(ctx, projetId) {
         modele: config.modeles?.inventaire?.modele ?? config.modeles.renfort?.modele ?? config.modeles.atelier.modele,
         sortie: "/tmp/sorties/inventaire/agent.jsonl",
         erreurs: "/tmp/sorties/inventaire/agent.err",
+        role: "construction",
       }),
       "grep '\"type\":\"result\"' /tmp/sorties/inventaire/agent.jsonl | tail -1 > /tmp/sorties/inventaire/agent.json",
       EPREUVE,

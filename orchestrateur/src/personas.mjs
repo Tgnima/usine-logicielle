@@ -8,6 +8,7 @@
 //   les scénarios cachés   -> gardés dans l'usine, JAMAIS dans un dépôt ni dans une consigne
 //                             d'agent qui code : la recette les joue à la fin, sur le produit fini
 //                             (un agent qui connaît le test code pour le test, pas pour le persona).
+import { outilsClaude } from "./connecteurs.mjs"
 import { maj, noter } from "./db.mjs"
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { extraireJson } from "./analyste.mjs"
@@ -120,7 +121,7 @@ async function rechercher(ctx, id, consignes) {
       "set -e",
       "rm -rf /tmp/sorties/persona && mkdir -p /tmp/sorties/persona && cd /tmp/sorties/persona",
       ecrireFichier("/tmp/sorties/persona/consigne.md", texteConsigne),
-      scriptClaude(ctx, { args: `-p --output-format json --system-prompt ${q(SYSTEME)} --tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch --max-turns 40`, entree: "/tmp/sorties/persona/consigne.md", modele, sortie: "/tmp/sorties/persona/reponse.json" }),
+      scriptClaude(ctx, { args: `-p --output-format json --system-prompt ${q(SYSTEME)} --tools WebSearch,WebFetch --allowedTools ${["WebSearch", "WebFetch", ...outilsClaude(ctx, "plan")].join(",")} --max-turns 40`, entree: "/tmp/sorties/persona/consigne.md", modele, sortie: "/tmp/sorties/persona/reponse.json", role: "plan" }),
     ].join("\n"), { minutes: 25 })
     if (noterLimites(ctx, "claude-code", r.marqueurs).epuise) throw new Error("Claude est à sa limite d'usage : relance la recherche plus tard.")
     let sortie

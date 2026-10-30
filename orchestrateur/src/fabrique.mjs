@@ -178,6 +178,7 @@ async function fabriquer(ctx, projet, tache) {
       modele: tache.approche > 0 ? (config.modeles.renfort?.modele ?? "claude-opus-5-5") : config.modeles.atelier.modele,
       sortie: "/tmp/sorties/tache/agent.jsonl",
       erreurs: "/tmp/sorties/tache/agent.err",
+      role: "construction",
     }),
     // Le dernier évènement (« result ») a la forme de l'ancienne sortie JSON : coûts et résumé.
     "grep '\"type\":\"result\"' /tmp/sorties/tache/agent.jsonl | tail -1 > /tmp/sorties/tache/agent.json",

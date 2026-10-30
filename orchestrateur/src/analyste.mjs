@@ -2,6 +2,7 @@
 // erreur ici gâche tout le reste) transforme la demande en plan de fabrication :
 // lots, tâches, critères d'acceptation testables, dépendances. Le plan est
 // VÉRIFIÉ par le code avant d'être présenté à l'humain.
+import { outilsClaude } from "./connecteurs.mjs"
 import { executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { usagesClaude } from "./couts.mjs"
 import { SCHEMA_DESIGN, grilleEnTexte, verifierDesign } from "./design.mjs"
@@ -182,7 +183,10 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
   // Des pièces jointes (maquettes, PDF) : l'analyste peut les lire, et seulement elles.
   const pieces = projetId ? listerPieces(config, projetId) : []
   const lirePieces = pieces.length ? `\n\nL'utilisateur a joint ${pieces.length} pièce(s) (maquettes, captures ou cahier des charges). Lis-les avec l'outil Read AVANT de planifier, et tiens-en compte (écrans, contenus, style) :\n${pieces.map((p) => `- /tmp/sorties/analyse/pieces/${p.nom}`).join("\n")}` : ""
-  const outils = pieces.length ? `--tools Read --allowedTools Read --max-turns ${pieces.length + 3}` : `--tools "" --max-turns 2`
+  // Les connecteurs du plan (documentation, recherche, maquettes) : autorisés, avec quelques tours de plus pour s'en servir.
+  const mcp = ctx ? outilsClaude(ctx, "plan") : []
+  const autorises = [...(pieces.length ? ["Read"] : []), ...mcp]
+  const outils = `--tools ${pieces.length ? "Read" : '""'}${autorises.length ? ` --allowedTools ${autorises.join(",")}` : ""} --max-turns ${(pieces.length ? pieces.length + 3 : 2) + (mcp.length ? 10 : 0)}`
   let problemes = []
   let attentes = 0 // au plus 3 attentes de fin de limite
   for (let essai = 1; essai <= 2; essai++) {
@@ -192,7 +196,7 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
       "rm -rf /tmp/sorties/analyse && mkdir -p /tmp/sorties/analyse && cd /tmp/sorties/analyse",
       ...(projetId ? scriptPieces(config, projetId, "/tmp/sorties/analyse/pieces") : []),
       ecrireFichier("/tmp/sorties/analyse/consigne.md", texte),
-      ctx ? scriptClaude(ctx, { args: `-p --output-format json --system-prompt ${q(SYSTEME)} ${outils}`, entree: "/tmp/sorties/analyse/consigne.md", modele, sortie: "/tmp/sorties/analyse/reponse.json" })
+      ctx ? scriptClaude(ctx, { args: `-p --output-format json --system-prompt ${q(SYSTEME)} ${outils}`, entree: "/tmp/sorties/analyse/consigne.md", modele, sortie: "/tmp/sorties/analyse/reponse.json", role: "plan" })
         : `claude -p --output-format json --model ${q(modele)} --system-prompt ${q(SYSTEME)} ${outils} < consigne.md > reponse.json`,
       "echo \"@@ ANALYSE_OK\"",
     ].join("\n")

@@ -89,7 +89,7 @@ export async function jouerRecette(ctx, projetId, sha) {
       `(setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/recette/app.log 2>&1 &)`,
       "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
       "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-      scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/recette/verdict.txt -`, entree: "/tmp/sorties/recette/consigne.md", journal: "/tmp/sorties/recette/codex.log", marqueur: "RECETTE_CODE" }),
+      scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/recette/verdict.txt -`, entree: "/tmp/sorties/recette/consigne.md", journal: "/tmp/sorties/recette/codex.log", marqueur: "RECETTE_CODE", role: "verification" }),
       "fi",
       "echo \"@@ CAPTURES $(cd /tmp/sorties/recette/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
       libererPort(4100),
