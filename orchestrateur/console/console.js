@@ -34,7 +34,7 @@ async function api(methode, chemin, corps) {
 
 const STATUTS = {
   analyse: ["Analyse", "bleu"], questions: ["Questions", "orange"], plan_a_valider: ["Plan à valider", "orange"],
-  creation: ["Création", "bleu"], fabrication: ["Fabrication", "bleu"], corrections: ["Corrections", "bleu"],
+  creation: ["Création", "bleu"], fabrication: ["Fabrication", "bleu"], reorientation: ["Réorientation", "orange"], corrections: ["Corrections", "bleu"],
   bloque: ["Bloqué", "rouge"], livre: ["Livré · à valider", "orange"], mise_en_production: ["Mise en production", "bleu"],
   en_production: ["En production", "vert"], echec: ["Échec", "rouge"], arrete: ["Arrêté", ""], abandonne: ["Abandonné", ""],
 }
@@ -69,6 +69,7 @@ const etat = {
   occupe: false, // une action est en cours : pas de double envoi, pas de rafraîchissement
   numero: 0, // numéro de chargement : une réponse périmée est ignorée
   detailsOuvert: false,
+  reorienterOuvert: false, // le volet « Changer de direction » d'un projet en fabrication
   filtre: "actifs", // la liste des projets : actifs | production | archives | tous
   pieces: [], // les fichiers choisis pour une nouvelle demande
   estimation: null,
@@ -599,7 +600,7 @@ function blocFabrication(p) {
           ${onglet === "discussion" ? html`<div class="pile" style="gap:12px">
             ${discussion.slice(-20).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type} · ${heure(j.le)}</small>${nettoyer(j.message.length > 900 ? j.message.slice(0, 900) + "…" : j.message)}</div>`)}
             <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
-              <input id="message-libre" class="champ" placeholder="Une correction, une précision… (pendant la fabrication, elle part à la fin du lot)">
+              <input id="message-libre" class="champ" placeholder="Une précision… (pendant la fabrication, elle part à la livraison ; pour changer de cap : « Changer de direction »)">
               <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
           </div>` : ""}
           </div>
@@ -698,6 +699,64 @@ function blocEchec(p) {
   </div>`
 }
 
+// Changer de direction pendant la fabrication : l'usine finit la tâche en cours, garde ce qui est
+// fabriqué, et l'analyste propose la suite du plan, à valider.
+function blocReorienter(p) {
+  if (!["fabrication", "bloque"].includes(p.statut)) return ""
+  const liste = personasValides()
+  return html`<details class="carte carte-p" id="reorienter" ${etat.reorienterOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">Changer de direction</summary>
+    <div class="pile" style="margin-top:12px">
+      <p class="aide" style="margin:0">L'usine termine la tâche en cours, puis l'analyste refait la suite du plan pour cette nouvelle direction. Ce qui est déjà fabriqué est gardé ; les tâches pas encore faites sont reprises ou laissées. Tu valides le nouveau plan avant que la fabrication reprenne, ou tu gardes l'ancien.</p>
+      <label class="titre-champ" for="consigne-reorienter">La nouvelle direction</label>
+      <textarea id="consigne-reorienter" class="champ" rows="4" placeholder="Ex. : on vise les artisans plutôt que les agences ; la facturation n'est plus utile, il faut un agenda partagé."></textarea>
+      <label class="titre-champ" for="persona-reorienter">Persona <span class="aide" style="font-weight:400">· facultatif : pour viser un autre public</span></label>
+      <select id="persona-reorienter" class="champ">
+        <option value="">${p.persona ? `Garder « ${p.persona} »` : "Sans persona"}</option>
+        ${liste.filter((x) => x.id !== p.persona_id).map((x) => html`<option value="${x.id}">${x.nom}</option>`)}
+      </select>
+      <div><button type="button" class="btn btn-p" data-action="reorienter">Réorienter le projet</button></div>
+    </div></details>`
+}
+
+// Le nouveau plan d'une réorientation : les lots gardés en rappel, la suite en détail.
+// Il se révise par l'analyste (ses clés désignent des tâches qui existent déjà).
+function blocPlanReorientation(p) {
+  const plan = p.plan
+  const r = p.reorientation
+  const garde = r.garde ?? 0
+  const nouveaux = plan.lots.slice(garde)
+  return html`
+    <div class="colonnes">
+      <div class="colonne-large pile">
+        <div class="message info pile" style="align-items:flex-start"><span><strong>Réorientation demandée${r.par ? ` par ${r.par}` : ""}.</strong> ${r.consigne}</span>
+          ${r.persona ? html`<span class="aide">Nouveau persona : ${r.persona}</span>` : ""}</div>
+        ${garde ? html`<section class="carte carte-p pile"><strong>Gardé (déjà fabriqué)</strong>
+          <ol style="margin:0;padding-left:20px">${plan.lots.slice(0, garde).map((l) => html`<li>${l.nom}</li>`)}</ol></section>` : ""}
+        ${r.abandonnees.length ? html`<div class="aide">À la validation, ces tâches pas encore faites seront abandonnées (leurs issues fermées) : <span class="mono">${r.abandonnees.join(", ")}</span>.</div>` : ""}
+        ${nouveaux.map((lot, j) => html`<section class="carte lot" aria-label="Lot ${garde + j + 1}">
+          <div class="lot-tete"><span class="mono aide">LOT ${garde + j + 1}</span><div style="flex:1;min-width:220px"><strong>${lot.nom}</strong><div class="aide">${lot.objectif ?? ""}</div></div></div>
+          <div style="padding:6px 8px">${lot.taches.map((t) => html`<div class="tache-plan"><span class="cle mono">${t.cle}</span><div style="flex:1;min-width:0">
+            <strong>${t.titre}</strong>${t.depend_de?.length ? html`<span class="aide"> · après ${t.depend_de.join(", ")}</span>` : ""}
+            <div style="font-size:14px;color:var(--texte)">${t.description ?? ""}</div>
+            <ul class="criteres">${t.criteres.map((c) => html`<li><span style="color:var(--ok-point)" aria-hidden="true">✓</span><span>${c}</span></li>`)}</ul></div></div>`)}</div>
+        </section>`)}
+        <div class="carte carte-p pile">
+          <label class="titre-champ" for="revision">Demander une révision à l'analyste</label>
+          <textarea id="revision" class="champ" rows="3" placeholder="Ex. : garde l'export PDF, et commence par l'agenda."></textarea>
+          <div><button type="button" class="btn btn-s" data-action="message" data-source="revision">Envoyer à l'analyste</button></div>
+        </div>
+      </div>
+      <aside class="colonne-etroite" aria-label="Décision">
+        <div class="sombre pile">
+          <div class="aide">${garde} lot(s) gardé(s) · ${nouveaux.length} nouveau(x) · ${nouveaux.reduce((n, l) => n + l.taches.length, 0)} tâche(s)</div>
+          <button type="button" class="btn" style="background:var(--fond);color:var(--encre)" data-action="valider-plan">Valider la réorientation</button>
+          <div class="aide">La fabrication reprend au lot ${garde + 1}.</div>
+          <button type="button" class="lien-btn" style="color:inherit;opacity:.8;align-self:flex-start;padding-left:0" data-action="annuler-reorientation">Garder l'ancien plan</button>
+        </div>
+      </aside>
+    </div>`
+}
+
 function vueProjet() {
   const p = etat.projet
   if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement du projet…</div>`
@@ -721,8 +780,12 @@ function vueProjet() {
       <ol style="margin:0;padding-left:20px">${(p.plan?.questions ?? []).map((q) => html`<li>${q}</li>`)}</ol>
       <label class="cache" for="reponses">Tes réponses</label><textarea id="reponses" class="champ" rows="5" placeholder="Réponds librement, dans l'ordre des questions."></textarea>
       <div><button type="button" class="btn btn-p" data-action="message" data-source="reponses">Envoyer les réponses</button></div></section>` : ""}
-    ${enPlan ? blocPlan(p) : ""}
+    ${p.statut === "reorientation" ? html`<div class="message info pile" style="align-items:flex-start"><span><strong>Réorientation en cours.</strong> L'usine termine la tâche en cours, puis l'analyste refait la suite du plan. Cette page se met à jour toute seule.</span>
+      <span class="aide">${p.reorientation?.consigne ?? ""}</span>
+      <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-projet">Relancer l'analyste</button><button type="button" class="btn btn-s btn-petit" data-action="annuler-reorientation">Garder l'ancien plan</button></div></div>` : ""}
+    ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : blocPlan(p)) : ""}
     ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
+    ${blocReorienter(p)}
     ${blocRecette(p)}
     ${blocProduction(p)}
     ${blocVideo(p)}
@@ -1082,7 +1145,7 @@ async function charger({ silencieux = false } = {}) {
     // Chaque partie s'affiche dès qu'elle arrive : une page lente ne bloque pas le reste.
     const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; prevenir(x); rendre() } })]
     if (r.vue === "nouveau" && !etat.estimation) taches.push(api("GET", "estimation").then((x) => { etat.estimation = x; rendre() }))
-    if (["nouveau", "personas"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
+    if (["nouveau", "personas", "projet"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
     if (r.vue === "persona") taches.push(api("GET", `personas/${r.id}`).then((x) => { if (frais()) { etat.persona = x; rendre() } }))
     if (r.vue === "historique") taches.push(api("GET", `historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`).then((x) => { if (frais()) { etat.historique = x; rendre() } }))
     if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => {
@@ -1378,7 +1441,14 @@ const ACTIONS = {
     return agir(() => api("POST", `projets/${etat.projet.id}/corriger`, { texte }), { succes: "Demande transmise : l'analyste enquête." })
   },
   decider: (el) => agir(() => api("POST", `escalades/${el.dataset.id}`, { choix: el.dataset.choix, texte: $(`#consigne-${el.dataset.id}`)?.value ?? "" }), { succes: "Décision transmise : l'usine reprend." }),
-  "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
+  "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: etat.projet.reorientation ? "Réorientation validée : l'usine ouvre les nouvelles tâches et reprend la fabrication." : "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
+  reorienter: () => {
+    const consigne = $("#consigne-reorienter")?.value.trim()
+    if (!consigne) return $("#consigne-reorienter")?.focus()
+    if (!confirmer("Réorienter le projet ? La fabrication s'arrête après la tâche en cours, le temps que tu valides le nouveau plan.")) return
+    return agir(() => api("POST", `projets/${etat.projet.id}/reorienter`, { consigne, persona_id: $("#persona-reorienter")?.value || null }))
+  },
+  "annuler-reorientation": () => confirmer("Garder l'ancien plan ? La fabrication reprend là où elle s'était arrêtée.") && agir(() => api("POST", `projets/${etat.projet.id}/abandonner`, {})),
   "relancer-projet": () => agir(() => api("POST", `projets/${etat.projet.id}/relancer`, {}), { succes: "Relance lancée : cette page se met à jour toute seule." }),
   "ajouter-critere": (el) => {
     const [l, t] = [Number(el.dataset.lot), Number(el.dataset.tache)]
@@ -1605,6 +1675,7 @@ document.addEventListener("keydown", (e) => {
 })
 document.addEventListener("toggle", (e) => {
   if (e.target.id === "zone-sensible") etat.detailsOuvert = e.target.open
+  if (e.target.id === "reorienter") etat.reorienterOuvert = e.target.open
 }, true)
 
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------

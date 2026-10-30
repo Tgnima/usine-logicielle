@@ -148,13 +148,15 @@ export async function finaliserSiFini(ctx, projetId) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
   const tout = taches(db, projetId)
+  // Une réorientation en cours : la suite du plan change, le produit n'est pas fini.
+  if (projet.statut === "reorientation") return false
   if (!tout.every(fini) || projet.lot_livre < Math.max(...tout.map((t) => t.lot))) return false
   maj(db, "projets", projetId, { statut: "livre" })
   // Des demandes reçues pendant la fabrication : elles partent maintenant, sans attendre
   // l'humain ; le rapport final viendra quand elles seront livrées à leur tour.
   const enFile = retirerFile(db, projetId)
   if (enFile.length) {
-    await ctx.notifier.etape(obtenir(db, "projets", projetId), `:inbox_tray: Lot terminé. ${enFile.length > 1 ? `${enFile.length} demandes reçues` : "Une demande reçue"} pendant la fabrication ${enFile.length > 1 ? "partent" : "part"} maintenant chez l'analyste.`)
+    await ctx.notifier.etape(obtenir(db, "projets", projetId), `:inbox_tray: Tous les lots sont livrés. ${enFile.length > 1 ? `${enFile.length} demandes reçues` : "Une demande reçue"} pendant la fabrication ${enFile.length > 1 ? "partent" : "part"} maintenant chez l'analyste.`)
     await demanderCorrections(ctx, projetId, enFile.map((d) => d.texte).join("\n\n"), [...new Set(enFile.map((d) => d.par))].join(", "))
     return true
   }
@@ -351,7 +353,7 @@ export function mettreEnFile(db, projetId, texte, par) {
   ecrireReglage(db, cleFile(projetId), JSON.stringify(file))
   return file.length
 }
-function retirerFile(db, projetId) {
+export function retirerFile(db, projetId) {
   const file = JSON.parse(lireReglage(db, cleFile(projetId), "[]"))
   if (file.length) ecrireReglage(db, cleFile(projetId), "[]")
   return file

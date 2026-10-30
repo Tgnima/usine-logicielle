@@ -10,6 +10,9 @@ import { enregistrer } from "./couts.mjs"
 import { demanderCorrections } from "./livraison.mjs"
 import { inventaireEnTexte, inventorier, preparerReprise } from "./reprise.mjs"
 import { lirePersona, obtenirPersona, personaEnTexte } from "./personas.mjs"
+import { abandonnerReorientation, lireReorientation, preparer as preparerReorientation, relancerReorientation, reviserReorientation, validerReorientation } from "./reorientation.mjs"
+
+export { reorienterProjet } from "./reorientation.mjs"
 
 // personaId : un persona validé (facultatif) ; origine : un dépôt repris (reprise.mjs).
 export async function nouveauProjet(ctx, { prompt, demandeur = "?", canal = null, fil = null, avant = null, personaId = null, origine = null }) {
@@ -87,6 +90,7 @@ export async function repondreQuestions(ctx, projetId, reponses, par) {
 export async function corrigerPlan(ctx, projetId, retours, par) {
   const projet = obtenir(ctx.db, "projets", projetId)
   if (projet?.statut !== "plan_a_valider") return { ok: false, message: "Ce plan n'est pas en attente de validation." }
+  if (lireReorientation(ctx.db, projetId)) return reviserReorientation(ctx, projetId, retours, par)
   ctx.db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Corrections du plan", retours, par)
   const reponses = ctx.db.prepare("SELECT reponse FROM decisions WHERE projet_id = ? AND question = 'Questions de l''analyste' ORDER BY id DESC").get(projetId)?.reponse
   lancerAnalyse(ctx, projetId, { retours, planPrecedent: projet.plan, reponses }).catch((e) => console.error(e))
@@ -98,6 +102,8 @@ export async function validerPlan(ctx, projetId, par) {
   const { db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (projet?.statut !== "plan_a_valider") return { ok: false, message: "Ce plan n'est pas en attente de validation." }
+  // Un projet réorienté a déjà son dépôt : on applique le nouveau plan, on ne recrée rien.
+  if (lireReorientation(db, projetId)) return validerReorientation(ctx, projetId, par)
   db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Plan de fabrication", "validé", par)
   noter(db, { projet: projetId, type: "validation", message: `Plan validé par ${par}` })
   lancerCreation(ctx, projetId, `:white_check_mark: Plan validé par ${par}. Création du dépôt et du socle…`)
@@ -137,6 +143,7 @@ export function relancerProjet(ctx, projetId, par = "?") {
   const { db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (!projet) return { ok: false, message: `Pas de projet ${projetId}.` }
+  if (projet.statut === "reorientation") return relancerReorientation(ctx, projetId)
   const planValide = db.prepare("SELECT 1 FROM decisions WHERE projet_id = ? AND question = 'Plan de fabrication' AND reponse = 'validé'").get(projetId)
   if (projet.statut === "echec" && planValide && !projet.debut_fabrication) {
     noter(db, { projet: projetId, type: "relance", message: `Création relancée par ${par}, avec le plan validé` })
@@ -154,6 +161,8 @@ export function relancerProjet(ctx, projetId, par = "?") {
 // Un plan qui ne correspond pas à la demande : on l'abandonne, rien n'a encore été créé.
 export function abandonnerPlan(ctx, projetId, par) {
   const projet = obtenir(ctx.db, "projets", projetId)
+  // Une réorientation : on garde l'ancien plan, la fabrication reprend.
+  if (lireReorientation(ctx.db, projetId)) return abandonnerReorientation(ctx, projetId, par)
   if (!["plan_a_valider", "questions", "echec"].includes(projet?.statut)) return { ok: false, message: "Seul un plan pas encore validé peut être abandonné." }
   maj(ctx.db, "projets", projetId, { statut: "abandonne" })
   noter(ctx.db, { projet: projetId, type: "abandon", message: `Plan abandonné par ${par}` })
@@ -201,6 +210,15 @@ export function reprise(ctx) {
   const n = db.prepare("UPDATE taches SET statut = 'prete' WHERE statut IN ('en_cours', 'verification')").run().changes
   if (n) console.log(`Reprise : ${n} tâche(s) interrompue(s) remise(s) en file.`)
   for (const p of db.prepare("SELECT id FROM projets WHERE statut = 'analyse'").all()) lancerAnalyse(ctx, p.id).catch((e) => console.error(e))
+  // Une réorientation interrompue : l'analyste refait la suite ; sans demande enregistrée, la fabrication reprend.
+  for (const p of db.prepare("SELECT id FROM projets WHERE statut = 'reorientation'").all()) {
+    if (lireReorientation(db, p.id)) preparerReorientation(ctx, p.id).catch((e) => console.error(e))
+    else maj(db, "projets", p.id, { statut: "fabrication" })
+  }
+  // Une réorientation validée dont l'application a été coupée : elle se rejoue sans doublon.
+  for (const p of db.prepare("SELECT id FROM projets WHERE statut = 'creation'").all()) {
+    if (lireReorientation(db, p.id)?.garde !== undefined) maj(db, "projets", p.id, { statut: "plan_a_valider" })
+  }
   // Une demande de correction ou une mise en production interrompue : le produit
   // reprend son état d'avant, et la dernière demande de correction est relancée.
   for (const p of db.prepare("SELECT id FROM projets WHERE statut IN ('corrections', 'mise_en_production')").all()) {

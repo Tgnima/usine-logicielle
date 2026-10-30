@@ -13,6 +13,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/escalade.mjs` | Issues bloquantes, options A/B/C, surveillance des réponses |
 | `orchestrateur/src/livraison.mjs` | Étage 3 : aperçus, rapport final, production, corrections |
 | `orchestrateur/src/pipeline.mjs` | Les actions (Slack, CLI) |
+| `orchestrateur/src/reorientation.mjs` | Changer de direction en cours de fabrication : pause, lots gardés, suite refaite par l'analyste, validation |
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
 | `orchestrateur/src/console.mjs`, `orchestrateur/console/` | La console web (API JSON + interface sans build), servie sur le port 8091 derrière le portier (administrateurs) |
 | `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |

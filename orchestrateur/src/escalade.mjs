@@ -4,7 +4,7 @@
 // message Slack porte les mêmes options en boutons. Les deux débloquent :
 // un clic, ou un commentaire « A », « B », « C » (ou une consigne libre) sur l'issue.
 import { maj, noter, obtenir } from "./db.mjs"
-import { reglagesCouts } from "./couts.mjs"
+import { lireReglage, reglagesCouts } from "./couts.mjs"
 import { MARQUE, ajouterEtiquettes, commenter, commentaires, creerIssue, fermerIssue, fusionnerPR, lireIssue, lirePR, retirerEtiquette } from "./github.mjs"
 
 const RAISONS = {
@@ -73,7 +73,8 @@ export async function escalader(ctx, { projetId, tacheId = null, raison, details
   const id = Number(db.prepare("INSERT INTO escalades (projet_id, tache_id, issue, raison, options) VALUES (?, ?, ?, ?, ?)").run(projetId, tacheId, issue?.number ?? null, raison, JSON.stringify(opts)).lastInsertRowid)
   if (tache) maj(db, "taches", tache.id, { statut: "bloquee" })
   if (tache?.issue && nomDepot) await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:bloquant"]).catch(() => {})
-  if (config.autonomie?.arret === "projet" || !tache) maj(db, "projets", projetId, { statut: "bloque" })
+  // (Un projet en réorientation y reste : la tâche sera revue avec le nouveau plan.)
+  if ((config.autonomie?.arret === "projet" || !tache) && obtenir(db, "projets", projetId).statut !== "reorientation") maj(db, "projets", projetId, { statut: "bloque" })
   noter(db, { projet: projetId, tache: tacheId, type: "escalade", message: `${sujet} : ${raison}` })
   const ts = await ctx.notifier.escalade(projet, { id, sujet, raison: RAISONS[raison] ?? raison, details: String(details).slice(0, 1500), options: opts, issue: issue ? `https://github.com/${projet.depot}/issues/${issue.number}` : null }).catch((e) => console.error(e))
   if (ts) db.prepare("UPDATE escalades SET message_ts = ? WHERE id = ?").run(ts, id)
@@ -87,8 +88,10 @@ export async function resoudre(ctx, escaladeId, { choix, texte = "", par = "?" }
   if (!esc || esc.statut !== "ouverte") return { ok: false, message: "Cette escalade est déjà résolue." }
   const opt = JSON.parse(esc.options).find((o) => o.cle === choix)
   if (!opt) return { ok: false, message: `Option ${choix} indisponible.` }
-  db.prepare("UPDATE escalades SET statut = 'resolue' WHERE id = ?").run(escaladeId)
   const projet = obtenir(db, "projets", esc.projet_id)
+  // Pendant une réorientation, les décisions attendent le nouveau plan (qui les règle, ou non).
+  if (projet.statut === "reorientation" || lireReglage(db, `reorientation_${projet.id}`)) return { ok: false, message: "Ce projet est en réorientation : valide le nouveau plan (les tâches non faites seront abandonnées) ou garde l'ancien, puis décide." }
+  db.prepare("UPDATE escalades SET statut = 'resolue' WHERE id = ?").run(escaladeId)
   const tache = esc.tache_id ? obtenir(db, "taches", esc.tache_id) : null
   const nomDepot = projet.depot
   const question = `${tache ? tache.cle : projet.nom} : ${esc.raison}`

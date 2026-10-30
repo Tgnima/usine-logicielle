@@ -12,7 +12,7 @@ import { ecrireEtat, supprimerEtat } from "./github.mjs"
 import { arreter, reprendre } from "./pipeline.mjs"
 import { lireSanteServeur } from "./sante.mjs"
 
-const ACTIFS = ["analyse", "questions", "plan_a_valider", "creation", "fabrication", "corrections", "bloque", "mise_en_production"]
+const ACTIFS = ["analyse", "questions", "plan_a_valider", "creation", "fabrication", "reorientation", "corrections", "bloque", "mise_en_production"]
 const jours = (config) => Number(config.apercus?.duree_vie_jours ?? 7)
 const dans = (j) => new Date(Date.now() + j * 86_400_000).toISOString()
 

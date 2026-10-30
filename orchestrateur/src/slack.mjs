@@ -32,7 +32,7 @@ const lien = (texte, url, action_id = "lien_tableau") => ({ type: "button", text
 
 const STATUTS = {
   analyse: ":brain: analyse", questions: ":question: questions", plan_a_valider: ":clipboard: plan à valider", creation: ":building_construction: création",
-  fabrication: ":hammer_and_wrench: fabrication", bloque: ":octagonal_sign: bloqué", livre: ":package: livré", corrections: ":memo: corrections",
+  fabrication: ":hammer_and_wrench: fabrication", reorientation: ":twisted_rightwards_arrows: réorientation", bloque: ":octagonal_sign: bloqué", livre: ":package: livré", corrections: ":memo: corrections",
   mise_en_production: ":rocket: mise en production", abandonne: ":wastebasket: abandonné", supprime: ":wastebasket: supprimé", en_production: ":large_green_circle: en production", echec: ":x: échec", arrete: ":black_square_for_stop: arrêté",
 }
 
@@ -82,14 +82,18 @@ export async function demarrerSlack(ctx) {
       blocks: [section(`:question: *L'analyste a besoin de précisions avant de planifier :*\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`), { type: "actions", elements: [bouton("Répondre", "questions_repondre", projet.id, "primary"), versConsole(projet, "questions")] }],
     }),
     plan: (projet, plan) => {
+      // Une réorientation : les lots gardés en une ligne, les nouveaux en détail.
+      const r = plan.reorientation ?? null
+      const debut = r?.garde ?? 0
       const nb = plan.lots.reduce((n, l) => n + l.taches.length, 0)
       const blocs = [
-        { type: "header", text: { type: "plain_text", text: tronquer(`Plan : ${plan.nom}`, 150) } },
+        { type: "header", text: { type: "plain_text", text: tronquer(`${r ? "Nouveau plan" : "Plan"} : ${plan.nom}`, 150) } },
         section(`${plan.resume}\n_${plan.pile ? `Dépôt repris, pile ${plan.pile}` : `Brique : ${{ webapp: "application web", site: "site vitrine", api: "API", pwa: "application mobile (PWA)" }[plan.brique ?? "webapp"] ?? plan.brique}`}${plan.persona ? ` · persona « ${plan.persona} »` : ""} · ${plan.lots.length} lots, ${nb} tâches. Chaque tâche est codée par un agent, testée par un vérificateur indépendant sur l'application en marche, et fusionnée seulement si tous ses critères passent._`),
-        ...plan.lots.slice(0, 8).map((l, i) => section(`*Lot ${i + 1} : ${l.nom}*\n_${l.objectif}_\n${l.taches.map((t) => `• *${t.cle}* ${t.titre}\n${t.criteres.map((c) => `      ◦ ${c}`).join("\n")}`).join("\n")}`)),
+        ...(r ? [section(`:twisted_rightwards_arrows: *Réorientation* : ${debut ? `lot${debut > 1 ? `s 1 à ${debut} gardés` : " 1 gardé"} (déjà fabriqué : ${plan.lots.slice(0, debut).map((l) => l.nom).join(" · ")})` : "rien n'était encore fabriqué"}.${r.abandonnees.length ? ` À la validation, ${r.abandonnees.length} tâche(s) non faite(s) seront abandonnées : ${r.abandonnees.join(", ")}.` : ""} La suite :`)] : []),
+        ...plan.lots.slice(debut, debut + 8).map((l, j) => [l, debut + j]).map(([l, i]) => section(`*Lot ${i + 1} : ${l.nom}*\n_${l.objectif}_\n${l.taches.map((t) => `• *${t.cle}* ${t.titre}\n${t.criteres.map((c) => `      ◦ ${c}`).join("\n")}`).join("\n")}`)),
         ...(plan.hors_perimetre?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Hors périmètre :* ${plan.hors_perimetre.join(" · ")}`) }] }] : []),
         ...(plan.risques?.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: tronquer(`*Risques :* ${plan.risques.join(" · ")}`) }] }] : []),
-        { type: "actions", elements: [bouton("Valider et fabriquer", "plan_valider", projet.id, "primary"), bouton("Corriger le plan", "plan_corriger", projet.id), bouton("Abandonner", "plan_abandonner", projet.id, "danger"), versConsole(projet, "plan")] },
+        { type: "actions", elements: [bouton("Valider et fabriquer", "plan_valider", projet.id, "primary"), bouton("Corriger le plan", "plan_corriger", projet.id), bouton(r ? "Garder l'ancien plan" : "Abandonner", "plan_abandonner", projet.id, "danger"), versConsole(projet, "plan")] },
       ]
       return poster(projet, { text: `Plan à valider : ${plan.nom}`, blocks: blocs })
     },
@@ -175,7 +179,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine reprendre <dépôt GitHub> persona <nom> [mode copie|direct] [: ce que tu veux en faire]` : l'usine reprend un dépôt existant (un reverse engineering, par exemple) et le termine pour ce persona · `/usine personas` : les personas (création et relecture dans la console).\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine reorienter <n°> [persona <nom>] : <la nouvelle direction>` : changer de direction pendant la fabrication ; l'usine finit la tâche en cours, garde ce qui est fait et te propose la suite du plan.\n`/usine reprendre <dépôt GitHub> persona <nom> [mode copie|direct] [: ce que tu veux en faire]` : l'usine reprend un dépôt existant (un reverse engineering, par exemple) et le termine pour ce persona · `/usine personas` : les personas (création et relecture dans la console).\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
     }
     if (mot === "tableau" || mot === "dashboard") {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Console de l'usine* : projets en direct, décisions, production, santé, coûts et accès."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
@@ -219,6 +223,18 @@ export async function demarrerSlack(ctx) {
       const r = await actions.reprendreDepot(ctx, { adresse, personaId, mode, consigne, demandeur: command.user_id, canal, fil: message.ts })
       if (!r.ok) await app.client.chat.postMessage({ channel: canal, thread_ts: message.ts, text: `:x: ${r.message}` })
       return repondre(r.message)
+    }
+    if (mot === "reorienter" || mot === "réorienter") {
+      // /usine reorienter <n°> [persona <nom>] : <nouvelle direction>
+      const m = /^\S+\s+(\d+)\s*(?:persona\s+(.+?))?\s*:\s*([\s\S]+)$/i.exec(texte)
+      if (!m) return repondre("Écris : `/usine reorienter <n°> [persona <nom>] : <la nouvelle direction>`, par exemple `/usine reorienter 4 : on vise les artisans plutôt que les agences ; retire la facturation`.")
+      let personaId = null
+      if (m[2]) {
+        const p = trouverPersona(db, m[2].trim())
+        if (!p) return repondre(`Je ne trouve pas le persona « ${m[2].trim()} ». \`/usine personas\` pour la liste.`)
+        personaId = p.id
+      }
+      return repondre(actions.reorienterProjet(ctx, Number(m[1]), { consigne: m[3], personaId, par: command.user_name }).message)
     }
     if (mot === "stop") return repondre(actions.arreter(ctx, command.user_name).message)
     if (mot === "reprendre") return repondre(actions.reprendre(ctx).message)
@@ -303,7 +319,7 @@ export async function demarrerSlack(ctx) {
   app.action("plan_abandonner", async (args) => {
     if (!(await garde(args))) return
     const r = actions.abandonnerPlan(ctx, Number(args.body.actions[0].value), args.body.user.name ?? args.body.user.id)
-    if (r.ok) await retirerBoutons(args.body, `:wastebasket: Plan abandonné par <@${args.body.user.id}>`)
+    if (r.ok) await retirerBoutons(args.body, r.message.startsWith("Réorientation") ? `:leftwards_arrow_with_hook: Ancien plan gardé par <@${args.body.user.id}>` : `:wastebasket: Plan abandonné par <@${args.body.user.id}>`)
     else await args.respond({ response_type: "ephemeral", replace_original: false, text: r.message })
   })
 

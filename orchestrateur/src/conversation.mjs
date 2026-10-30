@@ -4,7 +4,8 @@
 //   - des questions de l'analyste        -> ses réponses
 //   - un plan à valider                  -> une correction du plan
 //   - un produit livré ou en production  -> une demande de correction (l'analyste enquête)
-//   - pendant la fabrication             -> mise en file, envoyée à l'analyste à la fin du lot
+//   - pendant la fabrication             -> mise en file, envoyée à l'analyste à la livraison
+//                                           (ou tout de suite avec une réorientation)
 import { noter, obtenir } from "./db.mjs"
 import { corrigerPlan, repondreQuestions } from "./pipeline.mjs"
 import { demanderCorrections, mettreEnFile } from "./livraison.mjs"
@@ -33,15 +34,18 @@ export async function repondreDansLeFil(ctx, projetId, texte, par) {
     case "en_production":
       demanderCorrections(ctx, projetId, texte, par).catch((e) => console.error(e))
       return null // demanderCorrections répond elle-même dans le fil
+    case "reorientation":
+      return ":twisted_rightwards_arrows: Ce projet est en réorientation : l'analyste refait la suite du plan. Tu pourras le corriger en répondant ici dès qu'il arrive."
     case "analyse":
     case "corrections":
     case "creation":
     case "fabrication":
     case "bloque": {
-      // Pendant la fabrication : la demande attend la fin du lot, puis part seule chez l'analyste.
+      // Pendant la fabrication : la demande attend que tous les lots soient livrés, puis part
+      // seule chez l'analyste. Pour changer de direction sans attendre : la réorientation.
       const n = mettreEnFile(db, projetId, texte, par)
       noter(db, { projet: projetId, type: "remarque", message: `En file (${n}) : ${par} : ${texte}` })
-      return `:inbox_tray: Bien reçu. La fabrication est en cours : ta demande ${n > 1 ? `(${n} en attente) ` : ""}partira automatiquement chez l'analyste dès la fin du lot, sans que tu aies à la renvoyer.`
+      return `:inbox_tray: Bien reçu. La fabrication est en cours : ta demande ${n > 1 ? `(${n} en attente) ` : ""}partira automatiquement chez l'analyste quand tous les lots seront livrés, sans que tu aies à la renvoyer.\nPour changer de direction maintenant : \`/usine reorienter ${projetId} : <la nouvelle direction>\` (ou « Changer de direction » dans la console). La fabrication s'arrête après la tâche en cours et l'analyste refait la suite du plan ; ta demande part avec.`
     }
     default:
       return `Ce projet est « ${projet.statut} » : il n'attend pas de réponse.`

@@ -11,7 +11,7 @@ import { PICTO, etatUsine } from "./sante.mjs"
 
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
 const jetons = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(".", ",")} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n))
-const STATUTS = { analyse: "analyse", questions: "questions", plan_a_valider: "plan à valider", creation: "création", fabrication: "fabrication", bloque: "bloqué", livre: "livré", corrections: "corrections", mise_en_production: "mise en production", en_production: "en production", echec: "échec", arrete: "arrêté", abandonne: "abandonné" }
+const STATUTS = { analyse: "analyse", questions: "questions", plan_a_valider: "plan à valider", creation: "création", fabrication: "fabrication", reorientation: "réorientation", bloque: "bloqué", livre: "livré", corrections: "corrections", mise_en_production: "mise en production", en_production: "en production", echec: "échec", arrete: "arrêté", abandonne: "abandonné" }
 
 // Les barres mensuelles (équivalent API et coût réel), en SVG.
 function graphique(config, evo) {

@@ -144,7 +144,7 @@ async function creerProduitRepris(ctx, projetId) {
 }
 
 // Une issue par tâche, et la tâche en base. nomDepot : un dépôt de l'usine, ou « propriétaire/nom ».
-async function ouvrirTaches(ctx, projetId, nomDepot, lot, numero) {
+export async function ouvrirTaches(ctx, projetId, nomDepot, lot, numero) {
   const { config, db } = ctx
   const inserer = db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, issue, statut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente')")
   for (const t of lot.taches) {

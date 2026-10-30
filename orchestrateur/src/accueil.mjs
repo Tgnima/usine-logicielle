@@ -48,7 +48,7 @@ const rendre = (avecTableaux, entetes, lignes, droite) => (avecTableaux ? [table
 
 const STATUTS = {
   analyse: "🧠 analyse", questions: "❓ questions", plan_a_valider: "📋 plan à valider", creation: "🏗️ création",
-  fabrication: "🛠️ fabrication", bloque: "🛑 bloqué", livre: "📦 livré", corrections: "📝 corrections",
+  fabrication: "🛠️ fabrication", reorientation: "🔀 réorientation", bloque: "🛑 bloqué", livre: "📦 livré", corrections: "📝 corrections",
   mise_en_production: "🚀 mise en prod.", en_production: "🟢 en production", echec: "❌ échec", arrete: "⏹️ arrêté", abandonne: "🗑️ abandonné", supprime: "🗑️ supprimé",
 }
 

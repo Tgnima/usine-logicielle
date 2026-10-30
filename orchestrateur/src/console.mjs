@@ -34,6 +34,7 @@ import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
 import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
 import { MODES_REPRISE } from "./reprise.mjs"
+import { lireReorientation } from "./reorientation.mjs"
 import { ecartsEnCorrections, lireRecette, pointsACorriger } from "./recette.mjs"
 import { GOUFFRE, SEUIL, etageAtteint, verdictPyramide } from "./pyramide.mjs"
 import { proteges } from "./profil.mjs"
@@ -106,7 +107,7 @@ function aTraiter(ctx) {
   }
   for (const p of db.prepare("SELECT * FROM projets WHERE statut IN ('plan_a_valider', 'questions', 'livre') ORDER BY id DESC").all()) {
     const plan = lirePlan(p)
-    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · plan à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches` })
+    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches` })
     if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: (plan?.questions ?? []).slice(0, 1).join("") })
     if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · livré`, detail: "à mettre en production ou à corriger" })
   }
@@ -174,6 +175,13 @@ async function detailProjet(ctx, id) {
     origine: p.origine ? { ...JSON.parse(p.origine), url: `https://github.com/${JSON.parse(p.origine).depot}` } : null,
     branche: p.branche ?? "main",
     persona_id: p.persona_id ?? null,
+    // Une réorientation en cours : la nouvelle direction, et (une fois le plan proposé) les lots gardés.
+    reorientation: (() => {
+      const r = lireReorientation(db, id)
+      if (!r) return null
+      const persona = r.persona_id ? lirePersona(obtenirPersona(db, r.persona_id))?.nom ?? null : null
+      return { consigne: r.consigne, par: r.par, le: r.le, persona, garde: r.garde ?? null, abandonnees: r.garde === undefined ? [] : t.filter((x) => !["fusionnee", "abandonnee"].includes(x.statut)).map((x) => x.cle) }
+    })(),
     inventaire: p.inventaire ? JSON.parse(p.inventaire) : null,
     profil: p.profil ? JSON.parse(p.profil) : null,
     recette: lireRecette(p) && { ...lireRecette(p), etage: etageAtteint(lireRecette(p).pyramide), gouffre: GOUFFRE, seuil: SEUIL, verdict_pyramide: verdictPyramide(lireRecette(p).pyramide), points: pointsACorriger(lireRecette(p)) },
@@ -395,7 +403,9 @@ const ROUTES = [
   ["DELETE", /^\/api\/personas\/(\d+)$/, (ctx, [id]) => supprimerPersona(ctx, Number(id))],
   ["PUT", /^\/api\/projets\/(\d+)\/plan$/, (ctx, [id], c, qui) => {
     const p = obtenir(ctx.db, "projets", Number(id))
-    if (p?.statut !== "plan_a_valider") throw erreur(409, "Le plan ne se modifie qu'avant sa validation.")
+    if (p?.statut !== "plan_a_valider") throw erreur(409, "Le plan ne se modifie qu'avant sa validation. Pendant la fabrication, change de direction avec « Changer de direction ».")
+    // Les clés d'un plan réorienté désignent des tâches existantes : on le révise par l'analyste.
+    if (lireReorientation(ctx.db, p.id)) throw erreur(409, "Un plan de réorientation se révise par l'analyste (« Demander une révision »), pas à la main.")
     const avant = lirePlan(p)
     // Seuls les champs qu'on édite dans la console changent ; le reste du plan est gardé tel quel.
     const plan = { ...avant, lots: c.plan?.lots ?? avant.lots }
@@ -407,6 +417,12 @@ const ROUTES = [
   }],
   ["POST", /^\/api\/projets\/(\d+)\/valider$/, (ctx, [id], _c, qui) => actions.validerPlan(ctx, Number(id), qui.email)],
   ["POST", /^\/api\/projets\/(\d+)\/abandonner$/, (ctx, [id], _c, qui) => actions.abandonnerPlan(ctx, Number(id), qui.email)],
+  // Changer de direction pendant la fabrication (reorientation.mjs).
+  ["POST", /^\/api\/projets\/(\d+)\/reorienter$/, (ctx, [id], c, qui) => {
+    const r = actions.reorienterProjet(ctx, Number(id), { consigne: String(c.consigne ?? ""), personaId: personaValide(ctx, c.persona_id), par: qui.email })
+    if (!r.ok) throw erreur(409, r.message)
+    return r
+  }],
   ["POST", /^\/api\/projets\/(\d+)\/relancer$/, (ctx, [id], _c, qui) => {
     const r = actions.relancerProjet(ctx, Number(id), qui.email)
     if (!r.ok) throw erreur(409, r.message)
