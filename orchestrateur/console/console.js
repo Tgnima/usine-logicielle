@@ -105,7 +105,22 @@ const etat = {
   planVue: "lecture", // le plan à valider : lecture (par défaut) | edition
   prodReglages: false, // la mise en ligne : les réglages dépliés
   produit: { projet: null, lot: null, i: 0 }, // le volet Produit : le lot et la capture affichés
+  fenetre: null, // la fenêtre ouverte : public | inviter | budget | integration-<id>
+  invites: [], // les adresses déjà saisies dans l'invitation, en pastilles
+  personaSection: null, // la section de la fiche d'un public en cours de modification
+  personaChoisi: null, // le public choisi dans la saisie de l'accueil
+  santeLe: 0, // l'heure du dernier bilan de santé chargé (la pastille du haut)
 }
+
+// Les réglages ont un sous-menu (Base44, Unify) : l'équipe, l'utilisation et l'historique y vivent.
+const SECTIONS_REGLAGES = [
+  ["integrations", "Intégrations", "IA, GitHub, Slack"],
+  ["equipe", "Équipe", "Qui a accès"],
+  ["utilisation", "Utilisation", "Dépenses et budget"],
+  ["etat", "État de l'usine", "Services et mises à jour"],
+  ["historique", "Historique", "Qui a fait quoi"],
+  ["regles", "Règles de l'usine", "Qui décide quoi"],
+]
 
 function lireRoute() {
   // Un retour de GitHub (#/reglages?github=ok&message=…) : le message, puis une adresse propre.
@@ -118,19 +133,38 @@ function lireRoute() {
   const h = location.hash.replace(/^#/, "") || "/"
   const m = h.match(/^\/projets\/(\d+)/)
   if (m) return { vue: "projet", id: Number(m[1]) }
-  if (h.startsWith("/nouveau")) return { vue: "nouveau" }
+  // « Nouveau projet » n'est plus une page : la saisie de l'accueil prend le focus.
+  if (h.startsWith("/nouveau")) return { vue: "projets", nouveau: true }
   const mp = h.match(/^\/personas\/(\d+)/)
   if (mp) return { vue: "persona", id: Number(mp[1]) }
   if (h.startsWith("/personas")) return { vue: "personas" }
-  if (h.startsWith("/sante")) return { vue: "sante" }
-  if (h.startsWith("/acces")) return { vue: "acces" }
-  if (h.startsWith("/reglages")) return { vue: "reglages" }
-  if (h.startsWith("/historique")) return { vue: "historique" }
-  if (h.startsWith("/demarrer")) return { vue: "demarrer" }
+  const r = h.match(/^\/reglages\/([a-z]+)/)
+  if (r && SECTIONS_REGLAGES.some(([id]) => id === r[1])) return { vue: "reglages", section: r[1] }
+  // Les anciennes adresses mènent à leur nouvelle place.
+  if (h.startsWith("/sante")) return { vue: "reglages", section: "utilisation" }
+  if (h.startsWith("/acces")) return { vue: "reglages", section: "equipe" }
+  if (h.startsWith("/historique")) return { vue: "reglages", section: "historique" }
+  if (h.startsWith("/reglages")) return { vue: "reglages", section: "integrations" }
+  const d = h.match(/^\/demarrer(?:\/([a-z]+))?/)
+  if (d) return { vue: "demarrer", etape: d[1] ?? null }
   return { vue: "projets" }
 }
 
 // --- Vues ----------------------------------------------------------------------------
+// L'état de l'usine tient dans une pastille ; un bandeau n'apparaît qu'en cas de panne (Mintlify).
+function pastilleEtat() {
+  const s = etat.sante
+  if (!s) return ""
+  const soucis = s.composants.filter((c) => c.etat !== "ok")
+  const niveau = soucis.some((c) => c.etat === "panne") ? "panne" : soucis.length ? "alerte" : ""
+  return html`<a class="pastille-etat ${niveau}" href="#/reglages/etat"><span class="point ${niveau}" aria-hidden="true"></span>${niveau === "panne" ? "Panne" : niveau ? "À surveiller" : "Tout fonctionne"}</a>`
+}
+function bandeauPanne() {
+  const pannes = (etat.sante?.composants ?? []).filter((c) => c.etat === "panne")
+  if (!pannes.length || etat.route.section === "etat") return ""
+  return html`<div class="message erreur"><span style="flex:1"><strong>${pannes.length === 1 ? "Un service est en panne" : `${pannes.length} services sont en panne`}</strong> : ${pannes.map((c) => nomService(c.nom)).join(", ")}.</span><a class="btn btn-s btn-petit" href="#/reglages/etat">Voir</a></div>`
+}
+
 function barreHaut() {
   const u = etat.resume?.usine
   const occupe = u?.taches_en_cours ?? 0
@@ -139,9 +173,19 @@ function barreHaut() {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
       <span style="flex:1">Rechercher un projet ou une page…</span><span class="touche mono">Ctrl K</span>
     </button>
-    ${u ? (u.arretee
-      ? html`<div class="rangee"><span class="etat-usine" style="color:var(--signal)"><span class="point alerte"></span>Usine en pause${occupe ? " après ce qu'elle termine" : ""}</span><button type="button" class="btn btn-s btn-petit" data-action="usine" data-quoi="reprendre">Reprendre</button></div>`
-      : html`<div class="etat-usine"><span class="point"></span>${occupe ? "L'usine travaille" : "L'usine est au repos"}</div>`) : ""}
+    <div class="rangee">${u ? (u.arretee
+      ? html`<span class="etat-usine" style="color:var(--signal)"><span class="point alerte"></span>Usine en pause${occupe ? " après ce qu'elle termine" : ""}</span><button type="button" class="btn btn-s btn-petit" data-action="usine" data-quoi="reprendre">Reprendre</button>`
+      : html`<span class="etat-usine"><span class="point"></span>${occupe ? "L'usine travaille" : "L'usine est au repos"}</span>`) : ""}${pastilleEtat()}</div>
+  </div>${bandeauPanne()}`
+}
+
+// Une fenêtre par-dessus la page (création d'un public, invitation, intégration, budget).
+// Elle vient de l'état : le rafraîchissement automatique la redessine sans la fermer.
+function fenetre(titre, contenu) {
+  return html`<div class="voile" data-action="fermer-fenetre"></div>
+  <div class="fenetre" role="dialog" aria-modal="true" aria-labelledby="fenetre-titre">
+    <div class="barre"><h2 id="fenetre-titre">${titre}</h2><button type="button" class="btn-icone" data-action="fermer-fenetre" aria-label="Fermer">✕</button></div>
+    ${contenu}
   </div>`
 }
 
@@ -160,33 +204,64 @@ function afficherMessages() {
 // --- Premiers pas --------------------------------------------------------------------------
 const prochaineEtape = (pp) => pp.etapes.find((e) => e.obligatoire && !e.fait) ?? pp.etapes.find((e) => !e.fait)
 
-function bandeauPremiersPas() {
+// Une petite liste flottante « 2 sur 6 » suit la personne sur toutes les pages (Rox).
+function listeFlottante() {
   const pp = etat.premiersPas
-  if (!pp || pp.termine || pp.masque) return ""
+  if (!pp || pp.termine || pp.masque || etat.route.vue === "demarrer") return ""
   const e = prochaineEtape(pp)
-  return html`<section class="carte carte-p barre" style="gap:16px;flex-wrap:wrap;border-color:var(--accent)" aria-label="Premiers pas">
-    <div style="flex:1;min-width:240px"><div class="aide">Premiers pas · ${pp.faites} sur ${pp.total}</div><strong>${e ? e.titre : "Presque prêt"}</strong><div class="aide">${e?.detail ?? ""}</div></div>
-    <div class="rangee">${e ? html`<a class="btn btn-p" href="${e.aller}">${e.action}</a>` : ""}<a class="btn btn-s" href="#/demarrer">Voir toutes les étapes</a></div>
-  </section>`
+  return html`<aside class="flottant" aria-label="Premiers pas">
+    <div class="barre"><strong>Premiers pas · ${pp.faites} sur ${pp.total} essentiels</strong><button type="button" class="btn-icone" data-action="premiers-pas" data-quoi="masquer" aria-label="Masquer les premiers pas" title="Masquer (ils restent dans les Réglages)">✕</button></div>
+    <div class="jauge" role="progressbar" aria-valuemin="0" aria-valuemax="${pp.total}" aria-valuenow="${pp.faites}" aria-label="Avancement des premiers pas"><div style="width:${Math.round((pp.faites / pp.total) * 100)}%"></div></div>
+    ${e ? html`<a class="flottant-suite" href="#/demarrer/${e.id}"><span>${e.titre}</span><span aria-hidden="true">→</span></a>` : ""}
+  </aside>`
 }
 
+// Ce qu'on fait à chaque étape, sur place : l'assistant ne renvoie pas vers une autre page.
+function actionEtape(e) {
+  if (e.id === "ia") {
+    const f = etat.fournisseurs
+    if (!f) return html`<div class="chargement">Chargement…</div>`
+    return html`<div class="grille">${f.moteurs.map((m) => carteMoteur(f, m))}</div>
+      <div class="rangee"><button type="button" class="btn btn-p" data-action="tester-fournisseurs">Tester les connexions</button><span class="aide">${f.tests.le ? `Dernier test : ${dateCourte(f.tests.le)}` : "Une fois branchées, lance le test : l'étape se coche toute seule."}</span></div>`
+  }
+  if (e.id === "github") return etat.reglages ? html`<div class="carte carte-p">${carteGithub(etat.reglages.forge)}</div>` : html`<div class="chargement">Chargement…</div>`
+  if (e.id === "equipe") return etat.acces ? html`<div class="carte carte-p">${formulaireInviter()}</div>` : html`<div class="chargement">Chargement…</div>`
+  if (e.id === "persona") return html`<div class="carte carte-p">${formulairePublic()}</div>`
+  if (e.id === "projet") return saisieAccueil({ titre: false })
+  return ""
+}
+
+// L'assistant : un écran par étape, avec « Je le ferai plus tard » partout (Rox, Grain).
 function vueDemarrer() {
   const pp = etat.premiersPas
-  if (!pp) return html`${barreHaut()}<div class="chargement">Chargement…</div>`
-  const e = prochaineEtape(pp)
-  return html`
-    ${barreHaut()}
-    <div><h1>Premiers pas</h1><p class="chapeau">${pp.termine ? "L'usine est prête : tout l'essentiel est fait. Les étapes facultatives restent là si tu en as besoin." : `${pp.faites} étape${pp.faites > 1 ? "s" : ""} sur ${pp.total} pour que l'usine soit prête. Tout se fait ici, dans la console.`}</p></div>
-    ${messageGlobal()}
-    <div class="jauge ${pp.termine ? "verte" : ""}" role="progressbar" aria-valuemin="0" aria-valuemax="${pp.total}" aria-valuenow="${pp.faites}" aria-label="Avancement des premiers pas"><div style="width:${Math.round((pp.faites / pp.total) * 100)}%"></div></div>
-    <ol class="pile" style="gap:12px;list-style:none;padding:0;margin:0">${pp.etapes.map((x, i) => html`<li class="carte carte-p barre" style="gap:16px;flex-wrap:wrap;${x === e ? "border-color:var(--accent)" : ""}">
-      <div class="rangee" style="flex:1;min-width:240px;flex-wrap:nowrap;align-items:flex-start;gap:14px">
-        <span class="badge ${x.fait ? "vert" : x.obligatoire ? "orange" : ""}" style="min-width:2.2em;text-align:center">${x.fait ? "✓" : i + 1}</span>
-        <div><strong>${x.titre}</strong>${x.obligatoire ? "" : html` <span class="aide">(facultatif)</span>`}<div class="aide">${x.detail}</div></div>
+  if (!pp) return html`<div class="chargement">Chargement…</div>`
+  const e = pp.etapes.find((x) => x.id === etat.route.etape) ?? prochaineEtape(pp) ?? pp.etapes[0]
+  const n = pp.etapes.indexOf(e)
+  const avant = pp.etapes[n - 1]
+  const apres = pp.etapes[n + 1]
+  return html`<div class="assistant">
+    <nav class="assistant-etapes" aria-label="Les étapes">
+      <a class="retour" href="#/">← Quitter l'assistant</a>
+      <div class="pile" style="gap:8px"><strong>Premiers pas</strong><span class="aide">${pp.faites} étape${pp.faites > 1 ? "s" : ""} essentielle${pp.faites > 1 ? "s" : ""} sur ${pp.total} faite${pp.faites > 1 ? "s" : ""}</span>
+        <div class="jauge ${pp.termine ? "verte" : ""}"><div style="width:${Math.round((pp.faites / pp.total) * 100)}%"></div></div></div>
+      <ol>${pp.etapes.map((x, k) => html`<li><a href="#/demarrer/${x.id}" ${brut(x === e ? 'aria-current="step"' : "")}>
+        <span class="puce ${x.fait ? "faite" : ""}" aria-hidden="true">${x.fait ? "✓" : k + 1}</span>
+        <span>${x.titre}${x.obligatoire ? "" : html`<small>facultatif</small>`}${x.fait ? html`<span class="cache"> (fait)</span>` : ""}</span></a></li>`)}</ol>
+    </nav>
+    <section class="assistant-ecran" aria-labelledby="etape-titre">
+      <div class="aide">Étape ${n + 1} sur ${pp.etapes.length}${e.obligatoire ? "" : " · facultative"}</div>
+      <h1 id="etape-titre">${e.titre}</h1>
+      <p class="chapeau">${e.detail}</p>
+      ${messageGlobal()}
+      ${e.fait ? html`<div class="message ok"><span>C'est fait pour cette étape.</span></div>` : ""}
+      ${actionEtape(e)}
+      <div class="barre assistant-bas">
+        ${avant ? html`<a class="btn btn-s" href="#/demarrer/${avant.id}">← Précédent</a>` : html`<span></span>`}
+        ${apres ? html`<a class="btn ${e.fait ? "btn-p" : "btn-s"}" href="#/demarrer/${apres.id}">${e.fait ? "Continuer" : "Je le ferai plus tard"}</a>`
+          : html`<a class="btn btn-p" href="#/">${pp.termine ? "Aller à mes projets" : "Terminer pour l'instant"}</a>`}
       </div>
-      ${x.fait ? html`<a class="btn btn-s" href="${x.aller}">Revoir</a>` : html`<a class="btn ${x === e ? "btn-p" : "btn-s"}" href="${x.aller}">${x.action}</a>`}
-    </li>`)}</ol>
-    <div class="rangee">${pp.masque ? html`<button type="button" class="btn btn-s" data-action="premiers-pas" data-quoi="afficher">Afficher le rappel sur la page Projets</button>` : html`<button type="button" class="btn btn-s" data-action="premiers-pas" data-quoi="masquer">Ne plus afficher le rappel</button>`}<a class="btn btn-s" href="#/">Aller aux projets</a></div>`
+    </section>
+  </div>`
 }
 
 function vueProjets() {
@@ -198,7 +273,6 @@ function vueProjets() {
   return html`
     ${barreHaut()}
     ${messageGlobal()}
-    ${bandeauPremiersPas()}
     ${saisieAccueil()}
     ${r.a_traiter.length ? html`<section aria-labelledby="a-traiter" class="pile">
       <h2 id="a-traiter" class="surtitre">À traiter · ${r.a_traiter.length}</h2>
@@ -223,237 +297,186 @@ function vueProjets() {
             <td class="mono">${p.cout ?? "—"}</td>
             <td>${p.production ? html`<a href="${p.production}" target="_blank" rel="noopener">production</a>` : ""}${p.production && p.apercu ? " · " : ""}${p.apercu ? html`<a href="${p.apercu}" target="_blank" rel="noopener">aperçu</a>` : ""}${!p.production && !p.apercu ? html`<span class="aide">pas encore</span>` : ""}</td>
           </tr>`
-        })}</tbody></table></div>` : html`<div class="vide">${r.projets.length ? "Aucun projet dans ce filtre." : html`Aucun projet pour l'instant. <a href="#/nouveau">Lance le premier</a>.`}</div>`}
+        })}</tbody></table></div>` : html`<div class="vide">${r.projets.length ? "Aucun projet dans ce filtre." : "Aucun projet pour l'instant : décris le premier ci-dessus."}</div>`}
     </section>
     <section class="grille" aria-label="Résumé de l'usine">
-      <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Budget du mois</div><div style="font-size:22px;font-weight:700">${r.couts.pct !== null ? `${r.couts.pct} % utilisé` : r.couts.mois}</div><div class="aide">${r.couts.budget ? `${r.couts.mois} sur ${r.couts.budget} (équivalent API)` : "pas de budget mensuel"}</div></a>
-      <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Serveur</div><div style="font-size:22px;font-weight:700">${r.serveur?.disque !== null && r.serveur ? `Disque ${r.serveur.disque} %` : "—"}</div><div class="aide">${r.serveur?.memoire !== null && r.serveur ? `mémoire ${r.serveur.memoire} %` : ""}</div></a>
-      <a class="carte carte-p" href="#/sante" style="text-decoration:none;color:inherit"><div class="aide">Version de l'usine</div><div style="font-size:22px;font-weight:700">${r.usine.mise_a_jour?.disponible ? "Mise à jour disponible" : "À jour"}</div><div class="aide">${r.usine.mise_a_jour?.version ? `version ${r.usine.mise_a_jour.version}` : ""}</div></a>
+      <a class="carte carte-p" href="#/reglages/utilisation" style="text-decoration:none;color:inherit"><div class="aide">Budget du mois</div><div style="font-size:22px;font-weight:700">${r.couts.pct !== null ? `${r.couts.pct} % utilisé` : r.couts.mois}</div><div class="aide">${r.couts.budget ? `${r.couts.mois} sur ${r.couts.budget} (équivalent API)` : "pas de budget mensuel"}</div></a>
+      <a class="carte carte-p" href="#/reglages/etat" style="text-decoration:none;color:inherit"><div class="aide">Serveur</div><div style="font-size:22px;font-weight:700">${r.serveur?.disque !== null && r.serveur ? `Disque ${r.serveur.disque} %` : "—"}</div><div class="aide">${r.serveur?.memoire !== null && r.serveur ? `mémoire ${r.serveur.memoire} %` : ""}</div></a>
+      <a class="carte carte-p" href="#/reglages/etat" style="text-decoration:none;color:inherit"><div class="aide">Version de l'usine</div><div style="font-size:22px;font-weight:700">${r.usine.mise_a_jour?.disponible ? "Mise à jour disponible" : "À jour"}</div><div class="aide">${r.usine.mise_a_jour?.version ? `version ${r.usine.mise_a_jour.version}` : ""}</div></a>
     </section>`
-}
-
-// L'accueil commence par la question : décrire le besoin et lancer, sans quitter la page.
-// Les pièces jointes, le persona et la reprise d'un dépôt restent sur « Nouveau projet ».
-function saisieAccueil() {
-  const choix = [["webapp", "Application web"], ["pwa", "Mobile"], ["site", "Site"], ["api", "Connecteur"]]
-  const exemples = [["CRM léger", "Un CRM léger pour une équipe de 5 commerciaux : contacts, opportunités, relances."], ["Site d'architectes", "Le site vitrine d'un cabinet d'architectes, avec réalisations et formulaire de contact."], ["API ERP ↔ boutique", "Une API qui relie notre ERP à la boutique en ligne : stocks et commandes."], ["Suivi des congés", "Le suivi des congés de l'équipe : demandes, validation par le manager, calendrier."]]
-  return html`<section class="accueil" aria-labelledby="accueil-titre">
-    <form class="pile" data-form="nouveau" style="gap:12px">
-      <h1 id="accueil-titre">Que veux-tu construire ?</h1>
-      <div class="onglets-type" role="group" aria-label="Type de produit">${choix.map(([id, nom]) => html`<button type="button" class="filtre" data-action="brique" data-id="${id}" aria-pressed="${String(etat.brique === id)}">${nom}</button>`)}</div>
-      <div class="saisie">
-        <label class="cache" for="demande">La demande</label>
-        <textarea id="demande" name="prompt" rows="3" required minlength="20" placeholder="Décris le besoin comme à un collègue : qui l'utilise, les écrans clés, ce qui n'est pas demandé."></textarea>
-        <div class="saisie-bas"><a class="lien-btn" style="padding-left:0" href="#/nouveau">Pièces jointes, persona, dépôt existant…</a><button type="submit" class="btn btn-p btn-petit">Lancer l'analyse</button></div>
-      </div>
-      <div class="rangee" style="justify-content:center">${exemples.map(([nom, texte]) => html`<button type="button" class="pastille" data-action="exemple" data-texte="${texte}">${nom}</button>`)}</div>
-    </form>
-  </section>`
 }
 
 // Les types de produit, dits simplement (la clé reste celle de la brique).
 const TYPES_PRODUIT = [
-  ["webapp", "Une application à utiliser dans le navigateur : outil de gestion, tableau de bord, espace client."],
-  ["pwa", "Une application qui s'installe sur le téléphone et marche même sans réseau."],
-  ["site", "Des pages pour présenter une activité, trouvables sur Google, avec un formulaire de contact."],
-  ["api", "Un connecteur qui relie deux logiciels entre eux, sans écran (pour un technicien)."],
+  ["webapp", "Application web"],
+  ["pwa", "Application mobile"],
+  ["site", "Site vitrine"],
+  ["api", "Connecteur entre logiciels"],
 ]
-
-function vueNouveau() {
-  if (etat.depart === "depot") return vueReprendre()
-  return html`
-    ${barreHaut()}
-    <div class="colonnes">
-      <form class="colonne-large" data-form="nouveau" style="gap:22px">
-        <div><a class="retour" href="#/">← Projets</a><h1 style="margin-top:8px">Que veux-tu construire ?</h1>
-          <p class="chapeau">Explique-le comme à un collègue. L'usine te posera des questions si quelque chose n'est pas clair, puis te proposera un plan à valider.</p></div>
-        ${choixDepart()}
-        ${messageGlobal()}
-        <div class="pile"><label class="titre-champ" for="demande">Ta demande</label>
-          <textarea id="demande" name="prompt" class="champ" rows="8" required minlength="20" style="resize:vertical;line-height:1.6" placeholder="Ex. : une application pour nos techniciens. Chaque matin, ils voient leurs interventions du jour. Sur place, ils remplissent le compte rendu (photos, pièces changées, signature du client), même sans réseau. Le responsable suit tout depuis un tableau de bord."></textarea>
-          <div class="aide">Trois choses aident beaucoup : qui va s'en servir, ce qu'ils doivent pouvoir faire, et ce dont tu n'as pas besoin.</div></div>
-        <fieldset><legend>Quel genre d'outil ? <span class="aide" style="font-weight:400">· si tu hésites, laisse le premier : l'usine choisira</span></legend>
-          <div class="briques">${TYPES_PRODUIT.map(([id, texte]) => html`<button type="button" class="brique" data-action="brique" data-id="${id}" aria-pressed="${String(etat.brique === id)}"><strong>${BRIQUES[id]}</strong><span>${texte}</span></button>`)}</div>
-        </fieldset>
-        ${champPersona()}
-        <div class="pile">
-          <label class="titre-champ" for="pieces">Des documents pour aider <span class="aide" style="font-weight:400">· facultatif : maquettes, captures d'écran, cahier des charges (3 fichiers, 2 Mo chacun)</span></label>
-          <input id="pieces" type="file" accept="image/png,image/jpeg,image/webp,application/pdf,.md,.markdown,.txt,text/markdown,text/plain" multiple class="champ" style="padding:9px">
-          ${etat.pieces.length ? html`<ul class="pieces">${etat.pieces.map((f, i) => html`<li><span>${f.name}</span><span class="aide">${Math.ceil(f.size / 1024)} Ko</span><button type="button" class="btn-icone" data-action="retirer-piece" data-id="${i}" aria-label="Retirer ${f.name}">✕</button></li>`)}</ul>` : ""}
-          <div class="aide">Images, PDF ou texte. L'usine les lit avant de proposer son plan.</div>
-        </div>
-        <div class="rangee"><button type="submit" class="btn btn-p">Envoyer la demande</button><a href="#/" class="btn btn-s">Annuler</a></div>
-      </form>
-      <aside class="colonne-etroite" aria-label="Comment ça se passe">
-        <div class="sombre pile">
-          <div class="surtitre" style="color:inherit;opacity:.75">Comment ça se passe</div>
-          <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px">
-            <li>L'usine lit ta demande et te pose ses questions s'il en faut.</li>
-            <li>Elle te propose un plan : ce que tu pourras faire, étape par étape.</li>
-            <li><strong>Tu valides le plan</strong>, ou tu demandes des changements.</li>
-            <li>Elle construit et vérifie chaque fonction ; tu vois l'application grandir.</li>
-            <li><strong>Tu essaies le résultat</strong> avant de le mettre en ligne.</li>
-          </ol>
-        </div>
-        <div class="carte carte-p pile">
-          <strong>Combien ça coûte ?</strong>
-          ${etat.estimation?.disponible ? html`<div style="font-size:14px">Un projet habituel : environ <strong>${etat.estimation.cout}</strong> et <strong>${etat.estimation.duree}</strong> de travail de l'usine.</div>
-            <div class="aide">Calculé sur les projets déjà faits. Le chiffre exact arrive avec le plan, avant que tu valides.</div>`
-          : html`<div class="aide">${etat.estimation ? "L'usine n'a pas encore assez de projets derrière elle pour estimer à l'avance. Le coût prévu s'affichera avec le plan, avant que tu valides." : "Calcul…"}</div>`}
-        </div>
-        <div class="carte carte-p pile"><strong>Partir d'un exemple</strong>
-          ${["Un outil pour suivre nos clients et nos relances : contacts, opportunités, rappels, pour une équipe de 5 commerciaux.", "Le site d'un cabinet d'architectes, avec ses réalisations et un formulaire de contact.", "Le suivi des congés de l'équipe : demandes, validation par le manager, calendrier commun.", "Un connecteur entre notre logiciel de gestion et la boutique en ligne : stocks et commandes."].map((x) => html`<button type="button" class="lien-btn" style="text-align:left;padding:4px 0" data-action="exemple" data-texte="${x}">${x}</button>`)}
-        </div>
-      </aside>
-    </div>`
+const PICTOS_OUTILS = {
+  joindre: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4L15.6 7"/></svg>`,
+  public: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4.5 4.5-6.5 8-6.5s6.5 2 8 6.5"/></svg>`,
+  type: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/></svg>`,
+  depot: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-6 3-11 5.5"/></svg>`,
 }
 
-// --- Partir d'une application existante, et les publics (personas) ---------------------------
+// Tout commence ici : la demande et ses options tiennent dans la barre du champ (Sana, Emergent).
+// « Terminer une application existante » transforme le champ sur place.
+function saisieAccueil({ titre = true } = {}) {
+  const depot = etat.depart === "depot"
+  const liste = personasValides()
+  const exemples = [["CRM léger", "Un CRM léger pour une équipe de 5 commerciaux : contacts, opportunités, relances."], ["Site d'architectes", "Le site vitrine d'un cabinet d'architectes, avec réalisations et formulaire de contact."], ["Suivi des congés", "Le suivi des congés de l'équipe : demandes, validation par le manager, calendrier."], ["Interventions", "Une application pour nos techniciens : les interventions du jour, le compte rendu sur place, même sans réseau."]]
+  return html`<section class="accueil" aria-labelledby="accueil-titre">
+    <form class="pile" data-form="${depot ? "reprendre" : "nouveau"}" style="gap:12px">
+      ${titre ? html`<h1 id="accueil-titre">${depot ? "Quelle application faut-il terminer ?" : "Que veux-tu construire ?"}</h1>` : html`<span id="accueil-titre" class="cache">Ta demande</span>`}
+      <div class="saisie">
+        ${depot ? html`<label class="cache" for="adresse">L'adresse GitHub de l'application</label>
+          <input id="adresse" name="adresse" class="saisie-adresse mono" required placeholder="L'adresse GitHub : https://github.com/proprietaire/application" autocomplete="off" spellcheck="false">` : ""}
+        <label class="cache" for="demande">${depot ? "Ce que tu veux en faire" : "Ta demande"}</label>
+        <textarea id="demande" name="${depot ? "consigne" : "prompt"}" rows="3" ${brut(depot ? "" : 'required minlength="20"')} placeholder="${depot ? "Ce que tu veux en faire, si tu le sais : garder…, ajouter…, pour qui…" : "Décris le besoin comme à un collègue : qui va s'en servir, ce qu'il doit pouvoir faire, ce dont tu n'as pas besoin."}"></textarea>
+        ${etat.pieces.length && !depot ? html`<ul class="pieces">${etat.pieces.map((f, i) => html`<li><span>${f.name}</span><span class="aide">${Math.ceil(f.size / 1024)} Ko</span><button type="button" class="btn-icone" data-action="retirer-piece" data-id="${i}" aria-label="Retirer ${f.name}">✕</button></li>`)}</ul>` : ""}
+        <div class="saisie-outils">
+          ${depot ? "" : html`<label class="outil" title="Maquettes, captures, cahier des charges : 3 fichiers de 2 Mo au plus">${PICTOS_OUTILS.joindre}<span>Joindre</span>
+            <input id="pieces" type="file" class="cache" accept="image/png,image/jpeg,image/webp,application/pdf,.md,.markdown,.txt,text/markdown,text/plain" multiple></label>`}
+          <label class="outil">${PICTOS_OUTILS.public}<span class="cache">Pour qui ?</span>
+            <select name="persona_id" data-choix="persona">
+              <option value="">${liste.length ? "Pour qui ?" : "Pour qui ? (aucun public)"}</option>
+              ${liste.map((p) => html`<option value="${p.id}" ${String(p.id) === String(etat.personaChoisi ?? "") ? "selected" : ""}>${p.nom}</option>`)}
+            </select></label>
+          ${depot ? "" : html`<label class="outil">${PICTOS_OUTILS.type}<span class="cache">Quel genre d'outil ?</span>
+            <select data-choix="brique">${TYPES_PRODUIT.map(([id, nom]) => html`<option value="${id}" ${id === etat.brique ? "selected" : ""}>${nom}</option>`)}</select></label>`}
+          <button type="button" class="outil" data-action="depart" data-id="${depot ? "zero" : "depot"}" aria-pressed="${String(depot)}">${PICTOS_OUTILS.depot}<span>Terminer une application existante</span></button>
+          <span style="flex:1"></span>
+          <button type="submit" class="btn btn-p btn-petit">${depot ? "Lancer l'examen" : "Lancer"}</button>
+        </div>
+      </div>
+      ${depot ? html`<details class="saisie-plus"><summary class="aide">Où l'usine travaille : automatique (conseillé)</summary>
+          <fieldset class="pile" style="margin-top:10px;gap:6px"><legend class="cache">Où l'usine travaille</legend>
+          ${[["auto", "Automatique (conseillé)", "L'usine choisit selon les droits qu'on lui a donnés."], ["direct", "Dans l'application d'origine", "Elle propose ses changements au propriétaire, qui les accepte lui-même à la fin."], ["copie", "Dans une copie", "L'original ne bouge pas."]].map(([id, t, x]) => html`<label class="choix"><input type="radio" name="mode" value="${id}" ${id === "auto" ? "checked" : ""}><span><strong>${t}</strong><br><span class="aide">${x}</span></span></label>`)}
+          </fieldset><p class="aide">Si l'application est privée, son propriétaire doit d'abord inviter le compte GitHub de l'usine.</p></details>`
+      : html`<div class="rangee" style="justify-content:center">${exemples.map(([nom, texte]) => html`<button type="button" class="pastille" data-action="exemple" data-texte="${texte}">${nom}</button>`)}</div>
+        ${etat.estimation?.disponible ? html`<p class="aide" style="text-align:center;margin:0">Un projet habituel : environ ${etat.estimation.cout} et ${etat.estimation.duree} de travail de l'usine. Le chiffre exact arrive avec le plan, avant que tu valides.</p>` : ""}`}
+    </form>
+  </section>`
+}
+
+// --- Les publics (personas) ----------------------------------------------------------------
 const STATUTS_PERSONA = { recherche: ["Recherche en cours", "bleu"], a_valider: ["À relire", "orange"], valide: ["Prêt", "vert"], echec: ["Recherche échouée", "rouge"] }
 const badgePersona = (s) => html`<span class="badge ${(STATUTS_PERSONA[s] ?? ["", ""])[1]}">${(STATUTS_PERSONA[s] ?? [s])[0]}</span>`
 const personasValides = () => (etat.personas ?? []).filter((p) => p.statut === "valide")
+const initiales = (nom) => String(nom ?? "?").split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((m) => m[0].toUpperCase()).join("") || "?"
 
-// Le choix du point de départ, en tête de « Nouveau projet ».
-const choixDepart = () => html`<fieldset><legend class="cache">Point de départ</legend>
-  <div class="briques">${[["zero", "Partir de zéro", "Tu décris l'outil, l'usine le construit."], ["depot", "Terminer une application existante", "Son code est sur GitHub : l'usine le reprend, l'adapte et le termine."]].map(([id, titre, texte]) => html`<button type="button" class="brique" data-action="depart" data-id="${id}" aria-pressed="${String(etat.depart === id)}"><strong>${titre}</strong><span>${texte}</span></button>`)}</div>
-</fieldset>`
-
-// Le choix du public (seuls ceux qui ont été relus).
-function champPersona(obligatoire = false) {
-  const liste = personasValides()
-  return html`<div class="pile"><label class="titre-champ" for="persona">Pour qui ? <span class="aide" style="font-weight:400">· ${obligatoire ? "le public de l'application" : "facultatif"}</span></label>
-    <select id="persona" name="persona_id" class="champ">
-      <option value="">${liste.length ? "Pas de public précis" : "Aucun public décrit pour l'instant"}</option>
-      ${liste.map((p) => html`<option value="${p.id}">${p.nom}</option>`)}
-    </select>
-    <div class="aide">Avec un public décrit, l'usine construit pour lui, puis essaie l'application à sa place avant de te la livrer. <a href="#/personas">Décrire un public</a>.</div></div>`
-}
-
-function vueReprendre() {
-  return html`
-    ${barreHaut()}
-    <div class="colonnes">
-      <form class="colonne-large" data-form="reprendre" style="gap:22px">
-        <div><a class="retour" href="#/">← Projets</a><h1 style="margin-top:8px">Quelle application faut-il terminer ?</h1>
-          <p class="chapeau">L'usine regarde d'abord ce qui marche et ce qui manque, puis te propose un plan pour la terminer et l'adapter à ton public.</p></div>
-        ${choixDepart()}
-        ${messageGlobal()}
-        <div class="pile"><label class="titre-champ" for="adresse">L'adresse GitHub de l'application</label>
-          <input id="adresse" name="adresse" class="champ mono" required placeholder="https://github.com/proprietaire/application" autocomplete="off" spellcheck="false">
-          <div class="aide">Copie l'adresse de la page GitHub de l'application. Si elle est privée, son propriétaire doit d'abord inviter le compte GitHub de l'usine.</div></div>
-        ${champPersona(true)}
-        <div class="pile"><label class="titre-champ" for="consigne">Ce que tu veux en faire <span class="aide" style="font-weight:400">· facultatif</span></label>
-          <textarea id="consigne" name="consigne" class="champ" rows="5" style="resize:vertical;line-height:1.6" placeholder="Ex. : garder l'analyse des mots-clés, ajouter le suivi des avis Google, pour un commerce de quartier."></textarea></div>
-        <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Où l'usine travaille <span class="aide" style="font-weight:400">· à laisser tel quel en cas de doute</span></summary>
-          <fieldset class="pile" style="margin-top:12px"><legend class="cache">Où l'usine travaille</legend>
-          ${[["auto", "Automatique (conseillé)", "L'usine choisit selon les droits qu'on lui a donnés."], ["direct", "Dans l'application d'origine", "Elle propose ses changements au propriétaire, qui les accepte lui-même à la fin. Rien n'est modifié sans lui."], ["copie", "Dans une copie", "Elle travaille sur une copie : l'original ne bouge pas."]].map(([id, titre, texte]) => html`<label class="choix"><input type="radio" name="mode" value="${id}" ${id === "auto" ? "checked" : ""}><span><strong>${titre}</strong><br><span class="aide">${texte}</span></span></label>`)}
-          </fieldset></details>
-        <div class="rangee"><button type="submit" class="btn btn-p">Lancer l'examen</button><a href="#/" class="btn btn-s">Annuler</a></div>
-      </form>
-      <aside class="colonne-etroite" aria-label="Comment ça se passe">
-        <div class="sombre pile">
-          <div class="surtitre" style="color:inherit;opacity:.75">Comment ça se passe</div>
-          <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px">
-            <li>L'usine examine l'application : ce qui marche, ce qui est cassé, ce qui manque.</li>
-            <li>Elle vérifie qu'elle démarre bien sur ses serveurs.</li>
-            <li>Elle te propose un plan pour la terminer, pensé pour ton public.</li>
-            <li><strong>Tu valides le plan.</strong></li>
-            <li>Elle construit, puis essaie l'application à la place de ton public avant de te la livrer.</li>
-          </ol>
-        </div>
-      </aside>
-    </div>`
-}
+// Un public se crée avec un nom et deux phrases (AirOps) : la recherche fait le reste.
+const formulairePublic = () => html`<form class="pile" data-form="persona-nouveau" style="gap:12px">
+  <label class="titre-champ" for="persona-nom">Comment l'appeler ?</label>
+  <input id="persona-nom" name="nom" class="champ" required maxlength="80" placeholder="Ex. : Commerçant de quartier">
+  <label class="titre-champ" for="persona-brief">Qui est-ce, en deux phrases ?</label>
+  <textarea id="persona-brief" name="brief" class="champ" rows="4" required minlength="15" style="resize:vertical;line-height:1.6" placeholder="Ex. : une boulangerie de quartier à Lyon, sans site web, avec des avis Google. Le gérant veut être trouvé par les gens du coin, mais n'a pas le temps de s'en occuper."></textarea>
+  <div class="aide">L'usine cherche sur le web (études, forums, avis) et revient avec une fiche et ses sources, en quelques minutes.</div>
+  <div class="rangee" style="justify-content:flex-end">${etat.fenetre ? html`<button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button>` : ""}<button type="submit" class="btn btn-p">Lancer la recherche</button></div>
+</form>`
 
 function vuePersonas() {
   const liste = etat.personas
   return html`
     ${barreHaut()}
     <div class="entete">
-      <div><h1>Pour qui on construit</h1><p class="chapeau">Décris en quelques lignes les personnes qui utiliseront tes applications. L'usine fait une recherche sur le web pour mieux les connaître, puis tu relis sa fiche. On appelle ça un persona.</p></div>
+      <div><h1>Publics</h1><p class="chapeau">Les personnes pour qui tu construis. L'usine les étudie sur le web, construit pour elles, puis essaie chaque application à leur place avant de te la livrer.</p></div>
+      ${liste?.length ? html`<button type="button" class="btn btn-p" data-action="fenetre" data-quoi="public">+ Nouveau public</button>` : ""}
     </div>
     ${messageGlobal()}
-    <div class="colonnes">
-      <section class="colonne-large carte" aria-labelledby="liste-personas">
-        <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="liste-personas">Tes publics</h2></div>
-        ${!liste ? html`<div class="chargement">Chargement…</div>` : liste.length ? html`<ul class="liste-publics">${liste.map((p) => html`<li>
-            <a class="lien-projet" href="#/personas/${p.id}">${p.nom}</a> ${badgePersona(p.statut)}
-            <div class="sous">${p.fiche?.resume ?? p.brief}</div>
-            ${p.fiche ? html`<div class="sous">${p.fiche.sources?.length ?? 0} source(s) consultée(s) · ${p.scenarios?.length ?? 0} situation(s) de test</div>` : ""}
-          </li>`)}</ul>`
-        : html`<div class="vide">Aucun public pour l'instant : décris le premier à droite.</div>`}
-      </section>
-      <aside class="colonne-etroite pile">
-        <form class="carte carte-p pile" data-form="persona-nouveau">
-          <strong>Décrire un public</strong>
-          <label class="titre-champ" for="persona-nom">Comment l'appeler ?</label>
-          <input id="persona-nom" name="nom" class="champ" required maxlength="80" placeholder="Ex. : Commerçant de quartier">
-          <label class="titre-champ" for="persona-brief">Qui est-ce ?</label>
-          <textarea id="persona-brief" name="brief" class="champ" rows="6" required minlength="15" style="resize:vertical;line-height:1.6" placeholder="Ex. : une boulangerie de quartier à Lyon, sans site web, avec des avis Google. Le gérant veut être trouvé par les gens du coin, mais n'a pas le temps de s'en occuper."></textarea>
-          <div><button type="submit" class="btn btn-p">Lancer la recherche</button></div>
-          <div class="aide">L'usine cherche sur le web (études, forums, avis) et revient avec une fiche et ses sources. Comptez quelques minutes.</div>
-        </form>
-        <div class="sombre pile"><div class="surtitre" style="color:inherit;opacity:.75">Les situations de test</div>
-          <div style="font-size:14px">La fiche contient 3 à 5 situations réelles (« Demander un devis depuis son téléphone »). À la fin de chaque projet, l'usine les joue à la place de ton public pour juger l'application. Celui qui construit ne les voit jamais : il ne peut pas tricher.</div></div>
-      </aside>
-    </div>`
+    ${!liste ? html`<div class="chargement">Chargement…</div>` : liste.length ? html`<div class="cartes-publics">${liste.map((p) => html`<a class="carte carte-public" href="#/personas/${p.id}">
+        <span class="avatar" aria-hidden="true">${initiales(p.nom)}</span>
+        <span class="pile" style="gap:4px;min-width:0"><span class="rangee" style="gap:8px"><strong>${p.nom}</strong>${badgePersona(p.statut)}</span>
+          <span class="aide">${p.fiche?.resume ?? p.brief}</span>
+          ${p.fiche ? html`<span class="aide">${p.scenarios?.length ?? 0} situations de test · ${p.fiche.sources?.length ?? 0} sources</span>` : ""}</span>
+      </a>`)}</div>`
+    : html`<section class="carte vide-grand">
+        <span class="avatar grand" aria-hidden="true">?</span>
+        <h2>Aucun public pour l'instant</h2>
+        <p class="aide">Un nom et deux phrases suffisent. Avec un public décrit, l'usine construit pour lui, puis essaie l'application à sa place.</p>
+        <button type="button" class="btn btn-p" data-action="fenetre" data-quoi="public">Décrire un premier public</button>
+      </section>`}`
 }
 
 const lignes = (l) => (l ?? []).join("\n")
+const lienSur = (url, texte) => (/^https?:\/\//.test(String(url ?? "")) ? html`<a href="${url}" target="_blank" rel="noopener noreferrer">${texte || url}</a>` : html`<span>${texte || url}</span>`)
+
+// La fiche se lit comme un profil ; chaque section se modifie d'un clic, sans un mur de champs.
 function vuePersona() {
   const p = etat.persona
   if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement…</div>`
   const f = p.fiche ?? {}
   const scenarios = etat.personaScenarios ?? p.scenarios ?? []
+  const ed = etat.personaSection
   const zone = (nom, titre, valeur, aide, rangs = 3) => html`<div class="pile"><label class="titre-champ" for="pf-${nom}">${titre}</label><textarea id="pf-${nom}" name="${nom}" class="champ" rows="${rangs}" style="resize:vertical;line-height:1.5">${valeur}</textarea>${aide ? html`<div class="aide">${aide}</div>` : ""}</div>`
+  const puces = (l) => (l?.length ? html`<ul class="puces">${l.map((x) => html`<li>${x}</li>`)}</ul>` : html`<div class="aide">Rien pour l'instant.</div>`)
+  const etiquettes = (l) => (l?.length ? html`<div class="rangee" style="gap:6px">${l.map((x) => html`<span class="etiquette">${x}</span>`)}</div>` : html`<div class="aide">Rien pour l'instant.</div>`)
+  const section = (id, titre, lecture, edition) => html`<section class="carte carte-p pile" aria-labelledby="sec-${id}">
+    <div class="barre"><h2 id="sec-${id}">${titre}</h2>${ed === id ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="persona-section" data-id="${id}" ${ed ? "disabled" : ""}>Modifier</button>`}</div>
+    ${ed === id ? html`<form class="pile" data-form="persona" style="gap:12px">${edition}
+      <div class="rangee"><button type="submit" class="btn btn-p btn-petit">Enregistrer</button><button type="button" class="btn btn-s btn-petit" data-action="persona-section" data-id="">Annuler</button></div></form>` : lecture}
+  </section>`
   return html`
     ${barreHaut()}
-    <div class="entete">
-      <div><a class="retour" href="#/personas">← Pour qui on construit</a>
-        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgePersona(p.statut)}</div>
-        <p class="chapeau">${p.brief}</p></div>
-    </div>
+    <a class="retour" href="#/personas">← Publics</a>
     ${messageGlobal()}
-    ${p.statut === "recherche" ? html`<div class="message info"><span>L'usine fait sa recherche sur le web. Cette page se met à jour toute seule, en quelques minutes (un peu plus si l'usine est en train de construire).</span></div>` : ""}
+    <section class="carte profil">
+      <span class="avatar grand" aria-hidden="true">${initiales(p.nom)}</span>
+      <div class="pile" style="gap:6px;flex:1;min-width:220px">
+        <div class="rangee" style="gap:10px"><h1>${p.nom}</h1>${badgePersona(p.statut)}</div>
+        <p class="chapeau" style="margin:0">${f.resume || p.brief}</p>
+        ${p.fiche ? html`<div class="rangee aide" style="gap:16px">${f.prix_acceptable ? html`<span>Prêt à payer : <strong>${f.prix_acceptable}</strong></span>` : ""}<span>${scenarios.length} situations de test</span><span>${(f.sources ?? []).length} sources</span></div>` : ""}
+      </div>
+      <div class="pile" style="gap:8px">
+        ${p.statut === "a_valider" ? html`<button type="button" class="btn btn-p" data-action="persona-valider">C'est bon, utiliser ce public</button>` : ""}
+        ${p.statut === "valide" ? html`<button type="button" class="btn btn-p" data-action="construire-pour" data-id="${p.id}">Construire pour ce public</button>` : ""}
+      </div>
+    </section>
+    ${p.statut === "recherche" ? html`<div class="message info"><span>L'usine fait sa recherche sur le web. Cette page se met à jour toute seule, en quelques minutes.</span></div>` : ""}
     ${p.statut === "echec" ? html`<div class="message erreur"><span style="flex:1">La recherche n'a pas abouti : ${p.erreur ?? "raison inconnue"}</span><button type="button" class="btn btn-s btn-petit" data-action="persona-approfondir">Relancer la recherche</button></div>` : ""}
-    ${p.statut === "a_valider" ? html`<div class="message info"><span style="flex:1"><strong>La fiche est prête : relis-la.</strong> Corrige ce qui ne va pas, puis clique sur « C'est bon, utiliser ce public ».</span><button type="button" class="btn btn-p btn-petit" data-action="persona-valider">C'est bon, utiliser ce public</button></div>` : ""}
+    ${p.statut === "a_valider" ? html`<div class="message info"><span>La fiche est prête : lis-la, corrige une section si besoin avec « Modifier », puis valide-la en haut.</span></div>` : ""}
     ${p.fiche ? html`<div class="colonnes">
-      <form class="colonne-large pile" data-form="persona" style="gap:18px">
-        <section class="carte carte-p pile"><h2>Qui il est</h2>
-          <div class="pile"><label class="titre-champ" for="pf-nom">Nom</label><input id="pf-nom" name="nom" class="champ" value="${p.nom}" maxlength="80"></div>
-          ${zone("resume", "En deux phrases", f.resume, "Qui il est, ce qu'il cherche à obtenir.", 3)}
-          ${zone("demographie", "Son profil", lignes(f.demographie), "Une information par ligne (âge, métier, taille de l'entreprise…).")}
-          ${zone("psychographie", "Ce qui le motive, ce qui l'inquiète", lignes(f.psychographie), "Une idée par ligne.")}
-        </section>
-        <section class="carte carte-p pile"><h2>Ce qu'il vit</h2>
-          ${zone("problemes", "Ses problèmes", lignes((f.problemes ?? []).map((x) => [x.probleme, x.preuve, x.source].filter(Boolean).join(" | "))), "Un problème par ligne. La preuve et la source trouvées par l'usine suivent, séparées par « | » : tu peux les laisser telles quelles.", 6)}
-          ${zone("besoins", "Ses besoins", lignes(f.besoins), "Un par ligne.", 4)}
-          ${zone("outils_actuels", "Ce qu'il utilise aujourd'hui", lignes(f.outils_actuels), "Un outil par ligne.")}
-          <div class="pile"><label class="titre-champ" for="pf-prix">Ce qu'il est prêt à payer</label><input id="pf-prix" name="prix_acceptable" class="champ" value="${f.prix_acceptable ?? ""}"></div>
-          ${zone("objections", "Ce qui le ferait renoncer", lignes(f.objections), "Une raison par ligne.")}
-          ${zone("canaux", "Où le trouver", lignes(f.canaux), "Un endroit par ligne.")}
-        </section>
-        <section class="carte carte-p pile"><h2>Ce qu'on ne construit pas pour lui</h2>
-          ${zone("hors_perimetre", "Hors sujet", lignes(p.hors_perimetre), "Une chose par ligne. L'usine s'en tiendra à l'écart dans chaque projet pour ce public.", 4)}
-        </section>
-        <section class="carte carte-p pile"><h2>Les situations de test · ${scenarios.length}</h2>
-          <div class="aide">De 3 à 5 situations réelles. L'usine les joue à la fin de chaque projet, à la place de ce public. Celui qui construit ne les voit jamais.</div>
-          ${scenarios.map((s, i) => html`<fieldset class="carte carte-p pile" data-scenario="${i}" style="background:var(--fond)">
+      <div class="colonne-large pile" style="gap:16px">
+        ${section("qui", "Qui il est",
+          html`<div class="grille"><div class="pile" style="gap:6px"><div class="aide">Son profil</div>${etiquettes(f.demographie)}</div><div class="pile" style="gap:6px"><div class="aide">Ce qui le motive, ce qui l'inquiète</div>${puces(f.psychographie)}</div></div>`,
+          html`<div class="pile"><label class="titre-champ" for="pf-nom">Nom</label><input id="pf-nom" name="nom" class="champ" value="${p.nom}" maxlength="80"></div>
+            ${zone("resume", "En deux phrases", f.resume, "Qui il est, ce qu'il cherche à obtenir.")}
+            ${zone("demographie", "Son profil", lignes(f.demographie), "Une information par ligne (âge, métier, taille de l'entreprise…).")}
+            ${zone("psychographie", "Ce qui le motive, ce qui l'inquiète", lignes(f.psychographie), "Une idée par ligne.")}`)}
+        ${section("problemes", "Ses problèmes",
+          (f.problemes ?? []).length ? html`<ol class="problemes">${f.problemes.map((x) => html`<li><strong>${x.probleme}</strong>${x.preuve ? html`<div class="aide">${x.preuve}${x.source ? html` · ${lienSur(x.source, "source")}` : ""}</div>` : ""}</li>`)}</ol>` : html`<div class="aide">Rien pour l'instant.</div>`,
+          zone("problemes", "Ses problèmes", lignes((f.problemes ?? []).map((x) => [x.probleme, x.preuve, x.source].filter(Boolean).join(" | "))), "Un problème par ligne. La preuve et la source suivent, séparées par « | ».", 6))}
+        ${section("attentes", "Ce qu'il attend",
+          html`<div class="grille">
+            <div class="pile" style="gap:6px"><div class="aide">Ses besoins</div>${puces(f.besoins)}</div>
+            <div class="pile" style="gap:6px"><div class="aide">Ce qui le ferait renoncer</div>${puces(f.objections)}</div>
+            <div class="pile" style="gap:6px"><div class="aide">Ce qu'il utilise aujourd'hui</div>${etiquettes(f.outils_actuels)}</div>
+            <div class="pile" style="gap:6px"><div class="aide">Où le trouver</div>${etiquettes(f.canaux)}</div></div>`,
+          html`${zone("besoins", "Ses besoins", lignes(f.besoins), "Un par ligne.", 4)}
+            ${zone("objections", "Ce qui le ferait renoncer", lignes(f.objections), "Une raison par ligne.")}
+            ${zone("outils_actuels", "Ce qu'il utilise aujourd'hui", lignes(f.outils_actuels), "Un outil par ligne.")}
+            ${zone("canaux", "Où le trouver", lignes(f.canaux), "Un endroit par ligne.")}
+            <div class="pile"><label class="titre-champ" for="pf-prix">Ce qu'il est prêt à payer</label><input id="pf-prix" name="prix_acceptable" class="champ" value="${f.prix_acceptable ?? ""}"></div>`)}
+        ${section("situations", `Les situations de test · ${scenarios.length}`,
+          html`<div class="aide">L'usine les joue à la fin de chaque projet, à la place de ce public. Celui qui construit ne les voit jamais.</div>
+            <ol class="situations">${scenarios.map((s) => html`<li class="carte carte-p pile" style="gap:4px;background:var(--fond)"><strong>${s.titre}</strong><span class="aide">${s.situation}</span><span>Il doit obtenir : ${s.attendu}</span></li>`)}</ol>`,
+          html`${scenarios.map((s, i) => html`<fieldset class="carte carte-p pile" data-scenario="${i}" style="background:var(--fond)">
             <div class="rangee" style="justify-content:space-between"><strong>Situation ${i + 1}</strong><button type="button" class="btn btn-s btn-petit" data-action="persona-retirer-scenario" data-id="${i}">Retirer</button></div>
             <label class="titre-champ" for="ps-titre-${i}">En une phrase</label><input id="ps-titre-${i}" class="champ" data-champ="titre" value="${s.titre}">
             <label class="titre-champ" for="ps-situation-${i}">Le contexte</label><textarea id="ps-situation-${i}" class="champ" data-champ="situation" rows="2">${s.situation}</textarea>
             <label class="titre-champ" for="ps-etapes-${i}">Ce qu'il fait <span class="aide" style="font-weight:400">· une action par ligne</span></label><textarea id="ps-etapes-${i}" class="champ" data-champ="etapes" rows="3">${lignes(s.etapes)}</textarea>
             <label class="titre-champ" for="ps-attendu-${i}">Ce qu'il doit obtenir</label><textarea id="ps-attendu-${i}" class="champ" data-champ="attendu" rows="2">${s.attendu}</textarea>
           </fieldset>`)}
-          ${scenarios.length < 5 ? html`<div><button type="button" class="btn btn-s btn-petit" data-action="persona-ajouter-scenario">+ Ajouter une situation</button></div>` : ""}
-        </section>
-        <section class="carte carte-p pile"><h2>Les sources consultées</h2>
-          ${zone("sources", "Sources", lignes((f.sources ?? []).map((s) => (s.titre ? `${s.titre} | ${s.url}` : s.url))), "Une par ligne : titre | adresse.", 4)}
-        </section>
-        <div class="rangee"><button type="submit" class="btn btn-p">Enregistrer</button>${p.statut === "a_valider" ? html`<button type="button" class="btn btn-s" data-action="persona-valider">C'est bon, utiliser ce public</button>` : ""}</div>
-      </form>
+          ${scenarios.length < 5 ? html`<div><button type="button" class="btn btn-s btn-petit" data-action="persona-ajouter-scenario">+ Ajouter une situation</button></div>` : ""}`)}
+        ${section("hors", "Ce qu'on ne construit pas pour lui", etiquettes(p.hors_perimetre),
+          zone("hors_perimetre", "Hors sujet", lignes(p.hors_perimetre), "Une chose par ligne. L'usine s'en tiendra à l'écart dans chaque projet pour ce public.", 4))}
+        ${section("sources", "Les sources consultées",
+          (f.sources ?? []).length ? html`<ul class="puces">${f.sources.map((s) => html`<li>${lienSur(s.url, s.titre)}</li>`)}</ul>` : html`<div class="aide">Aucune source.</div>`,
+          zone("sources", "Sources", lignes((f.sources ?? []).map((s) => (s.titre ? `${s.titre} | ${s.url}` : s.url))), "Une par ligne : titre | adresse.", 4))}
+      </div>
       <aside class="colonne-etroite pile">
-        ${p.statut === "valide" ? html`<div class="message ok"><span>Prêt${p.valide_par ? `, relu par ${p.valide_par}` : ""} : il se choisit dans « Pour qui ? » en créant un projet. Si tu modifies la fiche, il faudra la relire.</span></div>` : ""}
+        ${p.statut === "valide" ? html`<div class="message ok"><span>Prêt${p.valide_par ? `, relu par ${p.valide_par}` : ""}. Si tu modifies la fiche, il faudra la relire.</span></div>` : ""}
         <div class="carte carte-p pile"><strong>Creuser davantage</strong>
           <label class="cache" for="consignes-persona">Ce que la recherche doit creuser</label>
           <textarea id="consignes-persona" class="champ" rows="4" placeholder="Ex. : regarde surtout les commerces alimentaires, et ce qu'ils paient déjà pour se faire connaître."></textarea>
@@ -850,7 +873,7 @@ function blocEnLigne(p) {
     <div class="rangee">
       <a class="btn btn-blanc" href="${p.production}" target="_blank" rel="noopener">Ouvrir</a>
       <button type="button" class="btn btn-voile" data-action="copier" data-texte="${p.production}">Copier l'adresse</button>
-      <a class="btn btn-voile" href="#/acces">Inviter des utilisateurs</a>
+      <a class="btn btn-voile" href="#/reglages/equipe">Inviter des utilisateurs</a>
       <button type="button" class="btn btn-voile" data-action="aller" data-cible="hote">Ajouter un domaine</button>
       ${p.video?.fichier ? "" : html`<button type="button" class="btn btn-voile" data-action="video">Générer la vidéo</button>`}
     </div>
@@ -993,79 +1016,142 @@ const NOMS_SERVICES = {
 }
 const nomService = (n) => NOMS_SERVICES[n] ?? n.replace(/^Codex/, "ChatGPT")
 
-function vueSante() {
+// L'utilisation, comme une page de crédits (Base44, Gumloop) : où en est le mois, quand il
+// repart à zéro, ce que chaque projet a consommé.
+function vueUtilisation() {
   const s = etat.sante
-  if (!s) return html`${barreHaut()}<div class="chargement">Vérification de l'usine…</div>`
-  const max = Math.max(1e-9, ...s.couts.evolution.map((e) => Math.max(e.api, e.reel)))
+  if (!s) return html`<div class="chargement">Chargement…</div>`
+  const c = s.couts
+  const max = Math.max(1e-9, ...c.evolution.map((e) => Math.max(e.api, e.reel)))
+  const suivant = new Date()
+  suivant.setMonth(suivant.getMonth() + 1, 1)
+  return html`
+    <div class="entete"><div><h1>Utilisation</h1><p class="chapeau">Ce que l'IA a consommé ce mois-ci, compté au prix public.</p></div>
+      <button type="button" class="btn btn-s" data-action="fenetre" data-quoi="budget">${c.budget ? "Modifier le budget" : "Fixer un budget"}</button></div>
+    <section class="carte carte-p pile credits" aria-label="Ce mois-ci">
+      <div class="barre" style="align-items:flex-end;flex-wrap:wrap;gap:12px">
+        <div><div class="aide">Ce mois-ci</div><div class="chiffre">${c.api}${c.budget ? html`<span> sur ${c.budget}</span>` : ""}</div></div>
+        <div class="aide">Remise à zéro le ${suivant.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</div>
+      </div>
+      ${c.pct !== null ? html`<div class="jauge ${c.pct >= 80 ? "orange" : "bleue"}" style="height:14px" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, c.pct)}" aria-label="Budget du mois utilisé"><div style="width:${Math.min(100, c.pct)}%"></div></div>
+        <div class="aide">${c.pct} % du budget utilisé. L'usine te prévient en approchant de la limite, puis te demande avant de continuer.</div>`
+      : html`<div class="aide">Pas de budget mensuel : l'usine dépense sans limite.</div>`}
+      <div class="separe aide">Ce que tu paies vraiment ce mois-ci (abonnements et serveur) : <strong>${c.reel}</strong>. C'est souvent bien moins que le prix public.</div>
+    </section>
+    <section class="carte carte-p pile" aria-labelledby="par-projet">
+      <h2 id="par-projet">Par projet</h2>
+      ${c.projets.length ? html`<ul class="lignes-conso">${c.projets.map((p) => html`<li>
+        <a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a>
+        <span class="mono">${p.mesure ? p.api : html`<span class="aide">pas encore mesuré</span>`}</span>
+        ${p.budget_pct !== null ? html`<span class="jauge ${p.budget_pct >= 80 ? "orange" : "bleue"}" title="${p.budget_pct} % du budget du projet"><span style="width:${Math.min(100, p.budget_pct)}%"></span></span>` : html`<span></span>`}
+        <span class="aide">${p.refus ? `${p.refus} version${p.refus > 1 ? "s" : ""} refaite${p.refus > 1 ? "s" : ""}` : ""}</span></li>`)}</ul>`
+      : html`<div class="aide">Aucun projet pour l'instant.</div>`}
+    </section>
+    <section class="carte carte-p pile" aria-labelledby="par-mois">
+      <div class="barre"><h2 id="par-mois">Les six derniers mois</h2><a class="aide" href="/couts">Détail complet</a></div>
+      <div class="graph" aria-hidden="true">${c.evolution.map((e) => html`<div title="${e.mois} : ${e.api_texte} au prix public, ${e.reel_texte} payés"><i style="height:${Math.round((e.api / max) * 100)}%"></i><i class="reel" style="height:${Math.round((e.reel / max) * 100)}%"></i></div>`)}</div>
+      <div class="graph-legende" aria-hidden="true">${c.evolution.map((e) => html`<span>${e.mois.slice(5)}/${e.mois.slice(2, 4)}</span>`)}</div>
+      <div class="rangee aide"><span><span class="badge bleu">■</span> au prix public</span><span><span class="badge vert">■</span> payé</span></div>
+      <table class="cache"><caption>Dépenses des six derniers mois</caption><tbody>${c.evolution.map((e) => html`<tr><th>${e.mois}</th><td>${e.api_texte} au prix public</td><td>${e.reel_texte} payés</td></tr>`)}</tbody></table>
+    </section>`
+}
+
+// Le budget se règle dans une fenêtre, depuis la page Utilisation.
+function fenetreBudget() {
+  const c = etat.reglages?.couts
+  if (!c) return fenetre("Budget", html`<div class="chargement">Chargement…</div>`)
+  return fenetre("Budget", html`<form class="pile" style="gap:14px" data-form="couts">
+    <p class="aide" style="margin:0">Ce que l'usine peut dépenser en IA, au prix public. Elle te prévient en approchant de la limite (${c.alertes.join(", ")} %), puis te demande avant de continuer. Mets 0 pour ne pas fixer de limite.</p>
+    <div class="grille">
+      <div class="pile" style="gap:6px"><label class="titre-champ" for="b-mensuel">Par mois, pour toute l'usine (${c.devise})</label><input id="b-mensuel" name="budget_mensuel" class="champ" inputmode="decimal" value="${c.budget_mensuel}"></div>
+      <div class="pile" style="gap:6px"><label class="titre-champ" for="b-projet">Par projet (${c.devise})</label><input id="b-projet" name="budget_par_projet" class="champ" inputmode="decimal" value="${c.budget_par_projet}"></div>
+    </div>
+    <details><summary class="aide" style="cursor:pointer">Ce que tu paies chaque mois (pour calculer le coût réel)</summary>
+      <div class="grille" style="margin-top:10px">
+        <div class="pile" style="gap:6px"><label class="aide" for="b-serveur">Le serveur (${c.devise})</label><input id="b-serveur" name="serveur_mensuel" class="champ" inputmode="decimal" value="${c.serveur_mensuel}"></div>
+        ${c.abonnements.map((a, i) => html`<div class="pile" style="gap:6px"><label class="aide" for="b-ab-${i}">${a.nom} (${c.devise})</label><input id="b-ab-${i}" name="abonnement" class="champ" inputmode="decimal" value="${a.mensuel}"></div>`)}
+      </div></details>
+    <div class="rangee" style="justify-content:flex-end"><button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button><button type="submit" class="btn btn-p">Enregistrer</button></div>
+  </form>`)
+}
+
+function vueEtatUsine() {
+  const s = etat.sante
+  if (!s) return html`<div class="chargement">Vérification de l'usine…</div>`
   const mj = s.serveur?.mise_a_jour
   const soucis = s.composants.filter((c) => c.etat !== "ok")
   const pannes = soucis.filter((c) => c.etat === "panne")
   return html`
-    ${barreHaut()}
-    <div class="entete"><div><h1>État et dépenses</h1><p class="chapeau">L'usine se vérifie elle-même chaque minute.</p></div>
-      ${mj?.disponible ? html`<div class="carte rangee" style="padding:10px 14px;gap:12px"><span><strong>Une nouvelle version est disponible</strong></span><button type="button" class="btn btn-p" data-action="usine" data-quoi="mettre-a-jour">Mettre à jour l'usine</button></div>` : ""}</div>
-    ${messageGlobal()}
+    <div><h1>État de l'usine</h1><p class="chapeau">L'usine se vérifie elle-même chaque minute. La pastille en haut de chaque page résume ce bilan.</p></div>
+    ${mj?.disponible ? html`<section class="carte carte-p barre" style="gap:12px;flex-wrap:wrap;border-color:var(--accent)"><span><strong>Une nouvelle version est disponible</strong><br><span class="aide">L'usine finit ce qu'elle fait, se met à jour et redémarre (quelques minutes).</span></span><button type="button" class="btn btn-p" data-action="usine" data-quoi="mettre-a-jour">Mettre à jour l'usine</button></section>` : ""}
     <section class="carte carte-p pile etat-general ${pannes.length ? "panne" : soucis.length ? "alerte" : "ok"}" aria-labelledby="etat-general">
-      <h2 id="etat-general">${pannes.length ? `${pannes.length === 1 ? "Un service est en panne" : `${pannes.length} services sont en panne`}` : soucis.length ? `${soucis.length === 1 ? "Un point demande ton attention" : `${soucis.length} points demandent ton attention`}` : "Tout fonctionne"}</h2>
+      <h2 id="etat-general">${pannes.length ? (pannes.length === 1 ? "Un service est en panne" : `${pannes.length} services sont en panne`) : soucis.length ? (soucis.length === 1 ? "Un point demande ton attention" : `${soucis.length} points demandent ton attention`) : "Tout fonctionne"}</h2>
       ${soucis.length ? html`<ul class="soucis">${soucis.map((c) => html`<li><span class="point ${c.etat}" aria-hidden="true"></span><span><strong>${nomService(c.nom)}</strong> : ${c.detail}</span></li>`)}</ul>
         <div class="aide">Si une panne dure, préviens la personne qui s'occupe du serveur.</div>`
       : html`<div class="aide">${s.composants.length} services vérifiés.</div>`}
-      <details><summary class="aide" style="cursor:pointer">Voir tous les services</summary>
-        <div class="grille" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-top:10px">${s.composants.map((c) => html`<div class="carte" style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start" title="${c.nom}">
-          <span class="point ${c.etat === "ok" ? "" : c.etat}" style="margin-top:7px" aria-hidden="true"></span>
-          <span style="min-width:0"><strong style="font-size:14px">${nomService(c.nom)}</strong><br><span class="aide">${c.detail}</span></span></div>`)}</div>
-      </details>
     </section>
-    <section class="carte carte-p pile" style="gap:16px" aria-labelledby="couts">
-      <div class="barre"><h2 id="couts">Les dépenses du mois</h2><a class="aide" href="/couts">Détail complet</a></div>
-      <div class="grille">
-        <div><div class="aide">Ce que l'IA aurait coûté au prix public</div><div style="font-size:26px;font-weight:700">${s.couts.api}</div><div class="aide">C'est sur ce chiffre que portent les budgets.</div></div>
-        <div><div class="aide">Ce que tu paies vraiment</div><div style="font-size:26px;font-weight:700">${s.couts.reel}</div><div class="aide">Abonnements et serveur : souvent bien moins.</div></div>
-        <div><div class="aide">Budget du mois${s.couts.budget ? ` · ${s.couts.budget}` : ""}</div>
-          ${s.couts.pct !== null ? html`<div class="jauge bleue" style="height:12px;margin-top:10px"><div style="width:${Math.min(100, s.couts.pct)}%"></div></div><div class="aide" style="margin-top:6px">${s.couts.pct} % utilisés. L'usine te prévient en approchant de la limite.</div>` : html`<div style="font-size:18px;font-weight:600">pas de limite</div><div class="aide"><a href="#/reglages">Fixer un budget</a></div>`}</div>
-      </div>
-      <div class="graph" aria-label="Dépenses des six derniers mois">${s.couts.evolution.map((e) => html`<div title="${e.mois} : ${e.api_texte} au prix public, ${e.reel_texte} payés"><i style="height:${Math.round((e.api / max) * 100)}%"></i><i class="reel" style="height:${Math.round((e.reel / max) * 100)}%"></i></div>`)}</div>
-      <div class="graph-legende">${s.couts.evolution.map((e) => html`<span>${e.mois.slice(5)}/${e.mois.slice(2, 4)}</span>`)}</div>
-      <div class="rangee aide"><span><span class="badge bleu">■</span> au prix public</span><span><span class="badge vert">■</span> payé</span></div>
-      <div class="tableau"><table style="min-width:520px"><thead><tr><th>Projet</th><th>Au prix public</th><th>Payé</th><th>Budget du projet</th><th title="Versions refusées par le contrôle qualité, puis refaites">Versions refaites</th></tr></thead>
-        <tbody>${s.couts.projets.map((p) => html`<tr><td><a class="lien-projet" href="#/projets/${p.id}">${p.nom}</a></td><td class="mono">${p.mesure ? p.api : "pas encore mesuré"}</td><td class="mono">${p.mesure ? p.reel : "—"}</td><td>${p.budget_pct !== null ? html`<span class="${p.budget_pct >= 80 ? "badge orange" : "aide"}">${p.budget_pct} % utilisés</span>` : "—"}</td><td>${p.refus}</td></tr>`)}</tbody></table></div>
+    <section class="carte" aria-labelledby="services"><h2 id="services" style="padding:14px 16px 0">Tous les services</h2>
+      <ul class="liste-services">${s.composants.map((c) => html`<li title="${c.nom}"><span class="point ${c.etat === "ok" ? "" : c.etat}" aria-hidden="true"></span><span style="flex:1;min-width:0"><strong>${nomService(c.nom)}</strong><br><span class="aide">${c.detail}</span></span><span class="cache">${c.etat === "ok" ? "fonctionne" : c.etat}</span></li>`)}</ul>
     </section>
     <section class="carte carte-p pile"><h2>Mettre l'usine en pause</h2>
       <div class="aide">L'usine termine ce qu'elle est en train de faire, puis s'arrête. Rien n'est perdu : elle reprend où elle en était.</div>
-      <div class="rangee"><button type="button" class="btn btn-s" data-action="usine" data-quoi="stop">Mettre en pause</button><button type="button" class="btn btn-s" data-action="usine" data-quoi="reprendre">Reprendre</button></div></section>`
+      <div class="rangee">${etat.resume?.usine.arretee ? html`<button type="button" class="btn btn-p" data-action="usine" data-quoi="reprendre">Reprendre</button>` : html`<button type="button" class="btn btn-s" data-action="usine" data-quoi="stop">Mettre en pause</button>`}</div></section>`
 }
 
-function vueAcces() {
-  const a = etat.acces
-  if (!a) return html`${barreHaut()}<div class="chargement">Chargement des accès…</div>`
-  const slugs = Object.entries(a.noms)
-  // Des cases à cocher plutôt qu'une liste à sélection multiple (Ctrl + clic).
-  const cases = (nom, id) => html`<div class="pile" style="gap:6px" role="group" aria-labelledby="${id}">
+// Les cases « applications » d'une invitation ou d'une clé.
+function casesApplis(nom, id) {
+  const slugs = Object.entries(etat.acces?.noms ?? {})
+  return html`<div class="pile" style="gap:6px" role="group" aria-labelledby="${id}">
     <label class="coche"><input type="checkbox" name="${nom}" value="*"><span>Toutes les applications</span></label>
     ${slugs.map(([slug, n]) => html`<label class="coche"><input type="checkbox" name="${nom}" value="${slug}"><span>${n ?? slug}</span></label>`)}</div>`
-  const decrire = (u) => (u.role === "admin" ? "tout, y compris cette console" : u.applis.includes("*") ? "toutes les applications" : u.applis.map((s) => a.noms[s] ?? s).join(", ") || "aucune application")
+}
+
+// L'invitation : plusieurs adresses en pastilles, un rôle décrit en une ligne (Sana).
+function formulaireInviter() {
+  const inv = etat.invites
+  return html`<form class="pile" data-form="inviter" style="gap:14px">
+    <div class="pile" style="gap:6px"><label class="titre-champ" for="inv-email">Adresses email</label>
+      <div class="champ champ-pastilles">${inv.map((e, i) => html`<span class="etiquette">${e}<button type="button" class="btn-icone" data-action="retirer-invite" data-id="${i}" aria-label="Retirer ${e}">✕</button></span>`)}
+        <input id="inv-email" name="saisie" type="email" multiple autocomplete="off" data-saisie-invites placeholder="${inv.length ? "Une autre adresse…" : "marie@exemple.fr"}"></div>
+      <div class="aide">Plusieurs personnes à la fois : sépare les adresses par une virgule ou appuie sur Entrée.</div></div>
+    <fieldset class="pile" style="gap:6px"><legend class="titre-champ">Ce qu'elles pourront faire</legend>
+      <label class="choix"><input type="radio" name="role" value="membre" checked><span><strong>Membre</strong><br><span class="aide">Essaie les applications cochées ci-dessous.</span></span></label>
+      <label class="choix"><input type="radio" name="role" value="admin"><span><strong>Administrateur</strong><br><span class="aide">Pilote l'usine avec toi : accès à tout, y compris cette console.</span></span></label></fieldset>
+    <div class="pile" style="gap:6px"><div class="titre-champ" id="inv-applis">Les applications qu'un membre pourra ouvrir</div>${casesApplis("applis", "inv-applis")}</div>
+    <div class="rangee" style="justify-content:flex-end">${etat.fenetre ? html`<button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button>` : ""}<button type="submit" class="btn btn-p">${inv.length > 1 ? `Inviter ${inv.length} personnes` : "Envoyer l'invitation"}</button></div>
+  </form>`
+}
+
+function vueEquipe() {
+  const a = etat.acces
+  if (!a) return html`<div class="chargement">Chargement de l'équipe…</div>`
+  const decrire = (u) => (u.role === "admin" ? "accès à tout" : u.applis.includes("*") ? "toutes les applications" : u.applis.map((s) => a.noms[s] ?? s).join(", ") || "aucune application")
   return html`
-    ${barreHaut()}
-    <div><h1>Qui a accès</h1><p class="chapeau">Chaque application est protégée par une page de connexion. On y entre sur invitation : la personne reçoit un lien et choisit son mot de passe.</p></div>
-    ${messageGlobal()}
+    <div class="entete"><div><h1>Équipe</h1><p class="chapeau">Chaque application est protégée par une page de connexion. On y entre sur invitation : la personne reçoit un lien et choisit son mot de passe.</p></div>
+      <button type="button" class="btn btn-p" data-action="fenetre" data-quoi="inviter">Inviter</button></div>
+    ${etat.invitation?.length ? html`<section class="carte carte-p pile" aria-label="Invitations envoyées" style="gap:8px">
+      ${etat.invitation.map((x) => html`<div class="barre" style="gap:10px;flex-wrap:wrap"><span><strong>${x.email}</strong> · ${x.erreur ? x.erreur : x.envoye ? "invitation envoyée par email (lien valable 72 h)" : "l'email n'est pas parti : transmets ce lien toi-même (personnel, 72 h)"}</span>
+        ${x.lien ? html`<button type="button" class="btn btn-s btn-petit" data-action="copier" data-texte="${x.lien}">Copier le lien</button>` : ""}</div>`)}
+      <div><button type="button" class="lien-btn" style="padding-left:0" data-action="fermer-invitations">C'est noté</button></div>
+    </section>` : ""}
     <section class="carte" aria-labelledby="personnes">
-      <div class="barre" style="padding:14px 16px;border-bottom:1px solid var(--trait)"><h2 id="personnes">Les personnes</h2></div>
-      <div class="tableau"><table style="min-width:600px"><thead><tr><th>Personne</th><th>Peut ouvrir</th><th>État</th><th><span class="cache">Actions</span></th></tr></thead>
-        <tbody>${a.utilisateurs.map((u) => html`<tr><td><strong>${u.email}</strong><div class="sous">${u.nom ? `${u.nom} · ` : ""}${u.role === "admin" ? "Administrateur" : "Membre"}</div></td><td>${decrire(u)}</td>
-          <td>${u.active ? html`<span class="badge vert">a accepté</span>` : html`<span class="badge orange">invitation envoyée</span>`}</td>
-          <td style="text-align:right;white-space:nowrap">${u.active ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="renvoyer" data-id="${u.id}">Renvoyer l'invitation</button> `}${etat.confirmer === `retirer-${u.id}` ? html`<button type="button" class="btn btn-d btn-petit" data-action="retirer-personne" data-id="${u.id}">Oui, retirer</button> <button type="button" class="btn btn-s btn-petit" data-action="annuler">Annuler</button>` : html`<button type="button" class="btn btn-s btn-petit" data-action="confirmer" data-quoi="retirer-${u.id}">Retirer l'accès</button>`}</td></tr>`)}</tbody></table></div>
-      ${etat.invitation ? html`<div class="message info" style="margin:16px">${etat.invitation}</div>` : ""}
-      <form class="pile" style="padding:16px;border-top:1px solid var(--trait-2);gap:14px" data-form="inviter">
-        <strong>Inviter quelqu'un</strong>
-        <div class="grille">
-          <div class="pile" style="gap:6px"><label class="aide" for="inv-email">Son adresse email</label><input id="inv-email" name="email" type="email" class="champ" required></div>
-          <fieldset class="pile" style="gap:6px"><legend class="aide">Ce qu'il pourra faire</legend>
-            <label class="choix"><input type="radio" name="role" value="membre" checked><span><strong>Essayer des applications</strong><br><span class="aide">celles que tu coches ci-dessous</span></span></label>
-            <label class="choix"><input type="radio" name="role" value="admin"><span><strong>Piloter l'usine avec toi</strong><br><span class="aide">administrateur : accès à tout, y compris cette console</span></span></label></fieldset>
-          <div class="pile" style="gap:6px"><div class="aide" id="inv-applis">Les applications qu'il pourra ouvrir</div>${cases("applis", "inv-applis")}</div>
-        </div>
-        <div><button type="submit" class="btn btn-p">Envoyer l'invitation</button></div>
-      </form>
+      <h2 id="personnes" class="cache">Les personnes</h2>
+      <ul class="membres">${a.utilisateurs.map((u) => {
+        const moi = u.email === etat.moi?.email
+        return html`<li>
+          <span class="avatar" aria-hidden="true">${initiales(u.nom || u.email)}</span>
+          <span style="flex:1;min-width:200px"><strong>${u.nom || u.email}</strong>${moi ? html` <span class="aide">(toi)</span>` : ""}
+            <span class="aide" style="display:block">${u.nom ? `${u.email} · ` : ""}${decrire(u)}</span></span>
+          ${u.active ? "" : html`<span class="badge orange">invitation envoyée</span>`}
+          <label class="cache" for="role-${u.id}">Rôle de ${u.email}</label>
+          <select id="role-${u.id}" class="champ champ-petit" data-role-utilisateur="${u.id}" ${moi ? "disabled" : ""}>
+            <option value="membre" ${u.role === "admin" ? "" : "selected"}>Membre</option>
+            <option value="admin" ${u.role === "admin" ? "selected" : ""}>Administrateur</option>
+          </select>
+          <span class="rangee" style="gap:6px">${u.active ? "" : html`<button type="button" class="btn btn-s btn-petit" data-action="renvoyer" data-id="${u.id}">Renvoyer</button>`}
+            ${moi ? "" : etat.confirmer === `retirer-${u.id}` ? html`<button type="button" class="btn btn-d btn-petit" data-action="retirer-personne" data-id="${u.id}">Oui, retirer</button><button type="button" class="btn btn-s btn-petit" data-action="annuler">Annuler</button>` : html`<button type="button" class="btn btn-s btn-petit" data-action="confirmer" data-quoi="retirer-${u.id}">Retirer</button>`}</span>
+        </li>`
+      })}</ul>
     </section>
     <details class="carte carte-p" ${etat.cleCreee || a.cles.length ? "open" : ""}>
       <summary style="cursor:pointer;font-weight:600">Pour les développeurs : clés d'accès pour d'autres logiciels</summary>
@@ -1080,7 +1166,7 @@ function vueAcces() {
           <strong>Créer une clé</strong>
           <div class="grille">
             <div class="pile" style="gap:6px"><label class="aide" for="cle-nom">À quoi elle sert</label><input id="cle-nom" name="nom" class="champ" required maxlength="60" placeholder="Ex. : intégration avec le CRM"></div>
-            <div class="pile" style="gap:6px"><div class="aide" id="cle-applis">Les applications qu'elle ouvre</div>${cases("applis", "cle-applis")}</div>
+            <div class="pile" style="gap:6px"><div class="aide" id="cle-applis">Les applications qu'elle ouvre</div>${casesApplis("applis", "cle-applis")}</div>
           </div>
           <div><button type="submit" class="btn btn-s">Créer la clé</button></div>
         </form>
@@ -1161,35 +1247,6 @@ function carteMoteur(f, m) {
   </div>`
 }
 
-function blocFournisseurs() {
-  const f = etat.fournisseurs
-  if (!f) return html`<section class="carte carte-p"><div class="chargement">Chargement…</div></section>`
-  const modeles = f.modeles
-  return html`<section class="carte carte-p pile" style="gap:16px" aria-labelledby="fournisseurs">
-    <div class="barre" style="flex-wrap:wrap;gap:10px">
-      <div><h2 id="fournisseurs">L'intelligence artificielle</h2><p class="aide" style="margin:4px 0 0">L'usine travaille avec deux IA : l'une construit, l'autre contrôle. Ce que tu colles ici est chiffré et ne s'affiche plus jamais.</p>
-        ${f.protection === "axmaril" ? html`<p style="margin:8px 0 0"><span class="badge vert">clés scellées</span> <span class="aide">Même une copie du serveur ne permettrait pas de les lire.</span></p>` : ""}</div>
-      <div class="pile" style="gap:4px;align-items:flex-end"><button type="button" class="btn btn-p" data-action="tester-fournisseurs">Tester les connexions</button><span class="aide">${f.tests.le ? `Dernier test : ${dateCourte(f.tests.le)}` : "Jamais testé"}</span></div>
-    </div>
-    ${f.verrouille ? html`<div class="message erreur">Les clés enregistrées ici sont verrouillées pour l'instant : l'usine utilise celles du serveur. Préviens la personne qui s'occupe du serveur.</div>` : ""}
-    <div class="grille">${f.moteurs.map((m) => carteMoteur(f, m))}</div>
-    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Réglages avancés : passerelle de secours et modèles</summary>
-      <div class="pile" style="gap:16px;margin-top:12px">
-        <div class="pile" style="gap:10px">
-          <div class="aide">La passerelle Vercel AI Gateway donne accès aux deux IA avec une seule clé : elle sert de secours commun. Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys.</div>
-          ${champIdentifiant(f, "AI_GATEWAY_API_KEY", "", "Clé de la passerelle Vercel")}
-        </div>
-        <form class="pile" style="gap:12px" data-form="modeles">
-          <div><strong>Quel modèle pour quel rôle</strong><div class="aide">Laisse vide pour garder le choix par défaut.</div></div>
-          <datalist id="modeles-connus">${MODELES_CONNUS.map((x) => html`<option value="${x}"></option>`)}</datalist>
-          <div class="grille">${modeles.map((m) => html`<div class="pile" style="gap:6px"><label class="aide" for="mod-${m.role}">${ROLES_MODELES[m.role] ?? m.role}</label><input id="mod-${m.role}" name="${m.role}" class="champ mono" list="modeles-connus" value="${m.modele !== m.contrat ? m.modele : ""}" placeholder="${m.contrat ?? m.modele}" autocomplete="off" spellcheck="false"></div>`)}</div>
-          <div><button type="submit" class="btn btn-s">Enregistrer les modèles</button></div>
-        </form>
-      </div>
-    </details>
-  </section>`
-}
-
 // GitHub : l'application de l'usine (des accès qui expirent), ou le jeton du serveur.
 function carteGithub(f) {
   const app = f.app ?? { mode: "jeton" }
@@ -1218,58 +1275,114 @@ function carteGithub(f) {
   </div>`
 }
 
-function vueReglages() {
+// Les intégrations en cartes : un logo, une phrase, « Connecter » ou « Connecté » (Unify, MagicPath).
+function integrations() {
+  const f = etat.fournisseurs
   const r = etat.reglages
-  if (!r) return html`${barreHaut()}<div class="chargement">Chargement des réglages…</div>`
-  const f = r.forge
-  const c = r.couts
-  const k = r.contrat
+  const moteur = (id) => (!f?.tests.le ? null : Object.values(f.tests.resultats?.[id] ?? {}).some((t) => t?.etat === "ok"))
+  const app = r?.forge.app ?? { mode: "jeton" }
+  return [
+    { id: "claude", nom: "Claude", logo: "C", couleur: "#c4603f", texte: "Construit les applications, fait le plan, relit le code.", branche: moteur("claude-code") },
+    { id: "chatgpt", nom: "ChatGPT", logo: "G", couleur: "#0f7a5f", texte: "Contrôle chaque fonction, comme le ferait un visiteur.", branche: moteur("codex") },
+    { id: "github", nom: "GitHub", logo: "GH", couleur: "#24292f", texte: "Range le code de chaque application et l'historique de ce qui a été fait.", branche: app.mode === "application" || r?.forge.compte?.ok ? true : app.mode === "a_installer" ? "presque" : false },
+    { id: "slack", nom: "Slack", logo: "S", couleur: "#4a154b", texte: "Facultatif : des notifications et des boutons dans un canal de ton équipe.", branche: Boolean(r?.slack?.branche), facultatif: true },
+  ]
+}
+const badgeIntegration = (x) => (x.branche === true ? html`<span class="badge vert">Connecté</span>`
+  : x.branche === null ? html`<span class="badge">pas encore testé</span>`
+  : x.branche === "presque" ? html`<span class="badge orange">dernière étape</span>`
+  : x.facultatif ? html`<span class="badge">facultatif</span>` : html`<span class="badge orange">à connecter</span>`)
+
+function vueIntegrations() {
+  const f = etat.fournisseurs
+  if (!f || !etat.reglages) return html`<div class="chargement">Chargement…</div>`
   return html`
-    ${barreHaut()}
-    <div class="entete"><div><h1>Réglages</h1><p class="chapeau">Brancher l'IA et GitHub, fixer les budgets. Le reste est déjà réglé.</p></div>
-      <a class="btn btn-s" href="#/demarrer">Revoir les premiers pas</a></div>
-    ${messageGlobal()}
-    ${blocFournisseurs()}
-    <section class="carte carte-p pile" aria-labelledby="forge" style="gap:16px">
-      <div><h2 id="forge">Où le code est rangé</h2><p class="aide" style="margin:4px 0 0">Chaque application a son espace sur GitHub, où l'usine range son code et l'historique de ce qu'elle a fait. Tu peux y jeter un œil, mais tu n'en as pas besoin au quotidien.</p></div>
-      ${carteGithub(f)}
-    </section>
-    <form class="carte carte-p pile" style="gap:16px" data-form="couts" aria-labelledby="budgets">
-      <div><h2 id="budgets">Budgets</h2><p class="aide" style="margin:4px 0 0">Ce que l'usine peut dépenser en IA, calculé au prix public. Elle te prévient en approchant de la limite (${c.alertes.join(", ")} %), puis te demande avant de continuer. Mets 0 pour ne pas fixer de limite.</p></div>
-      <div class="grille">
-        <div class="pile" style="gap:6px"><label class="aide" for="b-mensuel">Par mois, pour toute l'usine (${c.devise})</label><input id="b-mensuel" name="budget_mensuel" class="champ" inputmode="decimal" value="${c.budget_mensuel}"></div>
-        <div class="pile" style="gap:6px"><label class="aide" for="b-projet">Par projet (${c.devise})</label><input id="b-projet" name="budget_par_projet" class="champ" inputmode="decimal" value="${c.budget_par_projet}"></div>
-      </div>
-      <details><summary class="aide" style="cursor:pointer">Ce que tu paies chaque mois (pour calculer le coût réel)</summary>
-        <div class="grille" style="margin-top:10px">
-          <div class="pile" style="gap:6px"><label class="aide" for="b-serveur">Le serveur (${c.devise})</label><input id="b-serveur" name="serveur_mensuel" class="champ" inputmode="decimal" value="${c.serveur_mensuel}"></div>
-          ${c.abonnements.map((a, i) => html`<div class="pile" style="gap:6px"><label class="aide" for="b-ab-${i}">${a.nom} (${c.devise})</label><input id="b-ab-${i}" name="abonnement" class="champ" inputmode="decimal" value="${a.mensuel}"></div>`)}
-        </div></details>
-      <div><button type="submit" class="btn btn-p">Enregistrer</button></div>
-    </form>
-    <section class="carte carte-p pile" style="gap:10px" aria-labelledby="slack">
-      <div class="barre"><h2 id="slack">Slack <span class="aide">(facultatif)</span></h2>${r.slack?.branche ? html`<span class="badge vert">branché</span>` : html`<span class="badge">pas branché</span>`}</div>
-      <p class="aide" style="margin:0">Tout se fait ici. Slack ajoute seulement des notifications et des boutons dans un canal de ton équipe${r.slack?.branche && r.slack.canal ? ` (ici : ${r.slack.canal})` : ""}. Pour le brancher, demande à la personne qui s'occupe du serveur.</p>
-    </section>
-    <details class="carte carte-p" aria-labelledby="contrat">
-      <summary style="cursor:pointer;font-weight:600" id="contrat">Les règles de l'usine</summary>
+    <div class="entete"><div><h1>Intégrations</h1><p class="chapeau">Les services avec lesquels l'usine travaille. Ce que tu y colles est chiffré et ne s'affiche plus jamais.</p>
+      ${f.protection === "axmaril" ? html`<p style="margin:8px 0 0"><span class="badge vert">clés scellées</span> <span class="aide">Même une copie du serveur ne permettrait pas de les lire.</span></p>` : ""}</div>
+      <div class="pile" style="gap:4px;align-items:flex-end"><button type="button" class="btn btn-s" data-action="tester-fournisseurs">Tester les connexions</button><span class="aide">${f.tests.le ? `Dernier test : ${dateCourte(f.tests.le)}` : "Jamais testé"}</span></div></div>
+    ${f.verrouille ? html`<div class="message erreur">Les clés enregistrées ici sont verrouillées pour l'instant : l'usine utilise celles du serveur. Préviens la personne qui s'occupe du serveur.</div>` : ""}
+    <div class="cartes-integrations">${integrations().map((x) => html`<div class="carte carte-integration">
+      <div class="barre"><span class="logo-integration" style="background:${x.couleur}" aria-hidden="true">${x.logo}</span>${badgeIntegration(x)}</div>
+      <strong>${x.nom}</strong><span class="aide" style="flex:1">${x.texte}</span>
+      <div><button type="button" class="btn ${x.branche === true || x.facultatif ? "btn-s" : "btn-p"} btn-petit" data-action="fenetre" data-quoi="integration-${x.id}" aria-label="${x.branche === true ? "Gérer" : "Connecter"} ${x.nom}">${x.branche === true ? "Gérer" : x.facultatif ? "Voir" : "Connecter"}</button></div>
+    </div>`)}</div>
+    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Réglages avancés : passerelle de secours et modèles</summary>
       <div class="pile" style="gap:16px;margin-top:12px">
-        <p class="aide" style="margin:0">Ces règles sont appliquées par l'usine elle-même. Elles se changent sur le serveur, par un technicien.</p>
-        <div class="pile" style="gap:8px"><strong>Qui décide</strong>
-          ${Object.entries(k.politiques).map(([a, v]) => html`<div class="barre" style="font-size:14px"><span>${ACTIONS_POLITIQUES[a] ?? a}</span><span class="badge ${v === "manuel" ? "orange" : v === "jamais" ? "rouge" : "vert"}">${POLITIQUES[v] ?? v}</span></div>`)}</div>
-        <div class="grille" style="font-size:14px">
-          <div><div class="aide">Quand une fonction est refusée</div>l'usine la refait <strong>${k.autonomie.tentatives_par_tache ?? 2} fois</strong>, puis essaie <strong>${k.autonomie.changements_d_approche ?? 1} autre méthode</strong> avant de te demander</div>
-          <div><div class="aide">Temps maximum pour une fonction</div><strong>${k.autonomie.minutes_max_par_agent ?? 30} minutes</strong></div>
-          <div><div class="aide">Aperçus</div>retirés après <strong>${k.apercus_jours} jours</strong> sans activité (tu es prévenu la veille)</div>
-          <div><div class="aide">Mode démonstration</div><strong>${k.demo ? "actif" : "inactif"}</strong> : données fictives, emails retenus${k.finition ? ", lot de finition" : ""}</div>
+        <div class="pile" style="gap:10px">
+          <div class="aide">La passerelle Vercel AI Gateway donne accès aux deux IA avec une seule clé : elle sert de secours commun. Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys.</div>
+          ${champIdentifiant(f, "AI_GATEWAY_API_KEY", "", "Clé de la passerelle Vercel")}
         </div>
-        <details><summary class="aide" style="cursor:pointer">Pour les techniciens</summary>
-          <div class="pile" style="gap:8px;margin-top:8px">
-            <div class="tableau"><table><tbody>${k.modeles.map((m) => html`<tr><td>${ROLES[m.role] ?? m.role}</td><td class="mono">${m.modele}</td><td class="aide">${m.moteur}</td></tr>`)}</tbody></table></div>
-            <div class="aide">Fichier : <span class="mono">usine.config.yml</span> · fichiers protégés des produits : <span class="mono">${k.perimetre_protege.join(" · ")}</span></div>
-          </div></details>
+        <form class="pile" style="gap:12px" data-form="modeles">
+          <div><strong>Quel modèle pour quel rôle</strong><div class="aide">Laisse vide pour garder le choix par défaut.</div></div>
+          <datalist id="modeles-connus">${MODELES_CONNUS.map((x) => html`<option value="${x}"></option>`)}</datalist>
+          <div class="grille">${f.modeles.map((m) => html`<div class="pile" style="gap:6px"><label class="aide" for="mod-${m.role}">${ROLES_MODELES[m.role] ?? m.role}</label><input id="mod-${m.role}" name="${m.role}" class="champ mono" list="modeles-connus" value="${m.modele !== m.contrat ? m.modele : ""}" placeholder="${m.contrat ?? m.modele}" autocomplete="off" spellcheck="false"></div>`)}</div>
+          <div><button type="submit" class="btn btn-s">Enregistrer les modèles</button></div>
+        </form>
       </div>
     </details>`
+}
+
+// Chaque intégration s'ouvre dans sa propre fenêtre (Gumloop).
+function fenetreIntegration(id) {
+  const f = etat.fournisseurs
+  const r = etat.reglages
+  if (!f || !r) return fenetre("Intégration", html`<div class="chargement">Chargement…</div>`)
+  if (id === "claude" || id === "chatgpt") {
+    const m = f.moteurs.find((x) => x.id === (id === "claude" ? "claude-code" : "codex"))
+    return fenetre(id === "claude" ? "Claude" : "ChatGPT", m ? html`${carteMoteur(f, m)}<div class="rangee" style="justify-content:flex-end"><button type="button" class="btn btn-s" data-action="tester-fournisseurs">Tester la connexion</button></div>` : html`<div class="aide">Cette IA n'est pas prévue dans la configuration de l'usine.</div>`)
+  }
+  if (id === "github") return fenetre("GitHub", html`<p class="aide" style="margin:0">Chaque application a son espace sur GitHub, où l'usine range son code et l'historique de ce qu'elle a fait. Tu peux y jeter un œil, mais tu n'en as pas besoin au quotidien.</p>${carteGithub(r.forge)}`)
+  return fenetre("Slack", html`<div class="pile" style="gap:10px">
+    <div class="barre"><strong>${r.slack?.branche ? "Connecté" : "Pas connecté"}</strong>${r.slack?.branche && r.slack.canal ? html`<span class="aide">canal ${r.slack.canal}</span>` : ""}</div>
+    <p style="margin:0">Tout se fait dans cette console. Slack ajoute seulement des notifications et des boutons dans un canal de ton équipe.</p>
+    <p class="aide" style="margin:0">Pour le brancher, demande à la personne qui s'occupe du serveur.</p>
+    <div class="rangee" style="justify-content:flex-end"><button type="button" class="btn btn-s" data-action="fermer-fenetre">Fermer</button></div></div>`)
+}
+
+function vueRegles() {
+  const k = etat.reglages?.contrat
+  if (!k) return html`<div class="chargement">Chargement…</div>`
+  return html`
+    <div><h1>Règles de l'usine</h1><p class="chapeau">Ces règles sont appliquées par l'usine elle-même. Elles se changent sur le serveur, par un technicien.</p></div>
+    <section class="carte carte-p pile" aria-labelledby="qui-decide"><h2 id="qui-decide">Qui décide</h2>
+      ${Object.entries(k.politiques).map(([a, v]) => html`<div class="barre" style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--trait-2)"><span>${ACTIONS_POLITIQUES[a] ?? a}</span><span class="badge ${v === "manuel" ? "orange" : v === "jamais" ? "rouge" : "vert"}">${POLITIQUES[v] ?? v}</span></div>`)}</section>
+    <section class="carte carte-p grille" style="font-size:14px" aria-label="Limites">
+      <div><div class="aide">Quand une fonction est refusée</div>l'usine la refait <strong>${k.autonomie.tentatives_par_tache ?? 2} fois</strong>, puis essaie <strong>${k.autonomie.changements_d_approche ?? 1} autre méthode</strong> avant de te demander</div>
+      <div><div class="aide">Temps maximum pour une fonction</div><strong>${k.autonomie.minutes_max_par_agent ?? 30} minutes</strong></div>
+      <div><div class="aide">Aperçus</div>retirés après <strong>${k.apercus_jours} jours</strong> sans activité (tu es prévenu la veille)</div>
+      <div><div class="aide">Mode démonstration</div><strong>${k.demo ? "actif" : "inactif"}</strong> : données fictives, emails retenus${k.finition ? ", lot de finition" : ""}</div>
+    </section>
+    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Pour les techniciens</summary>
+      <div class="pile" style="gap:8px;margin-top:8px">
+        <div class="tableau"><table><tbody>${k.modeles.map((m) => html`<tr><td>${ROLES[m.role] ?? m.role}</td><td class="mono">${m.modele}</td><td class="aide">${m.moteur}</td></tr>`)}</tbody></table></div>
+        <div class="aide">Fichier : <span class="mono">usine.config.yml</span> · fichiers protégés des produits : <span class="mono">${k.perimetre_protege.join(" · ")}</span></div>
+      </div></details>`
+}
+
+// Les réglages : un sous-menu à gauche, la section à droite.
+function vueReglages() {
+  const s = etat.route.section ?? "integrations"
+  const contenu = { integrations: vueIntegrations, equipe: vueEquipe, utilisation: vueUtilisation, etat: vueEtatUsine, historique: vueHistorique, regles: vueRegles }[s]
+  return html`
+    ${barreHaut()}
+    <div class="reglages">
+      <nav class="sous-menu" aria-label="Réglages">
+        ${SECTIONS_REGLAGES.map(([id, nom, aide]) => html`<a href="#/reglages/${id}" ${brut(id === s ? 'aria-current="page"' : "")}><strong>${nom}</strong><small>${aide}</small></a>`)}
+        <a href="#/demarrer"><strong>Premiers pas</strong><small>Rouvrir l'assistant</small></a>
+      </nav>
+      <div class="reglages-contenu">${messageGlobal()}${contenu()}</div>
+    </div>`
+}
+
+// La fenêtre ouverte, quelle que soit la page.
+function dessinerFenetre() {
+  const q = etat.fenetre
+  if (!q) return ""
+  if (q === "public") return fenetre("Nouveau public", formulairePublic())
+  if (q === "inviter") return fenetre("Inviter dans l'usine", etat.acces ? formulaireInviter() : html`<div class="chargement">Chargement…</div>`)
+  if (q === "budget") return fenetreBudget()
+  if (q.startsWith("integration-")) return fenetreIntegration(q.slice(12))
+  return ""
 }
 
 const PICTOS_DIRECT = { lecture: "◇", ecriture: "✎", commande: "›", pensee: "…", plan: "☰", erreur: "✕", fin: "✓", info: "•", outil: "·" }
@@ -1296,38 +1409,60 @@ async function suivreDirect() {
 setInterval(suivreDirect, 3000)
 
 const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Mise en ligne", abandon: "Abandon", cycle: "Aperçu", plan: "Plan", domaine: "Adresse web", corrections: "Corrections", remarque: "Remarque", escalade: "Décision demandée", erreur: "Problème", relance: "Relance", reglage: "Réglage" }
+const PICTOS_HISTO = { demande: "✎", validation: "✓", decision: "◆", production: "↗", abandon: "✕", cycle: "▣", plan: "☰", domaine: "@", corrections: "↺", remarque: "❝", escalade: "!", erreur: "!", relance: "↻", reglage: "⚙" }
+const FILTRES_HISTO = [["", "Tout"], ["demande", "Demandes"], ["validation", "Validations"], ["decision", "Décisions"], ["production", "Mises en ligne"], ["erreur", "Problèmes"], ["reglage", "Réglages"]]
+const dateDe = (le) => new Date(String(le).replace(" ", "T") + (String(le).includes("Z") ? "" : "Z"))
+function jourDe(le) {
+  const d = dateDe(le)
+  if (isNaN(d)) return "Date inconnue"
+  const j = (x) => x.toLocaleDateString("fr-FR")
+  const hier = new Date(Date.now() - 864e5)
+  if (j(d) === j(new Date())) return "Aujourd'hui"
+  if (j(d) === j(hier)) return "Hier"
+  return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })
+}
+
+// L'historique se lit comme un fil, groupé par jour, une phrase par évènement (Square, Plane).
 function vueHistorique() {
   const h = etat.historique
   const projets = etat.resume?.projets ?? []
+  const jours = []
+  for (const x of h ?? []) {
+    const j = jourDe(x.le)
+    if (jours.at(-1)?.[0] !== j) jours.push([j, []])
+    jours.at(-1)[1].push(x)
+  }
   return html`
-    ${barreHaut()}
-    <div><h1>Historique</h1><p class="chapeau">Qui a fait quoi, et quand : demandes, validations, décisions, mises en ligne, réglages. Les 200 derniers évènements.</p></div>
-    <div class="rangee">
-      <label class="aide" for="h-projet">Projet</label>
-      <select id="h-projet" class="champ" style="width:auto" data-filtre-histo="projet"><option value="">Tous</option>${projets.map((p) => html`<option value="${p.id}" ${String(p.id) === etat.histoFiltre.projet ? "selected" : ""}>${p.nom}</option>`)}</select>
-      <label class="aide" for="h-type">Type</label>
-      <select id="h-type" class="champ" style="width:auto" data-filtre-histo="type"><option value="">Tous</option>${Object.entries(TYPES_HISTO).map(([k, v]) => html`<option value="${k}" ${k === etat.histoFiltre.type ? "selected" : ""}>${v}</option>`)}</select>
+    <div><h1>Historique</h1><p class="chapeau">Qui a fait quoi, et quand. Les 200 derniers évènements.</p></div>
+    <div class="rangee" style="gap:8px">
+      <div class="rangee" role="group" aria-label="Filtrer par type" style="gap:6px">${FILTRES_HISTO.map(([k, nom]) => html`<button type="button" class="filtre" data-action="filtre-histo" data-id="${k}" aria-pressed="${String(etat.histoFiltre.type === k)}">${nom}</button>`)}</div>
+      <label class="cache" for="h-projet">Projet</label>
+      <select id="h-projet" class="champ champ-petit" data-filtre-histo="projet"><option value="">Tous les projets</option>${projets.map((p) => html`<option value="${p.id}" ${String(p.id) === etat.histoFiltre.projet ? "selected" : ""}>${p.nom ?? `Projet ${p.id}`}</option>`)}</select>
     </div>
-    <section class="carte" aria-label="Évènements">
-      ${!h ? html`<div class="chargement">Chargement…</div>` : h.length ? html`<div class="tableau"><table style="min-width:700px"><thead><tr><th>Quand</th><th>Projet</th><th>Quoi</th><th>Qui</th></tr></thead>
-        <tbody>${h.map((x) => html`<tr><td style="white-space:nowrap">${heure(x.le)}</td><td>${x.projet_id ? html`<a class="lien-projet" href="#/projets/${x.projet_id}">${x.projet ?? `Projet ${x.projet_id}`}</a>` : html`<span class="aide">l'usine</span>`}</td>
-          <td><span class="badge ${["erreur", "escalade"].includes(x.type) ? "orange" : x.type === "production" || x.type === "validation" ? "vert" : ""}">${TYPES_HISTO[x.type] ?? x.type}</span>
-            <div style="white-space:pre-wrap;word-break:break-word;margin-top:4px">${nettoyer(x.message.length > 280 ? x.message.slice(0, 280) + "…" : x.message)}</div></td>
-          <td>${x.par ?? html`<span class="aide">l'usine</span>`}</td></tr>`)}</tbody></table></div>`
-      : html`<div class="vide">Rien pour ce choix.</div>`}
-    </section>`
+    ${!h ? html`<div class="chargement">Chargement…</div>` : h.length ? jours.map(([jour, items]) => html`<section class="pile" style="gap:8px" aria-label="${jour}">
+      <h2 class="surtitre">${jour}</h2>
+      <ol class="fil carte">${items.map((x) => html`<li class="${["erreur", "escalade"].includes(x.type) ? "alerte" : ["production", "validation"].includes(x.type) ? "ok" : ""}">
+        <span class="fil-picto" aria-hidden="true">${PICTOS_HISTO[x.type] ?? "•"}</span>
+        <div style="flex:1;min-width:0">
+          <div><strong>${x.par ?? "L'usine"}</strong> <span class="aide">· ${TYPES_HISTO[x.type] ?? x.type}${x.projet_id ? "" : " · l'usine"}</span>${x.projet_id ? html` <span class="aide">·</span> <a class="lien-projet" href="#/projets/${x.projet_id}">${x.projet ?? `Projet ${x.projet_id}`}</a>` : ""}</div>
+          <div class="fil-texte">${nettoyer(x.message.length > 280 ? x.message.slice(0, 280) + "…" : x.message)}</div>
+        </div>
+        ${isNaN(dateDe(x.le)) ? "" : html`<time class="aide" datetime="${dateDe(x.le).toISOString()}">${dateDe(x.le).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>`}
+      </li>`)}</ol></section>`)
+    : html`<div class="carte vide">Rien pour ce choix.</div>`}`
 }
 
 // --- Rendu et chargement ------------------------------------------------------------------
 function rendre() {
-  const vue = { projets: vueProjets, nouveau: vueNouveau, projet: vueProjet, sante: vueSante, acces: vueAcces, reglages: vueReglages, historique: vueHistorique, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer }[etat.route.vue]
+  const vue = { projets: vueProjets, projet: vueProjet, reglages: vueReglages, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer }[etat.route.vue]
   const m = $("#principal")
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
   const enBas = !j || j.scrollTop + j.clientHeight >= j.scrollHeight - 20
   const a = document.activeElement
   const cleFocus = a && m.contains(a) && a !== m ? ["action", "id", "quoi", "choix", "hote"].map((k) => a.dataset?.[k] ?? "").join("|") + "|" + (a.id ?? "") : null
-  $("#vue").innerHTML = vue()[BRUT]
+  $("#vue").innerHTML = html`${vue()}${listeFlottante()}${dessinerFenetre()}`[BRUT]
+  document.querySelector(".app").classList.toggle("plein-ecran", etat.route.vue === "demarrer")
   afficherMessages()
   if (cleFocus) {
     const cible = [...m.querySelectorAll("button, a, input, select, textarea")].find((x) => ["action", "id", "quoi", "choix", "hote"].map((k) => x.dataset?.[k] ?? "").join("|") + "|" + (x.id ?? "") === cleFocus)
@@ -1351,7 +1486,7 @@ function rendre() {
   const r = etat.resume
   if (r) {
     $("#base").textContent = r.usine.base
-    $("#cote-bas").innerHTML = html`${r.usine.mise_a_jour?.disponible ? html`<a href="#/sante" class="carte" style="display:block;padding:12px;color:var(--encre);text-decoration:none"><strong style="display:block">Mise à jour disponible</strong><span class="aide">${r.usine.mise_a_jour.disponible} changement(s)</span></a>` : ""}
+    $("#cote-bas").innerHTML = html`${r.usine.mise_a_jour?.disponible ? html`<a href="#/reglages/etat" class="carte" style="display:block;padding:12px;color:var(--encre);text-decoration:none"><strong style="display:block">Mise à jour disponible</strong><span class="aide">${r.usine.mise_a_jour.disponible} changement(s)</span></a>` : ""}
       ${"Notification" in window && Notification.permission === "default" ? html`<button type="button" class="btn btn-s btn-petit" data-action="notifications">Me prévenir des décisions</button>` : ""}
       ${"Notification" in window && Notification.permission === "denied" ? html`<span class="aide">Notifications bloquées dans le navigateur</span>` : ""}
       <a href="${r.usine.portail}" target="_blank" rel="noopener">Mes applications</a><span class="aide" id="moi"></span>`[BRUT]
@@ -1366,26 +1501,25 @@ async function charger({ silencieux = false } = {}) {
     const frais = () => n === etat.numero
     // Chaque partie s'affiche dès qu'elle arrive : une page lente ne bloque pas le reste.
     const taches = [api("GET", "resume").then((x) => { if (frais()) { etat.resume = x; prevenir(x); rendre() } })]
-    if (r.vue === "nouveau" && !etat.estimation) taches.push(api("GET", "estimation").then((x) => { etat.estimation = x; rendre() }))
-    if (["nouveau", "personas", "projet"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
-    if (r.vue === "persona") taches.push(api("GET", `personas/${r.id}`).then((x) => { if (frais()) { etat.persona = x; rendre() } }))
-    if (r.vue === "historique") taches.push(api("GET", `historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`).then((x) => { if (frais()) { etat.historique = x; rendre() } }))
-    if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => {
-      if (!frais()) return
-      etat.projet = x
-      rendre()
-    }))
-    if (r.vue === "sante") taches.push(api("GET", "sante").then((x) => { etat.sante = x; rendre() }))
-    if (r.vue === "acces") taches.push(api("GET", "acces").then((x) => { etat.acces = x; rendre() }))
-    if (r.vue === "reglages") taches.push(api("GET", "reglages").then((x) => { etat.reglages = x; rendre() }))
-    if (["projets", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
+    const sec = r.vue === "reglages" ? r.section : null
+    const charge = (chemin, cle) => taches.push(api("GET", chemin).then((x) => { if (frais()) { etat[cle] = x; rendre() } }))
+    if (r.vue === "projets" && !etat.estimation) charge("estimation", "estimation")
+    if (["projets", "personas", "projet"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
+    if (r.vue === "persona") charge(`personas/${r.id}`, "persona")
+    if (sec === "historique") charge(`historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`, "historique")
+    if (r.vue === "projet") charge(`projets/${r.id}`, "projet")
+    // Le bilan de santé nourrit la pastille du haut : une fois par minute suffit, hors des pages qui le détaillent.
+    if (["utilisation", "etat"].includes(sec) || Date.now() - etat.santeLe > 60_000) taches.push(api("GET", "sante").then((x) => { etat.sante = x; etat.santeLe = Date.now(); rendre() }))
+    if (sec === "equipe" || r.vue === "demarrer") charge("acces", "acces")
+    if (["integrations", "utilisation", "regles"].includes(sec) || r.vue === "demarrer") charge("reglages", "reglages")
+    if (sec === "integrations" || r.vue === "demarrer") charge("fournisseurs", "fournisseurs")
+    if (!etat.premiersPas || ["projets", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
       if (!frais()) return
       etat.premiersPas = x
       // Une usine neuve s'ouvre sur ses premiers pas.
       if (r.vue === "projets" && !location.hash && !x.termine && !x.masque && !etat.premiersPasVus) { etat.premiersPasVus = true; location.hash = "#/demarrer"; return }
       rendre()
     }))
-    if (r.vue === "reglages") taches.push(api("GET", "fournisseurs").then((x) => { etat.fournisseurs = x; rendre() }))
     await Promise.all(taches)
   } catch (e) {
     if (!silencieux) etat.message = { type: "erreur", texte: e.message }
@@ -1444,26 +1578,43 @@ async function envoyerReponses() {
   if (r) etat.questions = null
 }
 
-// La fiche d'un persona, lue dans son formulaire (une liste = une entrée par ligne).
-function lireFichePersona(f) {
+// La fiche d'un public, lue dans le formulaire de la section modifiée (une liste = une entrée
+// par ligne). Ce qui n'est pas dans ce formulaire reste tel quel.
+function lireFichePersona(f, p) {
   const d = new FormData(f)
-  const liste = (nom) => String(d.get(nom) ?? "").split("\n").map((x) => x.trim()).filter(Boolean)
+  const base = p.fiche ?? {}
+  const texte = (nom, defaut) => (d.has(nom) ? String(d.get(nom)).trim() : defaut ?? "")
+  const liste = (nom, defaut) => (d.has(nom) ? String(d.get(nom)).split("\n").map((x) => x.trim()).filter(Boolean) : defaut ?? [])
   const parties = (l) => l.split("|").map((x) => x.trim())
   return {
-    nom: String(d.get("nom") ?? "").trim(),
+    nom: texte("nom", p.nom),
     fiche: {
-      resume: String(d.get("resume") ?? "").trim(),
-      problemes: liste("problemes").map((l) => { const [probleme, preuve = "", source = ""] = parties(l); return { probleme, preuve, source } }),
-      besoins: liste("besoins"), demographie: liste("demographie"), psychographie: liste("psychographie"), outils_actuels: liste("outils_actuels"),
-      prix_acceptable: String(d.get("prix_acceptable") ?? "").trim(), objections: liste("objections"), canaux: liste("canaux"),
-      sources: liste("sources").map((l) => { const p = parties(l); return p.length > 1 ? { titre: p[0], url: p.slice(1).join("|") } : { titre: "", url: p[0] } }),
+      ...base,
+      resume: texte("resume", base.resume),
+      problemes: d.has("problemes") ? liste("problemes").map((l) => { const [probleme, preuve = "", source = ""] = parties(l); return { probleme, preuve, source } }) : base.problemes ?? [],
+      besoins: liste("besoins", base.besoins), demographie: liste("demographie", base.demographie), psychographie: liste("psychographie", base.psychographie), outils_actuels: liste("outils_actuels", base.outils_actuels),
+      prix_acceptable: texte("prix_acceptable", base.prix_acceptable), objections: liste("objections", base.objections), canaux: liste("canaux", base.canaux),
+      sources: d.has("sources") ? liste("sources").map((l) => { const x = parties(l); return x.length > 1 ? { titre: x[0], url: x.slice(1).join("|") } : { titre: "", url: x[0] } }) : base.sources ?? [],
     },
-    hors_perimetre: liste("hors_perimetre"),
-    scenarios: [...f.querySelectorAll("[data-scenario]")].map((s) => {
+    hors_perimetre: liste("hors_perimetre", p.hors_perimetre),
+    scenarios: etat.personaSection === "situations" ? [...f.querySelectorAll("[data-scenario]")].map((s) => {
       const v = (champ) => s.querySelector(`[data-champ=${champ}]`)?.value.trim() ?? ""
       return { titre: v("titre"), situation: v("situation"), etapes: v("etapes").split("\n").map((x) => x.trim()).filter(Boolean), attendu: v("attendu") }
-    }),
+    }) : p.scenarios ?? [],
   }
+}
+
+// Les adresses d'une invitation, séparées par des virgules, des points-virgules ou des espaces.
+const adresses = (t) => String(t ?? "").split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean)
+function ajouterInvites(champ) {
+  const nouvelles = adresses(champ.value)
+  const valides = nouvelles.filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
+  const refusees = nouvelles.filter((x) => !valides.includes(x))
+  etat.invites = [...new Set([...etat.invites, ...valides])]
+  rendre()
+  const c = $("#inv-email")
+  if (c) { c.value = refusees.join(", "); c.focus() }
+  if (refusees.length) { etat.message = { type: "erreur", texte: `Adresse non reconnue : ${refusees.join(", ")}` }; afficherMessages() }
 }
 
 // Un fichier en base64, par morceaux (un gros fichier dépasserait la pile d'appels).
@@ -1486,6 +1637,12 @@ document.addEventListener("change", (e) => {
     const texte = $("#demande")?.value
     rendre()
     if (texte) $("#demande").value = texte
+  }
+  if (e.target.dataset?.choix === "brique") etat.brique = e.target.value
+  if (e.target.dataset?.choix === "persona") etat.personaChoisi = e.target.value || null
+  if (e.target.dataset?.roleUtilisateur) {
+    const champ = e.target
+    agir(() => api("PATCH", `acces/utilisateurs/${champ.dataset.roleUtilisateur}`, { role: champ.value })).then((r) => { if (!r) { champ.value = champ.value === "admin" ? "membre" : "admin" } })
   }
   if (e.target.dataset?.filtreHisto) {
     etat.histoFiltre[e.target.dataset.filtreHisto] = e.target.value
@@ -1761,7 +1918,22 @@ const ACTIONS = {
     afficherMessages()
   },
   "fermer-cle": () => { etat.cleCreee = null; rendre() },
-  depart: (el) => { etat.depart = el.dataset.id; rendre() },
+  // Passer de « décrire » à « terminer une application existante » garde ce qui a été écrit.
+  depart: (el) => { const t = $("#demande")?.value; etat.depart = el.dataset.id; rendre(); if (t) $("#demande").value = t; $(etat.depart === "depot" ? "#adresse" : "#demande")?.focus() },
+  fenetre: (el) => {
+    etat.fenetre = el.dataset.quoi
+    if (el.dataset.quoi === "inviter" && !etat.acces) charger({ silencieux: true })
+    if (el.dataset.quoi === "budget" && !etat.reglages) charger({ silencieux: true })
+    rendre()
+    // Le premier champ à remplir, sinon le premier bouton du contenu (pas « Fermer »).
+    ;($(".fenetre form :is(input:not([type=hidden]), textarea)") ?? $(".fenetre > :not(.barre) button"))?.focus()
+  },
+  "fermer-fenetre": () => { etat.fenetre = null; etat.invites = []; rendre() },
+  "retirer-invite": (el) => { etat.invites.splice(Number(el.dataset.id), 1); rendre(); $("#inv-email")?.focus() },
+  "fermer-invitations": () => { etat.invitation = null; rendre() },
+  "filtre-histo": (el) => { etat.histoFiltre.type = el.dataset.id; etat.historique = null; rendre(); charger() },
+  "persona-section": (el) => { etat.personaSection = el.dataset.id || null; etat.personaScenarios = null; rendre(); $(`#sec-${el.dataset.id} ~ form`)?.querySelector("input, textarea")?.focus() },
+  "construire-pour": (el) => { etat.personaChoisi = el.dataset.id; etat.depart = "zero"; location.hash = "#/nouveau" },
   "corriger-recette": () => {
     const garder = [...document.querySelectorAll("input[name=garder]:checked")].map((x) => Number(x.value))
     const ajout = $("#recette-ajout")?.value.trim() ?? ""
@@ -1813,11 +1985,11 @@ const ACTIONS = {
   },
   // Ajouter ou retirer un scénario : on garde ce qui a été saisi dans le formulaire.
   "persona-ajouter-scenario": () => {
-    etat.personaScenarios = lireFichePersona($("[data-form=persona]")).scenarios.concat([{ titre: "", situation: "", etapes: [], attendu: "" }])
+    etat.personaScenarios = lireFichePersona($("[data-form=persona]"), etat.persona).scenarios.concat([{ titre: "", situation: "", etapes: [], attendu: "" }])
     rendre()
   },
   "persona-retirer-scenario": (el) => {
-    etat.personaScenarios = lireFichePersona($("[data-form=persona]")).scenarios.filter((_, i) => i !== Number(el.dataset.id))
+    etat.personaScenarios = lireFichePersona($("[data-form=persona]"), etat.persona).scenarios.filter((_, i) => i !== Number(el.dataset.id))
     rendre()
   },
 }
@@ -1870,11 +2042,20 @@ document.addEventListener("submit", async (e) => {
   }
   if (type === "persona-nouveau") {
     const r = await agir(() => api("POST", "personas", { nom: d.get("nom"), brief: d.get("brief") }), { succes: "Recherche lancée : la fiche arrive dans quelques minutes." })
-    if (r?.id) location.hash = `#/personas/${r.id}`
+    if (r?.id) {
+      etat.fenetre = null
+      // Dans l'assistant, on reste sur place : la recherche continue pendant les étapes suivantes.
+      if (etat.route.vue === "demarrer") rendre()
+      else location.hash = `#/personas/${r.id}`
+    }
   }
   if (type === "persona") {
-    const r = await agir(() => api("PUT", `personas/${etat.persona.id}`, lireFichePersona(f)))
-    if (r) etat.personaScenarios = null
+    const r = await agir(() => api("PUT", `personas/${etat.persona.id}`, lireFichePersona(f, etat.persona)), { succes: "Section enregistrée." })
+    if (r) {
+      etat.personaScenarios = null
+      etat.personaSection = null
+      rendre()
+    }
   }
   if (type === "plan") {
     const plan = normaliserPlan(syncPlan(planCourant()))
@@ -1900,9 +2081,25 @@ document.addEventListener("submit", async (e) => {
   }
   if (type === "domaine") await agir(() => api("POST", `projets/${etat.projet.id}/domaines`, { hote: d.get("hote") }))
   if (type === "inviter") {
-    const r = await agir(() => api("POST", "acces/utilisateurs", { email: d.get("email"), role: d.get("role"), applis: d.getAll("applis") }), { succes: "Invitation créée." })
-    etat.invitation = r ? (r.envoye ? `Invitation envoyée par email à ${d.get("email")} (lien valable 72 h).` : `L'email n'est pas parti : transmets ce lien toi-même (personnel, 72 h) : ${r.lien}`) : null
-    rendre()
+    const emails = [...new Set([...etat.invites, ...adresses(d.get("saisie"))])]
+    if (!emails.length) {
+      etat.message = { type: "erreur", texte: "Ajoute au moins une adresse email." }
+      return afficherMessages()
+    }
+    // Une invitation par personne ; un refus (compte existant) n'arrête pas les suivantes.
+    const r = await agir(async () => {
+      const resultats = []
+      for (const email of emails) resultats.push(await api("POST", "acces/utilisateurs", { email, role: d.get("role"), applis: d.getAll("applis") }).then((x) => ({ email, ...x })).catch((e) => ({ email, erreur: e.message })))
+      return resultats
+    })
+    if (r) {
+      const faites = r.filter((x) => !x.erreur).length
+      etat.message = { type: faites ? "ok" : "erreur", texte: faites ? `${faites} invitation${faites > 1 ? "s" : ""} créée${faites > 1 ? "s" : ""}.` : "Aucune invitation n'a pu être créée." }
+      etat.invitation = r
+      etat.invites = []
+      etat.fenetre = null
+      rendre()
+    }
   }
   if (type === "github") {
     const organisation = d.get("cible") === "org" ? String(d.get("organisation") ?? "").trim() : ""
@@ -1935,7 +2132,8 @@ document.addEventListener("submit", async (e) => {
     await agir(() => api("PUT", "fournisseurs/modeles", Object.fromEntries([...d.entries()].map(([k, v]) => [k, String(v).trim()]))))
   }
   if (type === "couts") {
-    await agir(() => api("PUT", "reglages/couts", { budget_mensuel: d.get("budget_mensuel"), budget_par_projet: d.get("budget_par_projet"), serveur_mensuel: d.get("serveur_mensuel"), abonnements: d.getAll("abonnement") }))
+    const r = await agir(() => api("PUT", "reglages/couts", { budget_mensuel: d.get("budget_mensuel"), budget_par_projet: d.get("budget_par_projet"), serveur_mensuel: d.get("serveur_mensuel"), abonnements: d.getAll("abonnement") }))
+    if (r) { etat.fenetre = null; etat.santeLe = 0; await charger({ silencieux: true }) }
   }
   if (type === "cle") {
     const r = await agir(() => api("POST", "acces/cles", { nom: d.get("nom"), applis: d.getAll("applis") }), { succes: "Clé créée." })
@@ -1944,6 +2142,11 @@ document.addEventListener("submit", async (e) => {
 })
 
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && etat.fenetre && !$("#palette").open) { ACTIONS["fermer-fenetre"](); return }
+  if (e.target.matches?.("[data-saisie-invites]") && ["Enter", ","].includes(e.key) && e.target.value.trim()) {
+    e.preventDefault()
+    return ajouterInvites(e.target)
+  }
   const onglet = e.target.closest?.("[role=tab]")
   if (!onglet || !["ArrowLeft", "ArrowRight"].includes(e.key)) return
   const tous = [...document.querySelectorAll("[role=tab]")]
@@ -1966,11 +2169,13 @@ function entreesPalette(filtre) {
   const commandes = [
     { texte: "Nouveau projet", aide: "commande", aller: "#/nouveau" },
     { texte: "Projets", aide: "page", aller: "#/" },
-    { texte: "État et dépenses", aide: "page", aller: "#/sante" },
-    { texte: "Qui a accès : inviter quelqu'un", aide: "page", aller: "#/acces" },
-    { texte: "Pour qui on construit (publics)", aide: "page", aller: "#/personas" },
-    { texte: "Réglages : IA, GitHub, budgets", aide: "page", aller: "#/reglages" },
-    { texte: "Historique : qui a fait quoi", aide: "page", aller: "#/historique" },
+    { texte: "Publics : pour qui on construit", aide: "page", aller: "#/personas" },
+    { texte: "Intégrations : IA, GitHub, Slack", aide: "réglages", aller: "#/reglages/integrations" },
+    { texte: "Équipe : inviter quelqu'un", aide: "réglages", aller: "#/reglages/equipe" },
+    { texte: "Utilisation et budget", aide: "réglages", aller: "#/reglages/utilisation" },
+    { texte: "État de l'usine", aide: "réglages", aller: "#/reglages/etat" },
+    { texte: "Historique : qui a fait quoi", aide: "réglages", aller: "#/reglages/historique" },
+    { texte: "Premiers pas", aide: "assistant", aller: "#/demarrer" },
     { texte: "Mettre l'usine en pause", aide: "commande", faire: () => confirmer("Mettre l'usine en pause ? Elle termine ce qu'elle fait, puis s'arrête.") && agir(() => api("POST", "usine/stop", {})) },
     { texte: "Reprendre l'usine", aide: "commande", faire: () => agir(() => api("POST", "usine/reprendre", {})) },
     { texte: "Mettre à jour l'usine", aide: "commande", faire: () => confirmer("Mettre à jour l'usine ? Elle finit sa tâche en cours, se reconstruit et redémarre.") && agir(() => api("POST", "usine/mettre-a-jour", {})) },
@@ -2023,6 +2228,9 @@ window.addEventListener("hashchange", () => {
   etat.cleCreee = null
   etat.invitation = null
   etat.personaScenarios = null
+  etat.personaSection = null
+  etat.fenetre = null
+  etat.invites = []
   // Chaque projet s'ouvre sur le plan en lecture, les réglages de mise en ligne repliés.
   etat.planVue = "lecture"
   etat.prodReglages = false
@@ -2032,6 +2240,7 @@ window.addEventListener("hashchange", () => {
   rendre()
   charger()
   window.scrollTo(0, 0)
+  if (etat.route.nouveau) $("#demande")?.focus()
 })
 etat.route = lireRoute()
 api("GET", "moi").then((m) => { etat.moi = m; rendre() }).catch(() => {})

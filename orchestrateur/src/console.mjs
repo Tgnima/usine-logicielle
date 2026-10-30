@@ -535,6 +535,18 @@ const ROUTES = [
     if (u.role === "admin" && tous.filter((x) => x.role === "admin" && x.actif).length <= 1) throw erreur(409, "C'est le dernier administrateur : invites-en un autre d'abord.")
     return portier(`utilisateurs/${u.id}`, { methode: "DELETE" })
   }],
+  // Changer le rôle d'une personne depuis la liste de l'équipe.
+  ["PATCH", /^\/api\/acces\/utilisateurs\/(\d+)$/, async (_ctx, [id], c, qui) => {
+    const tous = await portier("utilisateurs")
+    const u = tous.find((x) => x.id === Number(id))
+    if (!u) throw erreur(404, "Compte introuvable.")
+    const role = c.role === "admin" ? "admin" : "membre"
+    if (role === u.role) return { message: "Rien à changer." }
+    if (u.email === qui.email) throw erreur(409, "Tu ne peux pas changer ton propre rôle.")
+    if (u.role === "admin" && tous.filter((x) => x.role === "admin" && x.actif).length <= 1) throw erreur(409, "C'est le dernier administrateur : nommes-en un autre d'abord.")
+    await portier(`utilisateurs/${u.id}`, { methode: "PATCH", corps: { role } })
+    return { message: `${u.email} est maintenant ${role === "admin" ? "administrateur" : "membre"}.` }
+  }],
   ["POST", /^\/api\/acces\/utilisateurs\/(\d+)\/invitation$/, async (_ctx, [id], _c, qui) => {
     const u = (await portier("utilisateurs")).find((x) => x.id === Number(id))
     if (!u) throw erreur(404, "Compte introuvable.")

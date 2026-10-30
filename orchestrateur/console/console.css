@@ -291,3 +291,112 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .etat-general.ok h2 { color: var(--ok) } .etat-general.panne h2 { color: var(--danger) }
 .soucis { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px }
 .soucis li { display: flex; gap: 10px; align-items: baseline }
+
+/* --- Parcours v2 : saisie à outils, assistant, fenêtres, réglages à sous-menu --- */
+.saisie-adresse { width: 100%; border: 0; border-bottom: 1px solid var(--trait-2); background: transparent; color: var(--encre); font-size: 15px; padding: 6px 6px 10px; margin-bottom: 6px }
+.saisie-adresse:focus { outline: none }
+.saisie-outils { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-top: 1px solid var(--trait-2); padding-top: 8px }
+.outil { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid var(--trait); border-radius: 999px; background: var(--surface); color: var(--texte); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; position: relative }
+.outil:hover, .outil:focus-within { border-color: var(--accent); color: var(--encre) }
+.outil:focus-within { outline: 2px solid var(--accent); outline-offset: 1px }
+.outil select { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; max-width: 190px }
+.outil select:focus { outline: none }
+.outil[aria-pressed="true"] { background: var(--accent-fond); border-color: var(--accent); color: var(--accent-fort) }
+.saisie-plus { max-width: 760px; width: 100%; margin: 0 auto }
+.saisie-plus summary { cursor: pointer }
+
+.plein-ecran .cote { display: none }
+.assistant { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; max-width: 1100px; width: 100%; margin: 0 auto }
+.assistant-etapes { flex: 1 1 240px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 24px }
+.assistant-etapes ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px }
+.assistant-etapes li a { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: var(--rayon-m); color: var(--texte); text-decoration: none; font-size: 14px; font-weight: 500 }
+.assistant-etapes li a:hover { background: var(--surface-2) }
+.assistant-etapes li a[aria-current="step"] { background: var(--surface); box-shadow: var(--ombre-carte); color: var(--encre); font-weight: 600 }
+.assistant-etapes small { display: block; color: var(--doux); font-weight: 400 }
+.puce { flex: none; width: 24px; height: 24px; border-radius: 999px; border: 1px solid var(--champ); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--doux); background: var(--surface) }
+.puce.faite { background: var(--ok-point); border-color: var(--ok-point); color: #ffffff }
+.assistant-ecran { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 18px; background: var(--surface); border: 1px solid var(--trait); border-radius: var(--rayon-xl); box-shadow: var(--ombre-carte); padding: 32px }
+.assistant-ecran h1 { font-size: clamp(24px, 3vw, 30px) }
+.assistant-bas { border-top: 1px solid var(--trait-2); padding-top: 18px; margin-top: 6px }
+@media (max-width: 720px) { .assistant-ecran { padding: 20px 16px } .assistant-etapes { position: static } }
+
+.flottant { position: fixed; right: 20px; bottom: 20px; z-index: 20; width: min(320px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--trait); border-radius: var(--rayon-l); box-shadow: var(--ombre-fenetre); font-size: 14px }
+.flottant-suite { display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: var(--rayon-m); background: var(--accent-fond); color: var(--encre); text-decoration: none; font-weight: 600 }
+.flottant-suite:hover { color: var(--accent-fort) }
+/* Sur téléphone, la liste ne cache pas la saisie : elle se range en bas de la page. */
+@media (max-width: 720px) { .flottant { position: static; width: 100%; box-shadow: var(--ombre-carte) } }
+
+.voile { position: fixed; inset: 0; z-index: 40; background: rgba(14, 42, 64, .45) }
+.fenetre { position: fixed; z-index: 41; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; display: flex; flex-direction: column; gap: 16px; padding: 22px 24px; background: var(--surface); border: 1px solid var(--trait); border-radius: var(--rayon-xl); box-shadow: var(--ombre-fenetre) }
+.fenetre > .carte { box-shadow: none; border: 0; padding: 0 }
+@media (max-width: 720px) { .fenetre { padding: 18px 16px } }
+
+.pastille-etat { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 12px; border: 1px solid var(--trait); border-radius: 999px; background: var(--surface); color: var(--ok); font-size: 13px; font-weight: 600; text-decoration: none }
+.pastille-etat.alerte { color: var(--signal); border-color: var(--signal-trait) }
+.pastille-etat.panne { color: var(--danger); border-color: var(--danger) }
+
+.avatar { flex: none; width: 40px; height: 40px; border-radius: 999px; background: var(--accent-fond); color: var(--accent-fort); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px }
+.avatar.grand { width: 64px; height: 64px; font-size: 22px }
+.cartes-publics { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px }
+.carte-public { display: flex; gap: 14px; padding: 18px; text-decoration: none; color: var(--encre) }
+.carte-public:hover { border-color: var(--accent) }
+.vide-grand { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 24px; text-align: center }
+.vide-grand p { max-width: 460px; margin: 0 }
+.profil { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; padding: 22px }
+.etiquette { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--encre); font-size: 13px }
+.etiquette .btn-icone { min-width: 22px; min-height: 22px; padding: 0 4px }
+.puces { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px }
+.problemes, .situations { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px }
+.situations { list-style: none; padding: 0 }
+
+.champ-pastilles { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px }
+.champ-pastilles:focus-within { outline: 2px solid var(--accent); outline-offset: 0 }
+.champ-pastilles input { flex: 1 1 180px; border: 0; background: transparent; color: var(--encre); font: inherit; padding: 4px }
+.champ-pastilles input:focus { outline: none }
+.champ-petit { width: auto; padding: 7px 10px; min-height: 36px; font-size: 14px }
+.membres { list-style: none; margin: 0; padding: 0 }
+.membres li { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--trait-2) }
+.membres li:last-child { border-bottom: 0 }
+
+.reglages { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start }
+.sous-menu { flex: 1 1 210px; max-width: 260px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 24px }
+.sous-menu a { display: block; padding: 9px 12px; border-radius: var(--rayon-m); color: var(--texte); text-decoration: none }
+.sous-menu a strong { display: block; font-size: 14px; font-weight: 600 }
+.sous-menu small { color: var(--doux); font-size: 12px }
+.sous-menu a:hover { background: var(--surface-2) }
+.sous-menu a[aria-current="page"] { background: var(--surface); box-shadow: var(--ombre-carte); color: var(--encre) }
+.sous-menu a[aria-current="page"] strong { color: var(--accent-fort) }
+.reglages-contenu { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 20px }
+@media (max-width: 1180px) {
+  .reglages { flex-direction: column; gap: 18px }
+  .reglages-contenu { flex: none; width: 100% }
+  .sous-menu { flex: none; position: static; max-width: none; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px }
+  .sous-menu a { flex: none; border: 1px solid var(--trait); border-radius: 999px; padding: 6px 14px }
+  .sous-menu small { display: none }
+}
+
+.cartes-integrations { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px }
+.carte-integration { display: flex; flex-direction: column; gap: 8px; padding: 18px }
+.logo-integration { width: 40px; height: 40px; border-radius: 10px; color: #ffffff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px }
+
+.credits .chiffre { font-size: 32px; font-weight: 700; line-height: 1.2 }
+.credits .chiffre span { font-size: 18px; font-weight: 500; color: var(--doux) }
+.separe { border-top: 1px solid var(--trait-2); padding-top: 12px }
+.jauge.orange > div, .jauge.orange > span { background: var(--signal) }
+.jauge > span { display: block; height: 100%; border-radius: 999px; background: var(--accent) }
+.lignes-conso { list-style: none; margin: 0; padding: 0 }
+.lignes-conso li { display: grid; grid-template-columns: minmax(120px, 1.4fr) minmax(80px, .7fr) minmax(80px, 1fr) minmax(90px, .8fr); gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--trait-2) }
+.lignes-conso li:last-child { border-bottom: 0 }
+@media (max-width: 720px) { .lignes-conso li { grid-template-columns: 1fr auto } }
+.liste-services { list-style: none; margin: 0; padding: 8px 16px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 20px }
+.liste-services li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; font-size: 14px }
+.liste-services .point { margin-top: 7px }
+
+.fil { list-style: none; margin: 0; padding: 0 }
+.fil li { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-bottom: 1px solid var(--trait-2) }
+.fil li:last-child { border-bottom: 0 }
+.fil-picto { flex: none; width: 32px; height: 32px; border-radius: 999px; background: var(--surface-2); color: var(--doux); display: inline-flex; align-items: center; justify-content: center; font-weight: 700 }
+.fil li.alerte .fil-picto { background: var(--signal-fond); color: var(--signal) }
+.fil li.ok .fil-picto { background: var(--ok-fond); color: var(--ok) }
+.fil-texte { margin-top: 2px; color: var(--texte); font-size: 14px; white-space: pre-wrap; word-break: break-word }
+.fil time { flex: none; white-space: nowrap }

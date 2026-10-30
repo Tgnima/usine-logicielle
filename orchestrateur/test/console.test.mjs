@@ -140,6 +140,13 @@ test("accès : ni son propre compte, ni réinviter un compte existant", async ()
   assert.equal((await appel("/api/acces/utilisateurs", { methode: "POST", corps: { email: "marie@exemple.test" } })).status, 409)
 })
 
+test("accès : le rôle se change dans la liste, sauf le sien", async () => {
+  assert.equal((await appel("/api/acces/utilisateurs/1", { methode: "PATCH", corps: { role: "membre" } })).status, 409)
+  const r = await json(await appel("/api/acces/utilisateurs/2", { methode: "PATCH", corps: { role: "admin" } }))
+  assert.equal(r.statut, 200)
+  assert.match(r.corps.message, /administrateur/)
+})
+
 test("aucun fichier hors de la console, aucune capture hors de son dossier", async () => {
   assert.equal((await appel("/..%2f..%2fsrc%2fconsole.mjs")).status, 404)
   assert.equal((await appel("/api/captures/1/T1/..%2f..%2fusine.db")).status, 404)

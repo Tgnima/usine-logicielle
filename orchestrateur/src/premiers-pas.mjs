@@ -38,25 +38,25 @@ export async function premiersPas(ctx) {
       titre: "Brancher l'intelligence artificielle",
       detail: !tests.le ? "L'usine a besoin de deux IA : Claude, qui construit, et ChatGPT, qui contrôle. Colle ton abonnement ou ta clé, puis lance le test."
         : claude && codex ? "Claude et ChatGPT répondent : c'est prêt." : `${claude ? "Claude répond" : "Claude ne répond pas encore"} · ${codex ? "ChatGPT répond" : "ChatGPT ne répond pas encore"}.`,
-      aller: "#/reglages", action: "Brancher l'IA",
+      aller: "#/reglages/integrations", action: "Brancher l'IA",
     },
     {
       id: "github", obligatoire: true, fait: !!github.ok,
       titre: "Brancher GitHub, où le code est rangé",
       detail: github.ok ? `Le code de chaque application sera rangé sur le compte ${github.login}.` : "Chaque application a son propre espace sur GitHub, où l'usine range son code. Un clic pour connecter ton compte.",
-      aller: "#/reglages", action: "Brancher GitHub",
+      aller: "#/reglages/integrations", action: "Brancher GitHub",
     },
     {
       id: "courriel", obligatoire: false, fait: courrielConfigure(),
       titre: "Envoyer les invitations par email",
       detail: courrielConfigure() ? "Les invitations partent par email." : "Sans envoi d'emails, tu copies le lien d'invitation et tu le transmets toi-même. Un technicien peut l'activer sur le serveur.",
-      aller: "#/acces", action: "Voir les accès",
+      aller: "#/reglages/equipe", action: "Voir les accès",
     },
     {
       id: "equipe", obligatoire: false, fait: utilisateurs.filter((u) => u.actif !== 0 && u.actif !== false).length > 1,
       titre: "Inviter ton équipe",
       detail: "Des administrateurs pour piloter l'usine avec toi, des membres pour essayer les applications.",
-      aller: "#/acces", action: "Inviter",
+      aller: "#/reglages/equipe", action: "Inviter",
     },
     {
       id: "persona", obligatoire: false, fait: n("SELECT COUNT(*) AS n FROM personas WHERE statut = 'valide'") > 0,
