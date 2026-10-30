@@ -35,6 +35,15 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 - **Toujours protéger les applications.** Toute nouvelle adresse publiée passe par le portier
   (`blocSite()` dans le déployeur) ; tout nouveau secret va dans `SECRETS` (`secrets.sh`) et
   dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans l'environnement.
+- **Un produit ne joint jamais un autre produit.** Chacun tourne sur son réseau Docker
+  (`preparerReseau()` dans le déployeur), durci (`DURCI`), ses variables passent par un fichier
+  (`--env-file`), et l'image d'un produit ne touche jamais aux sauvegardes (`IMAGE_OUTILS`).
+- **Chaque serveur de travaux a son jeton** (`atelier_token`, `verificateur_token`) ; `worker_token`
+  ne quitte jamais l'orchestrateur (la clé du coffre en dérive). La sortie du code d'un produit
+  passe par `NEUTRALISER` avant le journal : elle ne peut pas imiter un marqueur « @@ ».
+- **Slack échoue fermé** : `ADMIN_USER_IDS` vide ne donne les droits à personne (`estAdminSlack`).
+- Aucune valeur propre à une installation (IP, compte GitHub, dépôt d'état) dans le code ni dans
+  les exemples : chaque installation donne les siennes.
 
 - **Les scénarios cachés d'un persona ne sortent jamais de l'usine** : ni dans un dépôt, ni dans
   une consigne d'agent qui code (atelier, analyste, inventaire). Seule la recette (vérificateur) les lit.

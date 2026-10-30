@@ -110,5 +110,10 @@ export function compterTests(texte) {
 const SOURCE = `const t=require("fs").readFileSync(process.argv[1],"utf8");const r=(${compterTests.toString()})(t);console.log("@@ TESTS_PASSES "+r.passes);console.log("@@ TESTS_ECHECS "+r.echecs)`
 export const COMPTER_TESTS = `node -e '${SOURCE.replace(/'/g, `'\\''`)}'`
 
+// Ce qu'écrit le code d'un produit (build, tests, application) ne peut pas passer pour un marqueur
+// de l'usine (« @@ BUILD_OK », « @@ TESTS_PASSES 99 ») : ses lignes en « @@ » sont neutralisées
+// avant d'arriver au journal, où la porte de fusion lit les marqueurs.
+export const NEUTRALISER = `sed -u -E 's/^([[:space:]]*)@@/\\1(@@)/'`
+
 // Arrête un serveur d'application resté en vie sur un port, puis attend que le port se libère.
 export const libererPort = (port) => `fuser -k -n tcp ${Number(port)} >/dev/null 2>&1; pkill -f 'node server/index.js' 2>/dev/null; pkill -f 'npm start' 2>/dev/null; for i in 1 2 3 4 5 6; do curl -s -o /dev/null http://localhost:${Number(port)}/ || break; fuser -k -n tcp ${Number(port)} >/dev/null 2>&1; sleep 1; done`

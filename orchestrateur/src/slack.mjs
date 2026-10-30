@@ -19,7 +19,7 @@ import { brancherAcces } from "./slack-acces.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
-import { adresses } from "./config.mjs"
+import { adresses, estAdminSlack } from "./config.mjs"
 import { listerPersonas, trouverPersona } from "./personas.mjs"
 import { pyramideEnLignes, verdictPyramide } from "./pyramide.mjs"
 import { pointsACorriger } from "./recette.mjs"
@@ -56,8 +56,9 @@ export function notificateurConsole() {
 export async function demarrerSlack(ctx) {
   const { config, db } = ctx
   const app = new App({ token: config.secrets.slackBot, appToken: config.secrets.slackApp, socketMode: true })
-  const estAdmin = (user) => config.slack.admins.length === 0 || config.slack.admins.includes(user)
+  const estAdmin = (user) => estAdminSlack(config.slack.admins, user)
   const refus = ":lock: Seuls les administrateurs de l'usine peuvent faire cela (ADMIN_USER_IDS)."
+  if (!config.slack.admins.length) console.error("Slack : ADMIN_USER_IDS est vide : personne ne peut valider, décider ni mettre en production depuis Slack (la console reste utilisable).")
 
   // Poste dans le fil du projet (le premier message devient le fil).
   async function poster(projet, contenu) {
@@ -348,6 +349,7 @@ export async function demarrerSlack(ctx) {
     await app.client.views.open({ trigger_id: args.body.trigger_id, view: modale("modal_plan_corriger", args.body.actions[0].value, "Corriger le plan", "Ce qu'il faut changer", "Ajoute un lot pour…, retire…, le critère T3 doit…") })
   })
   app.view("modal_plan_corriger", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     await ack()
     await actions.corrigerPlan(ctx, Number(view.private_metadata), lire(view), body.user.name ?? body.user.id)
   })
@@ -365,6 +367,7 @@ export async function demarrerSlack(ctx) {
     })
   })
   app.view("modal_questions", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     await ack()
     const reponses = Object.keys(view.state.values).sort().map((k) => view.state.values[k].v.value ?? "")
     await actions.repondreQuestions(ctx, Number(view.private_metadata), reponses, body.user.name ?? body.user.id)
@@ -382,6 +385,7 @@ export async function demarrerSlack(ctx) {
     await app.client.views.open({ trigger_id: args.body.trigger_id, view: modale("modal_esc_consigne", args.body.actions[0].value, "Réessayer", "Consigne pour l'agent", "Utilise une table séparée pour…, ne touche pas à…") })
   })
   app.view("modal_esc_consigne", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     await ack()
     await resoudre(ctx, Number(view.private_metadata), { choix: "A", texte: lire(view), par: body.user.name ?? body.user.id })
   })
@@ -424,6 +428,7 @@ export async function demarrerSlack(ctx) {
     })
   }
   app.view("modal_production", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     const v = view.state.values
     const demande = {
       donnees: v.donnees.v.selected_option.value,
@@ -447,6 +452,7 @@ export async function demarrerSlack(ctx) {
     await app.client.views.open({ trigger_id: args.body.trigger_id, view: modale("modal_livraison_corriger", args.body.actions[0].value, "Demander des corrections", "Ce qui ne va pas", "Sur la page campagnes, le bouton… ; il manque…") })
   })
   app.view("modal_livraison_corriger", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     await ack()
     demanderCorrections(ctx, Number(view.private_metadata), lire(view), body.user.name ?? body.user.id).catch((e) => console.error(e))
   })
@@ -467,6 +473,7 @@ export async function demarrerSlack(ctx) {
     await app.client.views.open({ trigger_id: args.body.trigger_id, view: vueReglagesCouts(ctx) })
   })
   app.view("modal_couts", async ({ ack, view, body }) => {
+    if (!estAdmin(body.user.id)) return ack()
     await ack()
     const reglages = lireReglagesCouts(ctx, view)
     ecrireReglage(db, "couts", JSON.stringify(reglages))

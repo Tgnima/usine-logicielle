@@ -11,7 +11,7 @@
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
 import { noterLimites, scriptCodex, signalerFacturation } from "./moteurs.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
-import { COMPTER_TESTS, VERROUS, brancheDeBase, libererPort, lireProfil, proteges } from "./profil.mjs"
+import { COMPTER_TESTS, NEUTRALISER, VERROUS, brancheDeBase, libererPort, lireProfil, proteges } from "./profil.mjs"
 import { extraireJson } from "./analyste.mjs"
 import { ecrireReglage, enregistrer, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
@@ -172,8 +172,8 @@ export async function verifier(ctx, projet, tache, sha) {
     "SECRETS='(xox[abprs]-[0-9A-Za-z-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'",
     `echo "@@ SECRETS_TROUVES $(git diff ${B}...HEAD --unified=0 -- . ${VERROUS} | grep -E '^\\+' | grep -cE "$SECRETS")"`,
     `echo "@@ SECRETS_FICHIERS $(git diff ${B}...HEAD -G"$SECRETS" --name-only -- . ${VERROUS} | tr '\\n' ' ')"`,
-    `bash -c ${q(profil.construire)} > /tmp/sorties/verif/build.log 2>&1 && echo '@@ BUILD_OK' || tail -20 /tmp/sorties/verif/build.log`,
-    `bash -c ${q(profil.tester)} 2>&1 | tee /tmp/sorties/verif/tests.log | tail -8; ${COMPTER_TESTS} /tmp/sorties/verif/tests.log`,
+    `bash -c ${q(profil.construire)} > /tmp/sorties/verif/build.log 2>&1 && echo '@@ BUILD_OK' || tail -20 /tmp/sorties/verif/build.log | ${NEUTRALISER}`,
+    `bash -c ${q(profil.tester)} 2>&1 | tee /tmp/sorties/verif/tests.log | tail -8 | ${NEUTRALISER}; ${COMPTER_TESTS} /tmp/sorties/verif/tests.log`,
     env,
     "rm -rf $DATA_DIR",
     // Un serveur resté d'une vérification précédente (Codex peut relancer l'application hors du
@@ -197,7 +197,7 @@ export async function verifier(ctx, projet, tache, sha) {
     scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt -`, entree: "/tmp/sorties/verif/consigne.md", journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE" }),
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
-    "else tail -30 /tmp/sorties/verif/app.log; fi",
+    `else tail -30 /tmp/sorties/verif/app.log | ${NEUTRALISER}; fi`,
     "echo \"@@ CAPTURES $(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | wc -l)\"",
     "echo \"@@ CAPTURES_FICHIERS $(cd /tmp/sorties/verif/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
     "echo \"@@ E2E_NOUVEAUX $(cd /tmp/sorties/verif/e2e && ls *.cjs 2>/dev/null | tr '\\n' ' ')\"",

@@ -16,9 +16,10 @@
 //   - l'entretien : vieilles images, cache de construction, sauvegardes de plus de 30 jours ;
 //   - la mise à jour de l'usine elle-même (usine/mise-a-jour.json), par un conteneur d'aide.
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides } from "./chemins.mjs"
+import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 
 const env = process.env
 // Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
@@ -36,7 +37,19 @@ const PORTIER = "portier:8080"
 const ETAT = env.ETAT_DIR ?? "/etat"
 const CADDY = env.CADDY_DIR ?? "/caddy"
 const SRV = env.SRV_DIR ?? "/srv"
+// L'ancien réseau commun à tous les produits : ils le quittent pour un réseau chacun (reseauProduit).
 const RESEAU = env.RESEAU ?? "usine"
+const PLAGE_RESEAUX = env.RESEAUX_PRODUITS ?? "10.231.0.0/16"
+// Ce conteneur (pour joindre les réseaux des produits et contrôler leur santé).
+const MOI = (() => {
+  try {
+    return readFileSync("/etc/hostname", "utf8").trim()
+  } catch {
+    return env.HOSTNAME ?? ""
+  }
+})()
+// L'image du déployeur : elle seule manipule les sauvegardes (jamais l'image d'un produit).
+const IMAGE_OUTILS = "usine-logicielle-deployeur"
 const MEMOIRE = env.MEMOIRE_PRODUIT ?? "384m"
 const HTTPS = env.HTTPS !== "0"
 // Des résolveurs de secours pour les produits aussi (coupures DNS de l'hébergeur).
@@ -162,7 +175,7 @@ async function synchroniserEtat() {
 // Ce qui vient du dépôt d'état est contrôlé avant d'atteindre Docker.
 function valide(s) {
   return /^[a-z0-9-]{3,24}$/.test(s.produit ?? "") && /^[0-9a-f]{40}$/.test(s.sha ?? "") && /^[\w.-]+\/[\w.-]+$/.test(s.depot ?? "")
-    && ["apercu", "production"].includes(s.environnement) && [undefined, "protege", "public"].includes(s.acces) && [undefined, "demo", "vide"].includes(s.donnees) && [undefined, "captures", "reels"].includes(s.emails) && /^[a-z0-9.-]+$/.test(s.hote ?? "") && (!s.hote_mails || /^[a-z0-9.-]+$/.test(s.hote_mails))
+    && ["apercu", "production"].includes(s.environnement) && [undefined, "protege", "public"].includes(s.acces) && [undefined, "demo", "vide"].includes(s.donnees) && [undefined, "captures", "reels"].includes(s.emails) && hotesValides(s, /^[a-z0-9.-]+$/.test(BASE) ? BASE : "")
 }
 
 const VARIABLES = ["DEMO", "DEMO_VITESSE_HORLOGE", "PUBLIC_URL", "LLM_MODELE", "EMAIL_DESTINATAIRES_AUTORISES"]
@@ -178,7 +191,58 @@ function variables(s) {
     if (secret("smtp_pass")) v.SMTP_PASS = secret("smtp_pass")
   }
   if (secret("ai_gateway_api_key")) v.AI_GATEWAY_API_KEY = secret("ai_gateway_api_key")
-  return Object.entries(v).flatMap(([k, val]) => ["-e", `${k}=${val}`])
+  return v
+}
+// Un fichier d'environnement privé, effacé dès que le conteneur est créé : les secrets (SMTP, clé
+// de la passerelle) n'apparaissent jamais dans les arguments d'un processus (ps).
+async function avecFichierEnv(v, f) {
+  const dossier = mkdtempSync(join(tmpdir(), "usine-env-"))
+  const fichier = join(dossier, "env")
+  try {
+    writeFileSync(fichier, Object.entries(v).map(([k, val]) => `${k}=${String(val).replace(/[\r\n]/g, "")}`).join("\n") + "\n", { mode: 0o600 })
+    return await f(fichier)
+  } finally {
+    rmSync(dossier, { recursive: true, force: true })
+  }
+}
+
+// --- Un réseau par produit -----------------------------------------------------------
+// Un produit ne joint jamais un autre produit (ni ne lui envoie un faux X-Usine-Utilisateur en
+// contournant le portier) : chacun a son réseau, où ne sont branchés que Caddy, le déployeur et,
+// s'il capture ses emails, Mailpit.
+const reseauProduit = (produit) => `usine-p-${produit}`
+async function mailpit() {
+  const r = await lancer("docker", ["ps", "-q", "--filter", "label=com.docker.compose.project=usine-logicielle", "--filter", "label=com.docker.compose.service=mailpit"])
+  return r.sortie.trim().split("\n")[0] || null
+}
+async function brancher(reseau, conteneur, alias = null) {
+  if (!conteneur) return
+  const r = await lancer("docker", ["network", "connect", ...(alias ? ["--alias", alias] : []), reseau, conteneur])
+  if (r.code !== 0 && !/already exists|already attached/i.test(r.sortie)) log(`Réseau ${reseau} : ${conteneur} non branché : ${r.sortie.trim().slice(-200)}`)
+}
+async function preparerReseau(produit, { avecMailpit = false } = {}) {
+  const reseau = reseauProduit(produit)
+  if ((await lancer("docker", ["network", "inspect", reseau])).code !== 0) {
+    let cree = false
+    for (let essai = 0; essai < 8 && !cree; essai++) {
+      cree = (await lancer("docker", ["network", "create", "--label", `usine.produit=${produit}`, "--subnet", sousReseau(produit, essai, PLAGE_RESEAUX), reseau])).code === 0
+    }
+    // Plus de place dans la plage : le réseau commun, comme avant (signalé).
+    if (!cree) {
+      log(`Réseau ${reseau} impossible à créer : ${produit} reste sur le réseau commun ${RESEAU}.`)
+      return RESEAU
+    }
+  }
+  await brancher(reseau, "usine-caddy")
+  await brancher(reseau, MOI)
+  if (avecMailpit) await brancher(reseau, await mailpit(), "mailpit")
+  return reseau
+}
+async function supprimerReseau(produit) {
+  const reseau = reseauProduit(produit)
+  if ((await lancer("docker", ["network", "inspect", reseau])).code !== 0) return
+  for (const c of ["usine-caddy", MOI, await mailpit()]) if (c) await lancer("docker", ["network", "disconnect", "-f", reseau, c])
+  await lancer("docker", ["network", "rm", reseau])
 }
 
 async function sante(conteneur, secondes = 90) {
@@ -212,9 +276,13 @@ async function construire(s) {
   return { image, publics: chemins }
 }
 
+// Un produit tourne sans les privilèges dont il n'a pas besoin : pas de paquets réseau bruts
+// (usurpation sur le réseau), pas de fichiers spéciaux, pas d'élévation (setuid), processus limités.
+const DURCI = ["--cap-drop", "NET_RAW", "--cap-drop", "MKNOD", "--cap-drop", "AUDIT_WRITE", "--cap-drop", "SETFCAP", "--cap-drop", "SYS_CHROOT", "--security-opt", "no-new-privileges", "--pids-limit", "512"]
 async function demarrer(nom, image, volume, s) {
+  const reseau = await preparerReseau(s.produit, { avecMailpit: (s.services ?? []).includes("mailpit") })
   await lancer("docker", ["rm", "-f", nom])
-  await ok("docker", ["run", "-d", "--name", nom, "--network", RESEAU, "--restart", "unless-stopped", ...DNS, "--memory", MEMOIRE, "--label", "usine.produit=" + s.produit, "-v", `${volume}:/app/data`, ...variables(s), image])
+  await avecFichierEnv(variables(s), (fichier) => ok("docker", ["run", "-d", "--name", nom, "--network", reseau, "--restart", "unless-stopped", ...DNS, ...DURCI, "--memory", MEMOIRE, "--label", "usine.produit=" + s.produit, "-v", `${volume}:/app/data`, "--env-file", fichier, image]))
 }
 
 async function deployerApercu(s) {
@@ -235,7 +303,8 @@ async function deployerProduction(s, precedent) {
   // Sauvegarde du volume avant toute bascule (s'il existe déjà).
   if ((await lancer("docker", ["volume", "inspect", volume])).code === 0) {
     const archive = `${s.produit}-${horodatage().replace(/[:.]/g, "-")}.tgz`
-    await ok("docker", ["run", "--rm", "--user", "root", "-v", `${volume}:/d:ro`, "-v", "usine-sauvegardes:/s", "--entrypoint", "tar", image, "czf", `/s/${archive}`, "-C", "/d", "."])
+    // Avec l'image du déployeur : celle du produit (son code) verrait, en root, les sauvegardes de tous.
+    await ok("docker", ["run", "--rm", "--user", "root", "--network", "none", "-v", `${volume}:/d:ro`, "-v", "usine-sauvegardes:/s", "--entrypoint", "tar", IMAGE_OUTILS, "czf", `/s/${archive}`, "-C", "/d", "."])
     log(`Sauvegarde ${archive}`)
   }
   const couleur = precedent?.couleur === "blue" ? "green" : "blue"
@@ -372,7 +441,7 @@ async function retirer(cle, s) {
     // Les données d'un aperçu sont fictives ; elles sont quand même sauvegardées avant.
     const volume = `usine-apercu-${produit}-data`
     if ((await lancer("docker", ["volume", "inspect", volume])).code === 0) {
-      await lancer("docker", ["run", "--rm", "--user", "root", "--entrypoint", "tar", "-v", `${volume}:/d:ro`, "-v", "usine-sauvegardes:/s", "usine-logicielle-deployeur", "czf", `/s/${produit}-apercu-${horodatage().replace(/[:.]/g, "-")}.tgz`, "-C", "/d", "."])
+      await lancer("docker", ["run", "--rm", "--user", "root", "--entrypoint", "tar", "-v", `${volume}:/d:ro`, "-v", "usine-sauvegardes:/s", IMAGE_OUTILS, "czf", `/s/${produit}-apercu-${horodatage().replace(/[:.]/g, "-")}.tgz`, "-C", "/d", "."])
     }
     await lancer("docker", ["rm", "-f", `usine-apercu-${produit}`])
     await lancer("docker", ["volume", "rm", volume])
@@ -386,6 +455,7 @@ async function retirer(cle, s) {
     const images = (await lancer("docker", ["image", "ls", "-q", `usine-produit-${produit}`])).sortie.split("\n").filter(Boolean)
     if (images.length) await lancer("docker", ["image", "rm", "-f", ...new Set(images)])
     await lancer("rm", ["-rf", join(SRV, "produits", produit)])
+    await supprimerReseau(produit)
   }
   log(`${cle} retiré.`)
 }
@@ -467,7 +537,7 @@ async function entretenir() {
   }
   await lancer("docker", ["image", "prune", "-f"])
   await lancer("docker", ["builder", "prune", "-f", "--keep-storage", "3GB"], { minutes: 10 })
-  await lancer("docker", ["run", "--rm", "--user", "root", "--entrypoint", "find", "-v", "usine-sauvegardes:/s", "usine-logicielle-deployeur", "/s", "-name", "*.tgz", "-mtime", "+30", "-delete"])
+  await lancer("docker", ["run", "--rm", "--user", "root", "--entrypoint", "find", "-v", "usine-sauvegardes:/s", IMAGE_OUTILS, "/s", "-name", "*.tgz", "-mtime", "+30", "-delete"])
   const apres = Number((await lancer("df", ["-B1", "--output=used", "/"])).sortie.trim().split("\n").pop())
   dernierEntretien = { le: horodatage(), images_supprimees: images, libere_mo: Math.max(0, Math.round((avant - apres) / 1e6)) }
   log(`Entretien : ${images} image(s) supprimée(s), ${dernierEntretien.libere_mo} Mo libérés.`)
@@ -554,15 +624,22 @@ async function publierJournaux() {
   }
 }
 
-// Les produits déjà déployés quittent le réseau de l'usine pour celui des produits.
+// Les produits déjà déployés passent sur leur propre réseau, puis quittent les réseaux communs
+// (celui de l'usine, celui des produits). Caddy est branché d'abord : pas de coupure.
 async function isolerProduits() {
-  for (const s of Object.values(lireStatut())) {
+  for (const [cle, s] of Object.entries(lireStatut())) {
     if (!s.conteneur) continue
+    const produit = cle.split("/")[1]
+    if (!/^[a-z0-9-]{3,24}$/.test(produit ?? "")) continue
+    const reseau = await preparerReseau(produit, { avecMailpit: Boolean(s.hote_mails) })
+    if (reseau === RESEAU) continue
     const reseaux = (await lancer("docker", ["inspect", "-f", "{{json .NetworkSettings.Networks}}", s.conteneur])).sortie
-    if (!reseaux.includes(`"${RESEAU}"`)) await lancer("docker", ["network", "connect", RESEAU, s.conteneur])
-    if (RESEAU !== "usine" && reseaux.includes('"usine"')) {
-      await lancer("docker", ["network", "disconnect", "usine", s.conteneur])
-      log(`${s.conteneur} isolé sur le réseau ${RESEAU}.`)
+    if (!reseaux.includes(`"${reseau}"`)) await brancher(reseau, s.conteneur)
+    for (const commun of new Set(["usine", RESEAU])) {
+      if (reseaux.includes(`"${commun}"`)) {
+        await lancer("docker", ["network", "disconnect", commun, s.conteneur])
+        log(`${s.conteneur} isolé sur le réseau ${reseau} (quitte ${commun}).`)
+      }
     }
   }
 }

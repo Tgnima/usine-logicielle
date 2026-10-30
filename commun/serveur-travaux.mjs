@@ -16,16 +16,25 @@
 // Une ligne « @@ CLE valeur » dans le journal est un marqueur, relevé à part.
 import { createServer } from "node:http"
 import { spawn } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { randomUUID, timingSafeEqual } from "node:crypto"
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs"
 import { resolve } from "node:path"
 
 const PORT = Number(process.env.PORT || 8080)
-const JETON = process.env.WORKER_TOKEN
+// Le jeton propre à ce serveur (ATELIER_TOKEN ou VERIFICATEUR_TOKEN, selon ROLE) ; WORKER_TOKEN,
+// commun aux deux, n'est plus qu'un secours pour une installation pas encore migrée.
+const JETONS = ["ATELIER_TOKEN", "VERIFICATEUR_TOKEN", "WORKER_TOKEN"]
+const JETON = process.env[`${String(process.env.ROLE ?? "atelier").toUpperCase()}_TOKEN`] || process.env.WORKER_TOKEN
 const RACINES = ["/travail", "/tmp/sorties"]
 const JOURNAL_MAX = 400_000 // caractères gardés en mémoire par travail
+const CORPS_MAX = 20_000_000 // un script (pièces jointes comprises) ne dépasse pas 20 Mo
 
-if (!JETON) throw new Error("WORKER_TOKEN manquant.")
+if (!JETON || JETON.length < 32) throw new Error("Jeton du serveur de travaux manquant ou trop court (bash secrets.sh verifier).")
+const ATTENDU = Buffer.from(`Bearer ${JETON}`)
+const autorise = (entete) => {
+  const recu = Buffer.from(String(entete ?? ""))
+  return recu.length === ATTENDU.length && timingSafeEqual(recu, ATTENDU)
+}
 for (const r of RACINES) mkdirSync(r, { recursive: true })
 
 const travaux = new Map()
@@ -35,7 +44,7 @@ function lancer({ script, env = {}, minutes = 30 }) {
   const id = randomUUID()
   const travail = { id, etat: "en_cours", code: null, journal: "", debut: Date.now() }
   // setsid : le script et tout ce qu'il lance forment un groupe, arrêté d'un coup.
-  const enfant = spawn("setsid", ["bash", "-l", "-s"], { cwd: "/travail", env: { ...process.env, WORKER_TOKEN: "", ...env }, stdio: ["pipe", "pipe", "pipe"] })
+  const enfant = spawn("setsid", ["bash", "-l", "-s"], { cwd: "/travail", env: { ...process.env, ...Object.fromEntries(JETONS.map((k) => [k, ""])), ...env }, stdio: ["pipe", "pipe", "pipe"] })
   const ajouter = (d) => {
     travail.journal += d
     if (travail.journal.length > JOURNAL_MAX) travail.journal = travail.journal.slice(-JOURNAL_MAX)
@@ -82,12 +91,15 @@ const envoyer = (res, statut, corps) => {
 createServer(async (req, res) => {
   const url = new URL(req.url, "http://x")
   if (url.pathname === "/sante") return envoyer(res, 200, { ok: true, occupe: courant?.etat === "en_cours" })
-  if (req.headers.authorization !== `Bearer ${JETON}`) return envoyer(res, 401, { erreur: "non autorisé" })
+  if (!autorise(req.headers.authorization)) return envoyer(res, 401, { erreur: "non autorisé" })
 
   if (req.method === "POST" && url.pathname === "/travaux") {
     if (courant?.etat === "en_cours") return envoyer(res, 409, { erreur: "occupé", id: courant.id })
     let brut = ""
-    for await (const morceau of req) brut += morceau
+    for await (const morceau of req) {
+      brut += morceau
+      if (brut.length > CORPS_MAX) return envoyer(res, 413, { erreur: "trop volumineux" })
+    }
     let corps
     try {
       corps = JSON.parse(brut)

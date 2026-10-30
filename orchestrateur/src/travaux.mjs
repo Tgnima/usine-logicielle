@@ -1,10 +1,17 @@
 // Parler au serveur de travaux d'un atelier ou du vérificateur.
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// Le jeton propre à chaque serveur (config.atelier.jeton, config.verificateur.jeton), branché au
+// démarrage par index.mjs ; il passe avant le jeton commun que donnent les appelants.
+const jetons = new Map()
+export const brancherJetons = (config) => {
+  for (const s of [config.atelier, config.verificateur]) if (s?.url && s.jeton) jetons.set(s.url, s.jeton)
+}
+
 async function appel(serveur, jeton, chemin, init = {}) {
   const res = await fetch(`${serveur}${chemin}`, {
     ...init,
-    headers: { authorization: `Bearer ${jeton}`, "content-type": "application/json", ...init.headers },
+    headers: { authorization: `Bearer ${jetons.get(serveur) ?? jeton}`, "content-type": "application/json", ...init.headers },
     signal: AbortSignal.timeout(20_000),
   })
   return { statut: res.status, corps: res.headers.get("content-type")?.includes("json") ? await res.json() : await res.text() }
