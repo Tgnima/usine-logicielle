@@ -429,3 +429,11 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
   .cote-corps { display: none }
   .cote.ouvert .cote-corps { display: flex }
 }
+
+/* --- Connecteurs : des outils pour les IA --- */
+.resume-connecteurs { display: flex; flex-direction: column; gap: 12px }
+.conseil-connecteur { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; border-top: 1px solid var(--trait-2); padding-top: 12px; font-size: 14px }
+.roles-connecteur { display: flex; flex-wrap: wrap; gap: 4px }
+.roles-connecteur .etiquette { font-size: 12px; padding: 2px 8px }
+.case { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer }
+.case input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent) }

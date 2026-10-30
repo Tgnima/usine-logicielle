@@ -110,11 +110,13 @@ const etat = {
   personaSection: null, // la section de la fiche d'un public en cours de modification
   personaChoisi: null, // le public choisi dans la saisie de l'accueil
   santeLe: 0, // l'heure du dernier bilan de santé chargé (la pastille du haut)
+  filtreConnecteurs: "", // la famille de connecteurs affichée
 }
 
 // Les réglages ont un sous-menu (Base44, Unify) : l'équipe, l'utilisation et l'historique y vivent.
 const SECTIONS_REGLAGES = [
   ["integrations", "Intégrations", "IA, GitHub, Slack"],
+  ["connecteurs", "Connecteurs", "Des outils pour les IA"],
   ["equipe", "Équipe", "Qui a accès"],
   ["utilisation", "Utilisation", "Dépenses et budget"],
   ["etat", "État de l'usine", "Services et mises à jour"],
@@ -1381,7 +1383,7 @@ function vueRegles() {
 // Les réglages : un sous-menu à gauche, la section à droite.
 function vueReglages() {
   const s = etat.route.section ?? "integrations"
-  const contenu = { integrations: vueIntegrations, equipe: vueEquipe, utilisation: vueUtilisation, etat: vueEtatUsine, historique: vueHistorique, regles: vueRegles }[s]
+  const contenu = { integrations: vueIntegrations, connecteurs: vueConnecteurs, equipe: vueEquipe, utilisation: vueUtilisation, etat: vueEtatUsine, historique: vueHistorique, regles: vueRegles }[s]
   return html`
     ${barreHaut()}
     <div class="reglages">
@@ -1393,6 +1395,101 @@ function vueReglages() {
     </div>`
 }
 
+// Les connecteurs : des outils que les IA de l'usine utilisent pendant leur travail (Emergent, Claude).
+// L'API attendue : GET connecteurs, PUT connecteurs/:id { actif, roles }, PUT et DELETE connecteurs/:id/cle,
+// POST connecteurs/:id/tester, POST connecteurs { nom, adresse, cle }, DELETE connecteurs/:id (un connecteur ajouté).
+const ROLES_CONNECTEURS = [
+  ["plan", "Plan", "l'IA qui comprend la demande et prépare le plan"],
+  ["construction", "Construction", "l'IA qui écrit le code"],
+  ["verification", "Vérification", "l'IA qui essaie chaque fonction"],
+]
+const FAMILLES_CONNECTEURS = [["", "Tous"], ["actifs", "Actifs"], ["comprendre", "Comprendre"], ["construire", "Construire"], ["verifier", "Vérifier"]]
+const nomRoleConnecteur = (r) => (ROLES_CONNECTEURS.find(([id]) => id === r) ?? [r, r])[1]
+
+function badgeConnecteur(c) {
+  if (c.etat === "erreur") return html`<span class="badge rouge">ne répond pas</span>`
+  if (c.actif) return html`<span class="badge vert">actif</span>`
+  if (c.cle && !c.cle_remplie) return html`<span class="badge orange">clé à coller</span>`
+  return html`<span class="badge">inactif</span>`
+}
+
+function vueConnecteurs() {
+  const k = etat.connecteurs
+  if (!k) return html`<div class="chargement">Chargement…</div>`
+  const entete = html`<div class="entete"><div><h1>Connecteurs</h1><p class="chapeau">Des outils que les IA de l'usine utilisent pendant leur travail : lire une documentation à jour, ouvrir l'application dans un navigateur, consulter tes maquettes. Plus elles ont de contexte, moins elles se trompent.</p></div>
+    ${k.indisponible ? "" : html`<button type="button" class="btn btn-s" data-action="fenetre" data-quoi="connecteur-ajouter">+ Ajouter un connecteur</button>`}</div>`
+  if (k.indisponible) return html`${entete}<div class="carte vide">Cette version de l'usine ne gère pas encore les connecteurs. Ils arriveront avec une prochaine mise à jour.</div>`
+  const f = etat.filtreConnecteurs
+  const liste = k.connecteurs.filter((c) => !f || (f === "actifs" ? c.actif : c.famille === f))
+  const actifs = k.connecteurs.filter((c) => c.actif)
+  const usages = actifs.reduce((n, c) => n + (c.usage?.semaine ?? 0), 0)
+  const conseil = k.connecteurs.find((c) => c.conseille && !c.actif)
+  return html`
+    ${entete}
+    <div class="carte carte-p resume-connecteurs">
+      <div><strong>${actifs.length ? `${actifs.length} connecteur${actifs.length > 1 ? "s" : ""} actif${actifs.length > 1 ? "s" : ""}` : "Aucun connecteur actif"}</strong>
+        <span class="aide">${usages ? ` · utilisés ${usages} fois cette semaine` : actifs.length ? " · pas encore utilisés cette semaine" : " · les IA travaillent avec ce qu'elles savent déjà"}</span></div>
+      ${conseil ? html`<div class="conseil-connecteur"><span><span class="badge bleu">conseillé</span> <strong>${conseil.nom}</strong> <span class="aide">· ${conseil.apport}</span></span>
+        <button type="button" class="btn btn-p btn-petit" data-action="fenetre" data-quoi="connecteur-${conseil.id}">Activer</button></div>` : ""}
+    </div>
+    <div class="rangee" role="group" aria-label="Filtrer les connecteurs" style="gap:6px">${FAMILLES_CONNECTEURS.map(([id, nom]) => html`<button type="button" class="filtre" data-action="filtre-connecteurs" data-id="${id}" aria-pressed="${String(f === id)}">${nom}</button>`)}</div>
+    ${liste.length ? html`<div class="cartes-integrations">${liste.map((c) => html`<div class="carte carte-integration">
+      <div class="barre"><span class="logo-integration" style="background:${c.couleur ?? "#5b6b7a"}" aria-hidden="true">${c.logo ?? c.nom.slice(0, 1)}</span>${badgeConnecteur(c)}</div>
+      <strong>${c.nom}</strong><span class="aide" style="flex:1">${c.apport}</span>
+      ${c.actif ? html`<div class="roles-connecteur" aria-label="Utilisé par">${c.roles.map((r) => html`<span class="etiquette">${nomRoleConnecteur(r)}</span>`)}</div>` : ""}
+      <div><button type="button" class="btn ${c.actif ? "btn-s" : "btn-p"} btn-petit" data-action="fenetre" data-quoi="connecteur-${c.id}" aria-label="${c.actif ? "Gérer" : "Activer"} ${c.nom}">${c.actif ? "Gérer" : "Activer"}</button></div>
+    </div>`)}</div>` : html`<div class="carte vide">Aucun connecteur dans cette famille.</div>`}`
+}
+
+// La clé d'un connecteur : d'où elle vient, jamais la valeur elle-même.
+function formulaireCleConnecteur(c) {
+  return html`<form class="pile" style="gap:6px" data-form="cle-connecteur" data-id="${c.id}">
+    <div class="barre" style="flex-wrap:wrap;gap:6px"><label for="cle-${c.id}"><strong style="font-size:14px">${c.cle.libelle}</strong></label>
+      ${c.cle_remplie ? html`<span class="badge vert">enregistrée${c.cle_fin ? ` · …${c.cle_fin}` : ""}</span>` : html`<span class="badge orange">à coller</span>`}</div>
+    <div class="rangee" style="flex-wrap:nowrap"><input id="cle-${c.id}" name="valeur" type="password" class="champ mono" autocomplete="off" spellcheck="false" placeholder="${c.cle_remplie ? "Coller une nouvelle clé pour la remplacer" : "Coller ici"}" required>
+      <button type="submit" class="btn btn-s">Enregistrer</button>
+      ${c.cle_remplie ? html`<button type="button" class="btn btn-s" data-action="retirer-cle-connecteur" data-id="${c.id}">Retirer</button>` : ""}</div>
+    ${c.cle.aide ? html`<div class="aide">${c.cle.aide}</div>` : ""}
+  </form>`
+}
+
+function fenetreConnecteur(id) {
+  const c = etat.connecteurs?.connecteurs?.find((x) => String(x.id) === id)
+  if (!c) return fenetre("Connecteur", html`<div class="chargement">Chargement…</div>`)
+  const bloque = Boolean(c.cle && !c.cle_remplie)
+  return fenetre(c.nom, html`<div class="pile" style="gap:18px">
+    <div class="rangee" style="flex-wrap:nowrap;gap:12px;align-items:flex-start"><span class="logo-integration" style="background:${c.couleur ?? "#5b6b7a"}" aria-hidden="true">${c.logo ?? c.nom.slice(0, 1)}</span>
+      <div class="pile" style="gap:4px"><p style="margin:0">${c.texte ?? c.apport}</p>${c.perso ? html`<span class="aide mono">${c.adresse}</span>` : ""}</div></div>
+    ${c.peut?.length || c.limites?.length ? html`<div class="grille">
+      ${c.peut?.length ? html`<div><strong>Ce que les IA peuvent faire</strong><ul class="puces" style="margin-top:6px">${c.peut.map((x) => html`<li>${x}</li>`)}</ul></div>` : ""}
+      ${c.limites?.length ? html`<div><strong>Ce qu'elles ne peuvent pas faire</strong><ul class="puces" style="margin-top:6px">${c.limites.map((x) => html`<li>${x}</li>`)}</ul></div>` : ""}
+    </div>` : ""}
+    ${c.cle ? formulaireCleConnecteur(c) : ""}
+    <form class="pile" data-form="connecteur" data-id="${c.id}" style="gap:12px">
+      <fieldset class="pile" style="gap:8px;border:0;padding:0;margin:0"><legend style="padding:0;margin-bottom:8px"><strong>Quelles IA peuvent s'en servir</strong></legend>
+        ${ROLES_CONNECTEURS.map(([r, nom, aide]) => html`<label class="case"><input type="checkbox" name="roles" value="${r}" ${(c.actif ? c.roles : c.roles_conseilles ?? c.roles).includes(r) ? "checked" : ""}><span><strong>${nom}</strong> <span class="aide">· ${aide}</span></span></label>`)}
+      </fieldset>
+      ${bloque ? html`<div class="aide">Colle d'abord la clé ci-dessus pour pouvoir l'activer.</div>` : ""}
+      <div class="barre" style="flex-wrap:wrap;gap:10px">
+        <span class="aide">${c.usage?.dernier_le ? `Dernier usage : ${dateCourte(c.usage.dernier_le)}` : c.actif ? "Pas encore utilisé" : ""}</span>
+        <div class="rangee" style="gap:8px">
+          ${c.actif ? html`<button type="button" class="btn btn-s" data-action="tester-connecteur" data-id="${c.id}">Tester</button><button type="submit" name="actif" value="non" class="btn btn-s">Désactiver</button>` : ""}
+          <button type="submit" name="actif" value="oui" class="btn btn-p" ${bloque ? "disabled" : ""}>${c.actif ? "Enregistrer" : "Activer"}</button>
+        </div>
+      </div>
+    </form>
+    ${c.perso ? html`<div class="separe barre"><span class="aide">Ajouté par ${c.par ?? "un administrateur"}</span><button type="button" class="btn btn-s btn-petit" data-action="retirer-connecteur" data-id="${c.id}">Retirer ce connecteur</button></div>` : ""}
+  </div>`)
+}
+
+const fenetreAjoutConnecteur = () => fenetre("Ajouter un connecteur", html`<form class="pile" data-form="connecteur-ajouter" style="gap:14px">
+  <p class="aide" style="margin:0">Pour un outil qui n'est pas dans la liste. La personne qui s'en occupe te donne son adresse : c'est un serveur MCP, le format que comprennent les IA.</p>
+  <div class="pile" style="gap:6px"><label for="cx-nom"><strong>Nom</strong></label><input id="cx-nom" name="nom" class="champ" required maxlength="60" placeholder="Base clients interne"></div>
+  <div class="pile" style="gap:6px"><label for="cx-adresse"><strong>Adresse</strong></label><input id="cx-adresse" name="adresse" type="url" class="champ mono" required placeholder="https://outil.mon-entreprise.fr/mcp" spellcheck="false"></div>
+  <div class="pile" style="gap:6px"><label for="cx-cle"><strong>Clé</strong> <span class="aide">facultative</span></label><input id="cx-cle" name="cle" type="password" class="champ mono" autocomplete="off" spellcheck="false"></div>
+  <div class="rangee" style="justify-content:flex-end;gap:8px"><button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button><button type="submit" class="btn btn-p">Ajouter</button></div>
+</form>`)
+
 // La fenêtre ouverte, quelle que soit la page.
 function dessinerFenetre() {
   const q = etat.fenetre
@@ -1401,6 +1498,8 @@ function dessinerFenetre() {
   if (q === "inviter") return fenetre("Inviter dans l'usine", etat.acces ? formulaireInviter() : html`<div class="chargement">Chargement…</div>`)
   if (q === "budget") return fenetreBudget()
   if (q.startsWith("integration-")) return fenetreIntegration(q.slice(12))
+  if (q === "connecteur-ajouter") return fenetreAjoutConnecteur()
+  if (q.startsWith("connecteur-")) return fenetreConnecteur(q.slice(11))
   return ""
 }
 
@@ -1535,6 +1634,7 @@ async function charger({ silencieux = false } = {}) {
     if (sec === "equipe" || r.vue === "demarrer") charge("acces", "acces")
     if (["integrations", "utilisation", "regles"].includes(sec) || r.vue === "demarrer") charge("reglages", "reglages")
     if (sec === "integrations" || r.vue === "demarrer") charge("fournisseurs", "fournisseurs")
+    if (sec === "connecteurs") taches.push(api("GET", "connecteurs").catch(() => ({ indisponible: true, connecteurs: [] })).then((x) => { if (frais()) { etat.connecteurs = x; rendre() } }))
     if (!etat.premiersPas || ["accueil", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
       if (!frais()) return
       etat.premiersPas = x
@@ -1958,6 +2058,16 @@ const ACTIONS = {
   "fermer-fenetre": () => { etat.fenetre = null; etat.invites = []; rendre() },
   "retirer-invite": (el) => { etat.invites.splice(Number(el.dataset.id), 1); rendre(); $("#inv-email")?.focus() },
   "fermer-invitations": () => { etat.invitation = null; rendre() },
+  "filtre-connecteurs": (el) => { etat.filtreConnecteurs = el.dataset.id; rendre() },
+  "tester-connecteur": (el) => agir(() => api("POST", `connecteurs/${el.dataset.id}/tester`, {})),
+  "retirer-cle-connecteur": (el) => {
+    if (!confirmer("Retirer la clé de ce connecteur ? Il sera désactivé tant qu'une autre clé n'est pas collée.")) return
+    return agir(() => api("DELETE", `connecteurs/${el.dataset.id}/cle`, {}))
+  },
+  "retirer-connecteur": async (el) => {
+    if (!confirmer("Retirer ce connecteur ? Les IA ne pourront plus s'en servir.")) return
+    if (await agir(() => api("DELETE", `connecteurs/${el.dataset.id}`, {}))) { etat.fenetre = null; rendre() }
+  },
   "filtre-histo": (el) => { etat.histoFiltre.type = el.dataset.id; etat.historique = null; rendre(); charger() },
   "persona-section": (el) => { etat.personaSection = el.dataset.id || null; etat.personaScenarios = null; rendre(); $(`#sec-${el.dataset.id} ~ form`)?.querySelector("input, textarea")?.focus() },
   "construire-pour": (el) => { etat.personaChoisi = el.dataset.id; etat.depart = "zero"; location.hash = "#/nouveau" },
@@ -2149,6 +2259,28 @@ document.addEventListener("submit", async (e) => {
       envoi.submit()
     }
   }
+  if (type === "connecteur") {
+    const roles = d.getAll("roles")
+    const actif = e.submitter?.value !== "non"
+    if (actif && !roles.length) {
+      etat.message = { type: "erreur", texte: "Coche au moins une IA qui peut s'en servir." }
+      afficherMessages()
+      return
+    }
+    const r = await agir(() => api("PUT", `connecteurs/${f.dataset.id}`, { actif, roles }), { succes: actif ? "C'est enregistré : les IA s'en servent dès leur prochaine tâche." : "Connecteur désactivé." })
+    if (r) { etat.fenetre = null; rendre() }
+  }
+  if (type === "cle-connecteur") {
+    const valeur = String(d.get("valeur") ?? "").trim()
+    f.reset()
+    if (valeur) await agir(() => api("PUT", `connecteurs/${f.dataset.id}/cle`, { valeur }), { succes: "Clé enregistrée. Tu peux maintenant activer le connecteur." })
+  }
+  if (type === "connecteur-ajouter") {
+    const cle = String(d.get("cle") ?? "").trim()
+    $("#cx-cle").value = ""
+    const r = await agir(() => api("POST", "connecteurs", { nom: String(d.get("nom") ?? "").trim(), adresse: String(d.get("adresse") ?? "").trim(), cle: cle || null }))
+    if (r?.id) { etat.fenetre = `connecteur-${r.id}`; rendre() }
+  }
   if (type === "identifiant") {
     const valeur = String(d.get("valeur") ?? "").trim()
     // La valeur ne reste pas dans la page : le champ est vidé avant l'envoi.
@@ -2198,6 +2330,7 @@ function entreesPalette(filtre) {
     { texte: "Projets", aide: "page", aller: "#/" },
     { texte: "Publics : pour qui on construit", aide: "page", aller: "#/personas" },
     { texte: "Intégrations : IA, GitHub, Slack", aide: "réglages", aller: "#/reglages/integrations" },
+    { texte: "Connecteurs : des outils pour les IA", aide: "réglages", aller: "#/reglages/connecteurs" },
     { texte: "Équipe : inviter quelqu'un", aide: "réglages", aller: "#/reglages/equipe" },
     { texte: "Utilisation et budget", aide: "réglages", aller: "#/reglages/utilisation" },
     { texte: "État de l'usine", aide: "réglages", aller: "#/reglages/etat" },
