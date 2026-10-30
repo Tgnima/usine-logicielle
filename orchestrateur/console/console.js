@@ -613,6 +613,7 @@ function blocFabrication(p) {
           <label class="cache" for="consigne-${e.id}">Consigne (facultative)</label>
           <textarea id="consigne-${e.id}" class="champ" rows="2" placeholder="Consigne pour l'agent (facultatif)"></textarea>
           ${e.options.map((o) => html`<button type="button" class="btn btn-s" style="justify-content:flex-start;text-align:left" data-action="decider" data-id="${e.id}" data-choix="${o.cle}" title="${o.detail}">${o.cle} · ${o.libelle}</button>`)}
+          ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" class="lien-btn" style="align-self:flex-start;padding-left:0" data-action="ouvrir-reorienter">Ou changer de direction pour tout le projet</button>` : ""}
         </section>`)}
         ${tachesLot.length ? html`<section class="carte carte-p"><h2 style="font-size:15px;margin-bottom:10px">Lot ${lotCourant} · tâches</h2>
           <ul class="taches">${tachesLot.map((t) => html`<li><span class="cle mono">${t.cle}</span><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></section>` : ""}
@@ -768,6 +769,7 @@ function vueProjet() {
         <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${badgeStatut(p.statut)}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.repris ? html`<span class="badge">Dépôt repris</span>` : ""}${p.persona ? html`<a class="badge bleu" href="#/personas/${p.persona_id}" style="text-decoration:none">Persona : ${p.persona}</a>` : ""}${p.cout ? html`<span class="badge mono">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
         <p class="chapeau">${p.resume}</p></div>
       <div class="rangee">
+        ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" class="btn btn-s" data-action="ouvrir-reorienter" aria-controls="reorienter" aria-expanded="${String(Boolean(etat.reorienterOuvert))}">Changer de direction</button>` : ""}
         ${p.apercu ? html`<a class="btn btn-s" href="${p.apercu}" target="_blank" rel="noopener">Ouvrir l'aperçu</a>` : ""}
         ${p.depot ? html`<a class="btn btn-s" href="${p.depot}" target="_blank" rel="noopener">Code</a>` : ""}
       </div>
@@ -784,8 +786,8 @@ function vueProjet() {
       <span class="aide">${p.reorientation?.consigne ?? ""}</span>
       <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-projet">Relancer l'analyste</button><button type="button" class="btn btn-s btn-petit" data-action="annuler-reorientation">Garder l'ancien plan</button></div></div>` : ""}
     ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : blocPlan(p)) : ""}
-    ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
     ${blocReorienter(p)}
+    ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
     ${blocRecette(p)}
     ${blocProduction(p)}
     ${blocVideo(p)}
@@ -1442,6 +1444,14 @@ const ACTIONS = {
   },
   decider: (el) => agir(() => api("POST", `escalades/${el.dataset.id}`, { choix: el.dataset.choix, texte: $(`#consigne-${el.dataset.id}`)?.value ?? "" }), { succes: "Décision transmise : l'usine reprend." }),
   "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: etat.projet.reorientation ? "Réorientation validée : l'usine ouvre les nouvelles tâches et reprend la fabrication." : "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
+  "ouvrir-reorienter": () => {
+    etat.reorienterOuvert = !etat.reorienterOuvert
+    rendre()
+    if (etat.reorienterOuvert) {
+      $("#reorienter")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      $("#consigne-reorienter")?.focus({ preventScroll: true })
+    }
+  },
   reorienter: () => {
     const consigne = $("#consigne-reorienter")?.value.trim()
     if (!consigne) return $("#consigne-reorienter")?.focus()
