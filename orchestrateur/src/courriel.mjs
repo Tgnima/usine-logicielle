@@ -6,6 +6,8 @@ import { secret } from "./config.mjs"
 let transport = null
 
 export const courrielConfigure = () => Boolean(process.env.SMTP_HOST && process.env.EMAIL_EXPEDITEUR)
+// Un service d'envoi existe sur le serveur : les produits en production peuvent envoyer de vrais emails.
+export const envoiDisponible = () => Boolean(process.env.SMTP_HOST)
 
 function obtenirTransport() {
   transport ??= nodemailer.createTransport({

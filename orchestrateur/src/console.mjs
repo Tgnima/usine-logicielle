@@ -27,6 +27,7 @@ import { etatUsine, lireSanteServeur, resumeEtat } from "./sante.mjs"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evolution, lireReglage, montant, reglagesCouts } from "./couts.mjs"
 import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
+import { envoiDisponible } from "./courriel.mjs"
 import { direct } from "./direct.mjs"
 import { etatVideo, fichierVideo, genererVideo } from "./video.mjs"
 import { enregistrerPieces, listerPieces, verifierPieces } from "./pieces.mjs"
@@ -54,6 +55,11 @@ const ENTETES = {
 }
 
 const erreur = (code, message) => Object.assign(new Error(message), { code })
+// La longueur maximale d'un message ou d'un commentaire, et celle d'une demande de corrections.
+const TEXTE_MAX = 2000
+const TEXTE_LONG_MAX = 6000
+// Une application pour le portier : son slug, ou « * » pour toutes.
+const appliValide = (a) => a === "*" || /^[a-z0-9-]{1,40}$/.test(a)
 
 // Les raisons d'une escalade, en clair.
 const RAISONS = {
@@ -391,6 +397,7 @@ const ROUTES = [
   }],
   ["POST", /^\/api\/projets\/(\d+)\/corriger-recette$/, (ctx, [id], c, qui) => {
     const p = obtenir(ctx.db, "projets", Number(id))
+    if (!p) throw erreur(404, "Projet introuvable.")
     // Sans choix : tous les points. Avec { garder: [index…], ajout } : les points cochés, et une demande en plus.
     const garder = Array.isArray(c?.garder) ? c.garder.map(Number).filter(Number.isInteger) : null
     const texte = ecartsEnCorrections(lireRecette(p), { garder, ajout: String(c?.ajout ?? "").slice(0, 2000) })
@@ -455,7 +462,7 @@ const ROUTES = [
     return r
   }],
   ["POST", /^\/api\/projets\/(\d+)\/message$/, async (ctx, [id], c, qui) => {
-    const texte = String(c.texte ?? "").trim()
+    const texte = String(c.texte ?? "").trim().slice(0, TEXTE_MAX)
     if (!texte) throw erreur(400, "Message vide.")
     const r = await repondreDansLeFil(ctx, Number(id), texte, qui.email)
     return { ok: true, message: r ?? "Message transmis à l'usine." }
@@ -467,14 +474,24 @@ const ROUTES = [
       throw erreur(409, e.message)
     }
   }],
-  ["POST", /^\/api\/projets\/(\d+)\/corriger$/, (ctx, [id], c, qui) => demanderCorrections(ctx, Number(id), String(c.texte ?? ""), qui.email)],
-  ["POST", /^\/api\/escalades\/(\d+)$/, (ctx, [id], c, qui) => resoudre(ctx, Number(id), { choix: String(c.choix ?? ""), texte: String(c.texte ?? ""), par: qui.email })],
+  ["POST", /^\/api\/projets\/(\d+)\/corriger$/, (ctx, [id], c, qui) => {
+    if (!obtenir(ctx.db, "projets", Number(id))) throw erreur(404, "Projet introuvable.")
+    const texte = String(c.texte ?? "").trim().slice(0, TEXTE_LONG_MAX)
+    if (texte.length < 3) throw erreur(400, "Décris ce qui ne va pas : l'analyste part de ce texte.")
+    return demanderCorrections(ctx, Number(id), texte, qui.email)
+  }],
+  // Une décision : la lettre d'une option, et un commentaire borné.
+  ["POST", /^\/api\/escalades\/(\d+)$/, (ctx, [id], c, qui) => {
+    const choix = String(c.choix ?? "")
+    if (!/^[A-Z]$/.test(choix)) throw erreur(400, "Choisis une des options proposées.")
+    return resoudre(ctx, Number(id), { choix, texte: String(c.texte ?? "").trim().slice(0, TEXTE_MAX), par: qui.email })
+  }],
   ["POST", /^\/api\/projets\/(\d+)\/production$/, (ctx, [id], c, qui) => {
     if (c.confirme !== true) throw erreur(400, "La mise en production doit être confirmée.")
     const demande = demandeProduction(c)
     const p = obtenir(ctx.db, "projets", Number(id))
     if (!["livre", "en_production"].includes(p?.statut)) throw erreur(409, `Le projet est « ${p?.statut ?? "inconnu"} » : pas de mise en production possible maintenant.`)
-    if (demande.emails === "reels" && !process.env.SMTP_HOST) throw erreur(409, "Emails réels demandés, mais aucun service d'envoi n'est configuré sur le serveur.")
+    if (demande.emails === "reels" && !envoiDisponible()) throw erreur(409, "Emails réels demandés, mais aucun service d'envoi n'est configuré sur le serveur.")
     if (productionsEnCours.has(p.id)) throw erreur(409, "Une mise en production de ce projet est déjà en cours.")
     productionsEnCours.add(p.id)
     // La mise en production prend plusieurs minutes : on répond tout de suite, le suivi arrive par le journal.
@@ -520,11 +537,14 @@ const ROUTES = [
     const email = String(c.email ?? "").trim().toLowerCase()
     // Réinviter un compte existant changerait son rôle en silence : on renvoie son lien à la place.
     if ((await portier("utilisateurs")).some((u) => u.email === email)) throw erreur(409, "Ce compte existe déjà : utilise « Renvoyer l'invitation » dans la liste.")
-    const r = await portier("utilisateurs", { methode: "POST", corps: { email: c.email, nom: c.nom ?? null, role: c.role === "admin" ? "admin" : "membre", applis: Array.isArray(c.applis) ? c.applis : [], par: qui.email } })
+    const role = c.role === "admin" ? "admin" : "membre"
+    const applis = Array.isArray(c.applis) ? c.applis.map(String).filter(appliValide) : []
+    const nom = String(c.nom ?? "").trim().slice(0, 80) || null
+    const r = await portier("utilisateurs", { methode: "POST", corps: { email, nom, role, applis, par: qui.email } })
     // Le lien d'invitation n'est montré qu'à l'administrateur qui invite, pour le transmettre si l'email n'arrive pas.
     const { courrielConfigure, envoyerInvitation } = await import("./courriel.mjs")
     let envoye = false
-    if (courrielConfigure()) envoye = await envoyerInvitation({ email: c.email, lien: r.lien, role: c.role, applis: c.applis ?? [], par: qui.email }).then(() => true).catch(() => false)
+    if (courrielConfigure()) envoye = await envoyerInvitation({ email, lien: r.lien, role, applis, par: qui.email }).then(() => true).catch(() => false)
     return { ok: true, envoye, lien: envoye ? null : r.lien }
   }],
   ["DELETE", /^\/api\/acces\/utilisateurs\/(\d+)$/, async (_ctx, [id], _c, qui) => {

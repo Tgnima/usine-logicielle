@@ -13,7 +13,11 @@ export async function portier(chemin, { methode = "GET", corps } = {}) {
     signal: AbortSignal.timeout(10_000),
   })
   const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(`Portier ${res.status} : ${json.erreur ?? ""}`)
+  // Un refus du portier (4xx) garde son code et son message ; une panne devient 502.
+  if (!res.ok) {
+    const refus = res.status < 500
+    throw Object.assign(new Error(refus ? `La page de connexion refuse : ${json.erreur ?? `erreur ${res.status}`}.` : `La page de connexion ne répond pas correctement (erreur ${res.status}).`), { code: refus ? res.status : 502 })
+  }
   return json
 }
 

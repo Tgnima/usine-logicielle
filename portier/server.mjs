@@ -318,7 +318,7 @@ createServer(async (req, res) => {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return envoyerJson(res, 400, { erreur: "email invalide" })
         const existant = db.prepare("SELECT id FROM utilisateurs WHERE email = ?").get(email)
         const role = corps.role === "admin" ? "admin" : "membre"
-        const applis = JSON.stringify(Array.isArray(corps.applis) ? corps.applis.map(String) : [])
+        const applis = JSON.stringify(Array.isArray(corps.applis) ? corps.applis.map(String).filter((a) => a === "*" || /^[a-z0-9-]{1,40}$/.test(a)) : [])
         const uid = existant?.id ?? Number(db.prepare("INSERT INTO utilisateurs (email, nom, role, applis) VALUES (?, ?, ?, ?)").run(email, corps.nom ?? null, role, applis).lastInsertRowid)
         if (existant) db.prepare("UPDATE utilisateurs SET role = ?, applis = ?, actif = 1, version = version + 1 WHERE id = ?").run(role, applis, uid)
         noter(email, `invité (${role}) par ${corps.par ?? "?"}`, "api")

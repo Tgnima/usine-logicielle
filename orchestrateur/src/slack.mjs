@@ -20,6 +20,7 @@ import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
 import { adresses } from "./config.mjs"
+import { envoiDisponible } from "./courriel.mjs"
 import { listerPersonas, trouverPersona } from "./personas.mjs"
 import { pyramideEnLignes, verdictPyramide } from "./pyramide.mjs"
 import { pointsACorriger } from "./recette.mjs"
@@ -455,7 +456,7 @@ export async function demarrerSlack(ctx) {
       acces: v.acces.v.selected_option.value,
       destinataires_autorises: v.autorises.v.value ?? "",
     }
-    if (demande.emails === "reels" && !process.env.SMTP_HOST) {
+    if (demande.emails === "reels" && !envoiDisponible()) {
       return ack({ response_action: "errors", errors: { emails: "Aucun service d'envoi configuré (SMTP_HOST dans .env) : choisis « Capturés » ou configure l'envoi." } })
     }
     const invalides = String(demande.destinataires_autorises).split(/[,;\s]+/).filter((x) => x && !/^[^\s@]*@[^\s@]+$/.test(x))
