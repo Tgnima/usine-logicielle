@@ -145,11 +145,16 @@ export async function mettreAJourUsine(ctx, par) {
 }
 
 // Au démarrage : une mise à jour vient de se faire ? On reprend et on l'annonce.
-async function finMiseAJour(ctx) {
+// Tant que le déployeur la dit en cours, on ne reprend pas : le conteneur d'aide pose le nouveau
+// code AVANT de reconstruire, et la version change donc plusieurs minutes avant le redémarrage.
+// Reprendre à ce moment-là (31 oct. 2026) a lancé des tâches que le redémarrage de l'atelier a
+// aussitôt coupées (« fetch failed », escalade « infrastructure »).
+export async function finMiseAJour(ctx) {
   if (!existsSync(marqueur(ctx))) return
   const m = JSON.parse(readFileSync(marqueur(ctx), "utf8"))
   // Le marqueur est posé avant la demande : on n'annonce la fin que si la version a changé.
   const s = lireSanteServeur(ctx.config)
+  if (s?.mise_a_jour?.en_cours) return
   const version = s?.mise_a_jour?.version
   const derniere = s?.mise_a_jour?.derniere
   // Le déployeur a constaté la fin de CETTE mise à jour (lancée après notre demande).
