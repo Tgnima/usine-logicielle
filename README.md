@@ -194,10 +194,21 @@ a reproduit une partie d'une application ; l'usine la reprend, la spécialise po
 termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Dans Slack :
 `/usine reprendre https://github.com/o/depot persona Commerçant [mode copie|direct] : ce que tu veux en faire`.
 
-1. **Le persona** se crée dans la console (onglet *Personas*) : trois lignes suffisent. Un agent
-   l'approfondit par une recherche sourcée sur le web et rend une fiche (problèmes avec preuves,
-   besoins, outils actuels, objections), **ce qui est hors périmètre**, et **3 à 5 scénarios
-   cachés**. On relit, on corrige, on valide. Seul un persona validé sert à un projet.
+1. **Le persona** se crée dans la console (onglet *Publics*, « Nouveau public »), à partir de ce
+   qu'on a déjà : deux phrases, des **documents** (PDF, Markdown, texte, CSV, images : 5 au plus,
+   exports Drive compris), un **dépôt GitHub** (description, README et `docs/`, lus avec le jeton
+   de l'usine, que l'agent ne voit jamais), ou une **fiche déjà prête** (JSON, au format du modèle
+   téléchargeable). Sauf pour une fiche prête, un agent l'approfondit (les documents d'abord, le web
+   ensuite) et rend une fiche (problèmes avec preuves, besoins, outils actuels, objections),
+   **ce qui est hors périmètre**, et **3 à 5 scénarios cachés**. Une source est une page web ou un
+   document. On relit, on corrige, on valide. Seul un persona validé sert à un projet.
+
+   **Depuis sa machine** (un script, ou son assistant qui lit ses documents) : dans *Publics*,
+   « Depuis ma machine », on crée un jeton `usp_…`, montré une seule fois. Il ne sert qu'à envoyer
+   des fiches : `curl -X POST https://console.<domaine>/api/import/personas -H "Authorization:
+   Bearer usp_…" -H "Content-Type: application/json" --data @persona.json`. La fiche arrive
+   « à valider », sans recherche ni jeton consommé. Le portier ne laisse passer que cette adresse
+   avec ce jeton, et la console le vérifie (`jetons-personas.mjs`).
 2. **Le mode** : *direct* si le compte GitHub de l'usine est invité en écriture sur le dépôt
    (branche `usine/<slug>/integration`, une PR par tâche dessus, et à la fin **une PR de
    livraison** vers la branche d'origine, que la personne fusionne elle-même : l'usine ne

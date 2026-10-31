@@ -185,6 +185,21 @@ test("connecteurs : le catalogue sans clé, un identifiant inconnu en 404, une a
   assert.equal(a.statut, 200)
 })
 
+test("depuis une machine : une fiche s'importe avec un jeton, sans session ; sans jeton valide, rien", async () => {
+  const { corps: { jeton } } = await json(await appel("/api/personas/jetons", { methode: "POST", corps: { nom: "Mon ordinateur" } }))
+  const envoyer = (entete, corps) => fetch(`${base}/api/import/personas`, { method: "POST", headers: { "content-type": "application/json", ...(entete ? { authorization: entete } : {}) }, body: JSON.stringify(corps) })
+  const fiche = { nom: "Gérante de salon", fiche: { resume: "Gérante d'un salon de coiffure de quartier." } }
+  assert.equal((await envoyer(null, fiche)).status, 401)
+  assert.equal((await envoyer("Bearer usp_" + "x".repeat(48), fiche)).status, 401)
+  const r = await json(await envoyer(`Bearer ${jeton}`, fiche))
+  assert.equal(r.statut, 201)
+  assert.match(r.corps.adresse, /^\/#\/personas\/\d+$/)
+  assert.equal((await envoyer(`Bearer ${jeton}`, { fiche: {} })).status, 400)
+  // Le jeton n'ouvre rien d'autre de la console.
+  const autre = await fetch(`${base}/api/personas`, { headers: { authorization: `Bearer ${jeton}` } })
+  assert.equal(autre.status, 403)
+})
+
 test("aucun fichier hors de la console, aucune capture hors de son dossier", async () => {
   assert.equal((await appel("/..%2f..%2fsrc%2fconsole.mjs")).status, 404)
   assert.equal((await appel("/api/captures/1/T1/..%2f..%2fusine.db")).status, 404)

@@ -128,13 +128,15 @@ test("ICP.md ne contient jamais les scénarios cachés ; MISSION.md porte le hor
   assert.ok(!mission.includes("SECRET-SCENARIO"))
 })
 
-test("persona : création, correction, validation, recherche par nom", () => {
+test("persona : création, correction, validation, recherche par nom", async () => {
   const db = ouvrirDb(join(mkdtempSync(join(tmpdir(), "personas-")), "usine.db"))
   // L'atelier est injoignable : la recherche échoue en arrière-plan, sans gêner le reste.
   const ctx = { db, config: { atelier: { url: "http://127.0.0.1:1" }, secrets: { worker: "x" }, modeles: { analyste: { modele: "m" } }, dataDir: tmpdir() } }
-  assert.equal(creerPersona(ctx, { nom: "C", brief: "trop court" }).ok, false)
-  const { ok, id } = creerPersona(ctx, { nom: "Commerçant de quartier", brief: "Une boulangerie de quartier sans site web.", par: "a@b" })
+  assert.equal((await creerPersona(ctx, { nom: "C", brief: "trop court" })).ok, false)
+  const { ok, id } = await creerPersona(ctx, { nom: "Commerçant de quartier", brief: "Une boulangerie de quartier sans site web.", par: "a@b" })
   assert.ok(ok)
+  // La recherche (atelier injoignable) peut déjà avoir échoué en arrière-plan : on la remet en cours.
+  db.prepare("UPDATE personas SET statut = ?").run("recherche")
   assert.match(modifierPersona(ctx, id, { fiche }, "a@b").message, /recherche est en cours/)
   db.prepare("UPDATE personas SET statut = 'a_valider' WHERE id = ?").run(id)
   assert.ok(modifierPersona(ctx, id, { fiche, hors_perimetre: ["backlinks"], scenarios: scenarios.slice(0, 2) }, "a@b").ok)

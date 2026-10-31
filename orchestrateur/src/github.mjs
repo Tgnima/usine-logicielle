@@ -118,6 +118,27 @@ export async function infosDepot(config, nom) {
   return { nom: j.full_name, prive: Boolean(j.private), branche_defaut: j.default_branch, pousser: Boolean(j.permissions?.push), archive: Boolean(j.archived), taille_ko: Number(j.size ?? 0), description: j.description ?? "" }
 }
 
+// Les documents d'un dépôt (description, README, docs/*.md), lus avec le jeton de l'usine pour
+// nourrir la recherche d'un persona : l'agent reçoit le texte, jamais le jeton. null : invisible.
+export async function documentsDepot(config, nom, { fichiersMax = 6, tailleMax = 40_000 } = {}) {
+  const infos = await infosDepot(config, nom)
+  if (!infos) return null
+  const contenu = async (chemin) => {
+    const r = await gh(config, `${depot(config, nom)}/${chemin}`, { accepter: [404] })
+    return r.statut === 200 && r.json.content ? Buffer.from(r.json.content, "base64").toString("utf8").slice(0, tailleMax) : null
+  }
+  const parties = [`# Dépôt ${infos.nom}`, infos.description ? `Description : ${infos.description}` : ""]
+  const readme = await contenu("readme")
+  if (readme) parties.push("## README", readme)
+  const docs = await gh(config, `${depot(config, nom)}/contents/docs`, { accepter: [404] })
+  const fichiers = Array.isArray(docs.json) ? docs.json.filter((f) => f.type === "file" && /\.(md|markdown|txt)$/i.test(f.name)).slice(0, fichiersMax) : []
+  for (const f of fichiers) {
+    const t = await contenu(`contents/${f.path.split("/").map(encodeURIComponent).join("/")}`)
+    if (t) parties.push(`## ${f.path}`, t)
+  }
+  return { nom: infos.nom, texte: parties.filter(Boolean).join("\n\n"), fichiers: 1 + fichiers.length }
+}
+
 // Une branche créée à partir d'une autre (la branche d'intégration d'un dépôt repris).
 export async function creerBranche(config, nom, branche, depuis) {
   const existe = await gh(config, `${depot(config, nom)}/git/ref/heads/${branche}`, { accepter: [404] })

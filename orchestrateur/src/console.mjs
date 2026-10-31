@@ -34,7 +34,8 @@ import { etatVideo, fichierVideo, genererVideo } from "./video.mjs"
 import { enregistrerPieces, listerPieces, verifierPieces } from "./pieces.mjs"
 import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
-import { creerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
+import { creerPersona, documentsPersona, importerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
+import { creerJeton, listerJetons, noterEchec, retirerJeton, tropDEchecs, verifierJeton } from "./jetons-personas.mjs"
 import { MODES_REPRISE } from "./reprise.mjs"
 import { lireReorientation } from "./reorientation.mjs"
 import { ecartsEnCorrections, lireRecette, pointsACorriger, propositionsRecette } from "./recette.mjs"
@@ -410,9 +411,13 @@ const ROUTES = [
   ["GET", /^\/api\/personas\/(\d+)$/, (ctx, [id]) => {
     const p = lirePersona(obtenirPersona(ctx.db, Number(id)))
     if (!p) throw erreur(404, "Persona introuvable.")
-    return { ...p, projets: ctx.db.prepare("SELECT id, nom, statut FROM projets WHERE persona_id = ? AND statut != 'supprime' ORDER BY id DESC").all(p.id) }
+    return { ...p, documents: documentsPersona(ctx.config, p.id), projets: ctx.db.prepare("SELECT id, nom, statut FROM projets WHERE persona_id = ? AND statut != 'supprime' ORDER BY id DESC").all(p.id) }
   }],
-  ["POST", /^\/api\/personas$/, (ctx, _p, c, qui) => creerPersona(ctx, { nom: c.nom, brief: c.brief, par: qui.email })],
+  ["POST", /^\/api\/personas$/, (ctx, _p, c, qui) => creerPersona(ctx, { nom: c.nom, brief: c.brief, pieces: c.pieces, depot: c.depot ? String(c.depot) : null, par: qui.email })],
+  ["POST", /^\/api\/personas\/importer$/, (ctx, _p, c, qui) => importerPersona(ctx, c.persona, qui.email)],
+  ["GET", /^\/api\/personas\/jetons$/, (ctx) => ({ jetons: listerJetons(ctx) })],
+  ["POST", /^\/api\/personas\/jetons$/, (ctx, _p, c, qui) => creerJeton(ctx, c.nom, qui.email)],
+  ["DELETE", /^\/api\/personas\/jetons\/(\d+)$/, (ctx, [id], _c, qui) => retirerJeton(ctx, Number(id), qui.email)],
   ["PUT", /^\/api\/personas\/(\d+)$/, (ctx, [id], c, qui) => modifierPersona(ctx, Number(id), c, qui.email)],
   ["POST", /^\/api\/personas\/(\d+)\/approfondir$/, (ctx, [id], c, qui) => {
     const p = obtenirPersona(ctx.db, Number(id))
@@ -618,8 +623,39 @@ function servirFichier(res, chemin) {
   return true
 }
 
+// Depuis une machine : une fiche de persona envoyée avec un jeton usp_… (jetons-personas.mjs).
+// La seule adresse de la console ouverte sans session ; elle ne fait qu'importer une fiche.
+async function importDepuisMachine(ctx, req, res) {
+  const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim()
+  if (tropDEchecs(ip)) return envoyerJson(res, 429, { erreur: "Trop d'essais : réessaie dans 15 minutes." })
+  const par = verifierJeton(ctx, req.headers.authorization)
+  if (!par) {
+    noterEchec(ip)
+    return envoyerJson(res, 401, { erreur: "Jeton invalide ou retiré. Crée-en un dans la console : Publics, « Depuis ma machine »." })
+  }
+  let corps
+  try {
+    let brut = ""
+    for await (const morceau of req) {
+      brut += morceau
+      if (brut.length > IMPORT_MAX) throw new Error("trop long")
+    }
+    corps = JSON.parse(brut || "{}")
+  } catch {
+    return envoyerJson(res, 400, { erreur: "Le corps doit être du JSON (la fiche du persona), 200 Ko au plus." })
+  }
+  const r = importerPersona(ctx, corps, `jeton:${par}`)
+  if (!r.ok) return envoyerJson(res, 400, { erreur: r.message })
+  return envoyerJson(res, 201, { ...r, adresse: `/#/personas/${r.id}` })
+}
+const IMPORT_MAX = 200_000
+
 export async function traiter(ctx, req, res) {
   const url = new URL(req.url, "http://console")
+  if (url.pathname === "/api/import/personas" && req.method === "POST") return importDepuisMachine(ctx, req, res).catch((e) => {
+    console.error("Import de persona :", e)
+    envoyerJson(res, 500, { erreur: "Erreur de la console." })
+  })
   const qui = await quiEstConnecte(req)
   if (!qui?.autorise || qui.role !== "admin") {
     if (url.pathname.startsWith("/api/")) return envoyerJson(res, 403, { erreur: "Accès réservé aux administrateurs de l'usine." })
@@ -685,7 +721,7 @@ export async function traiter(ctx, req, res) {
           hoteOrigine = new URL(origine).host
         } catch {}
         if (!hoteOrigine || hoteOrigine !== hote) throw erreur(403, "Origine refusée.")
-        corps = await lireJson(req, req.method === "POST" && url.pathname === "/api/projets" ? 9_000_000 : 200_000)
+        corps = await lireJson(req, req.method === "POST" && url.pathname === "/api/projets" ? 9_000_000 : req.method === "POST" && url.pathname === "/api/personas" ? 15_000_000 : 200_000)
         console.log(`Console : ${req.method} ${url.pathname} par ${qui.email}`)
       }
       const r = await route[2](ctx, url.pathname.match(route[1]).slice(1), corps, qui, url)

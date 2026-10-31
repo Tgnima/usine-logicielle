@@ -254,6 +254,14 @@ createServer(async (req, res) => {
         res.writeHead(200, { "x-usine-utilisateur": `cle:${c.nom}` })
         return res.end()
       }
+      // L'envoi d'un persona depuis une machine (POST /api/import/personas, jeton usp_…) : la console
+      // vérifie le jeton elle-même (jetons-personas.mjs). Aucune autre adresse n'est concernée.
+      const methode = String(req.headers["x-forwarded-method"] ?? "")
+      const chemin = String(req.headers["x-forwarded-uri"] ?? "").split("?")[0]
+      if (appli.slug === "tableau" && methode === "POST" && chemin === "/api/import/personas" && /^Bearer usp_[A-Za-z0-9_-]{40,60}$/.test(String(req.headers.authorization ?? ""))) {
+        res.writeHead(200, { "x-usine-utilisateur": "jeton-persona" })
+        return res.end()
+      }
       const u = lireSession(req, hote)
       if (autorise(u, appli)) {
         res.writeHead(200, { "x-usine-utilisateur": u.email })

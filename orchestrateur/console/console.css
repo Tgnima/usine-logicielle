@@ -437,3 +437,32 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .roles-connecteur .etiquette { font-size: 12px; padding: 2px 8px }
 .case { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer }
 .case input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent) }
+
+/* --- Publics : création guidée, envoi depuis sa machine, champs qui suivent leur texte --- */
+textarea.champ { field-sizing: content; min-height: 4.5em; max-height: 70vh; resize: vertical; overflow-y: auto; line-height: 1.55 }
+.departs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px }
+.depart { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px; text-align: left; border: 1px solid var(--trait); border-radius: var(--rayon-l); background: var(--surface); color: var(--encre); font: inherit; cursor: pointer; transition: border-color .15s, transform .15s, box-shadow .15s }
+.depart:hover, .depart:focus-visible { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--ombre-carte) }
+.depart-picto { width: 40px; height: 40px; border-radius: 12px; background: var(--accent-fond); color: var(--accent-fort); display: inline-flex; align-items: center; justify-content: center; font-size: 20px }
+.lien-bouton { border: 0; background: none; padding: 0; color: var(--accent-fort); font: inherit; text-decoration: underline; cursor: pointer }
+.cache-visuel { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden }
+.depot-fichiers { display: flex; gap: 14px; align-items: center; padding: 18px; border: 2px dashed var(--champ); border-radius: var(--rayon-l); cursor: pointer; font-size: 14px }
+.depot-fichiers > span:first-child { font-size: 24px; color: var(--accent) }
+.depot-fichiers:hover, input:focus-visible + .depot-fichiers, .cache-visuel:focus-visible ~ .depot-fichiers { border-color: var(--accent) }
+label.depot-fichiers:has(+ .cache-visuel:focus-visible) { border-color: var(--accent); outline: 2px solid var(--accent) }
+.liste-fichiers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px }
+.etapes-machine { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; font-size: 14px }
+.commande { margin: 8px 0 4px; padding: 10px 12px; border-radius: var(--rayon-m); background: var(--surface-2); color: var(--encre); font-size: 12.5px; white-space: pre-wrap; word-break: break-all }
+.jeton { display: block; padding: 8px 10px; border-radius: var(--rayon-m); background: var(--surface); color: var(--encre); word-break: break-all; font-size: 13px }
+.coches { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px }
+.coches li { display: flex; gap: 10px; align-items: center; color: var(--doux) }
+.coches li.fait { color: var(--encre) }
+.coches .puce { width: 20px; height: 20px; font-size: 11px }
+.jauge { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden }
+.jauge > span { transition: width .4s ease }
+.etapes-recherche { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px }
+.etapes-recherche li { display: flex; gap: 10px; align-items: center; opacity: .35; animation: etape-allumee 1s ease forwards }
+.etapes-recherche li::before { content: ""; width: 10px; height: 10px; border-radius: 999px; background: var(--accent); animation: pulsation 1.6s ease-in-out infinite }
+@keyframes etape-allumee { to { opacity: 1 } }
+@keyframes pulsation { 50% { transform: scale(.6); opacity: .5 } }
+@media (prefers-reduced-motion: reduce) { .etapes-recherche li, .etapes-recherche li::before, .depart { animation: none; transition: none; opacity: 1 } }

@@ -19,7 +19,7 @@ const nomSur = (nom) => String(nom ?? "piece").normalize("NFD").replace(/\p{M}/g
 // Contrôle les pièces envoyées ({ nom, type, base64 }) ; renvoie les fichiers à écrire. Lève une erreur claire.
 // Le texte (Markdown, texte brut) : reconnu à l'extension (Windows n'annonce souvent aucun type
 // pour un .md), puis contrôlé : de l'UTF-8 valide, sans octet nul (pas un binaire renommé).
-const TEXTES = { md: "md", markdown: "md", txt: "txt" }
+const TEXTES = { md: "md", markdown: "md", txt: "txt", csv: "csv" }
 const extensionTexte = (nom) => TEXTES[/\.([a-z0-9]+)$/i.exec(String(nom ?? ""))?.[1]?.toLowerCase()]
 function estDuTexte(contenu) {
   if (contenu.includes(0)) return false
@@ -31,13 +31,13 @@ function estDuTexte(contenu) {
   }
 }
 
-export function verifierPieces(pieces) {
+export function verifierPieces(pieces, { max = PIECES_MAX } = {}) {
   if (pieces === undefined || pieces === null) return []
   if (!Array.isArray(pieces)) throw new Error("Pièces jointes illisibles.")
-  if (pieces.length > PIECES_MAX) throw new Error(`${PIECES_MAX} pièces jointes au plus.`)
+  if (pieces.length > max) throw new Error(`${max} pièces jointes au plus.`)
   return pieces.map((p, i) => {
     const ext = TYPES[p?.type] ?? extensionTexte(p?.nom)
-    if (!ext) throw new Error(`« ${p?.nom ?? "?"} » : formats acceptés PNG, JPEG, WebP, PDF, Markdown (.md) ou texte (.txt).`)
+    if (!ext) throw new Error(`« ${p?.nom ?? "?"} » : formats acceptés PNG, JPEG, WebP, PDF, Markdown (.md), texte (.txt) ou tableau (.csv).`)
     const contenu = Buffer.from(String(p.base64 ?? ""), "base64")
     if (!contenu.length) throw new Error(`« ${p.nom} » est vide.`)
     if (contenu.length > TAILLE_MAX) throw new Error(`« ${p.nom} » dépasse 2 Mo.`)
@@ -57,7 +57,7 @@ export function enregistrerPieces(config, projetId, fichiers) {
 export function listerPieces(config, projetId) {
   const d = dossier(config, projetId)
   if (!existsSync(d)) return []
-  return readdirSync(d).filter((f) => /^\d-[\w-]+\.(png|jpg|webp|pdf|md|txt)$/.test(f)).sort().map((f) => ({ nom: f, chemin: join(d, f), taille: statSync(join(d, f)).size }))
+  return readdirSync(d).filter((f) => /^\d-[\w-]+\.(png|jpg|webp|pdf|md|txt|csv)$/.test(f)).sort().map((f) => ({ nom: f, chemin: join(d, f), taille: statSync(join(d, f)).size }))
 }
 
 // Les lignes bash qui recréent les pièces dans un dossier de l'atelier (binaire, via base64).

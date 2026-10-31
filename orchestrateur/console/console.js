@@ -111,6 +111,9 @@ const etat = {
   personaChoisi: null, // le public choisi dans la saisie de l'accueil
   santeLe: 0, // l'heure du dernier bilan de santé chargé (la pastille du haut)
   filtreConnecteurs: "", // la famille de connecteurs affichée
+  departPublic: null, // le point de départ choisi pour créer un public (decrire, documents, github, fiche)
+  jetons: null, // les jetons « depuis ma machine »
+  jetonCree: null, // le jeton qui vient d'être créé, montré une seule fois
 }
 
 // Les réglages ont un sous-menu (Base44, Unify) : l'équipe, l'utilisation et l'historique y vivent.
@@ -388,14 +391,136 @@ const personasValides = () => (etat.personas ?? []).filter((p) => p.statut === "
 const initiales = (nom) => String(nom ?? "?").split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((m) => m[0].toUpperCase()).join("") || "?"
 
 // Un public se crée avec un nom et deux phrases (AirOps) : la recherche fait le reste.
-const formulairePublic = () => html`<form class="pile" data-form="persona-nouveau" style="gap:12px">
+const formulairePublic = ({ retour = null } = {}) => html`<form class="pile" data-form="persona-nouveau" style="gap:12px">
   <label class="titre-champ" for="persona-nom">Comment l'appeler ?</label>
   <input id="persona-nom" name="nom" class="champ" required maxlength="80" placeholder="Ex. : Commerçant de quartier">
   <label class="titre-champ" for="persona-brief">Qui est-ce, en deux phrases ?</label>
   <textarea id="persona-brief" name="brief" class="champ" rows="4" required minlength="15" style="resize:vertical;line-height:1.6" placeholder="Ex. : une boulangerie de quartier à Lyon, sans site web, avec des avis Google. Le gérant veut être trouvé par les gens du coin, mais n'a pas le temps de s'en occuper."></textarea>
   <div class="aide">L'usine cherche sur le web (études, forums, avis) et revient avec une fiche et ses sources, en quelques minutes.</div>
-  <div class="rangee" style="justify-content:flex-end">${etat.fenetre ? html`<button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button>` : ""}<button type="submit" class="btn btn-p">Lancer la recherche</button></div>
+  <div class="rangee" style="justify-content:${retour ? "space-between" : "flex-end"}">${retour ?? (etat.fenetre ? html`<button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button>` : "")}<button type="submit" class="btn btn-p">Lancer la recherche</button></div>
 </form>`
+
+// Quatre points de départ pour un public : on part de ce qu'on a déjà.
+const DEPARTS_PUBLIC = [
+  ["decrire", "✎", "Je le décris", "Un nom et deux phrases. L'usine fait la recherche sur le web."],
+  ["documents", "▤", "J'ai des documents", "Études, comptes rendus d'entretiens, exports Drive (PDF, CSV, notes). L'usine les lit d'abord."],
+  ["github", "⌥", "Depuis un dépôt GitHub", "Le README et la documentation d'un projet existant, lus avec le compte GitHub de l'usine."],
+  ["fiche", "⇪", "J'ai déjà une fiche", "Un fichier préparé sur ta machine, par exemple avec ton assistant. Aucune recherche, rien n'est consommé."],
+]
+const MODELE_PERSONA = {
+  nom: "Commerçant de quartier",
+  brief: "Une boulangerie de quartier sans site web, avec des avis Google.",
+  fiche: {
+    resume: "Gérant d'un commerce de proximité, peu de temps, veut être trouvé par les gens du coin.",
+    demographie: ["45-60 ans", "1 à 5 salariés"], psychographie: ["Pragmatique", "Méfiant envers les agences"],
+    problemes: [{ probleme: "Invisible sur Google Maps", preuve: "62 % des recherches locales finissent par une visite", source: "https://exemple.fr/etude" }, { probleme: "…", preuve: "…", document: "entretiens-clients.pdf" }],
+    besoins: ["Être trouvé", "Répondre aux avis"], outils_actuels: ["Facebook", "Fiche Google"], prix_acceptable: "20 € par mois",
+    objections: ["Trop compliqué"], canaux: ["Chambre de commerce"],
+    sources: [{ titre: "Étude sur la recherche locale", url: "https://exemple.fr/etude" }, { titre: "Entretiens clients", document: "entretiens-clients.pdf" }],
+  },
+  hors_perimetre: ["Boutique en ligne"],
+  scenarios: [{ titre: "Répondre à un avis négatif depuis son téléphone", situation: "Un client mécontent a laissé une étoile.", etapes: ["Ouvre l'application", "Trouve l'avis", "Répond"], attendu: "La réponse est publiée en moins de 2 minutes." }],
+}
+const CONSIGNE_ASSISTANT = (adresse, jeton) => `Prépare la fiche d'un persona pour mon usine logicielle, à partir de mes documents et de ce que tu sais de mon activité.
+Écris un fichier persona.json au format ci-dessous (en français, sans rien inventer : chaque problème cite sa source, une page web dans "source" ou un de mes documents dans "document").
+Règles pour qu'il soit validable : au moins 3 problèmes, 2 besoins, 2 sources, 1 élément hors périmètre, et 3 à 5 scénarios qui disent chacun la situation et le résultat attendu.
+${jeton ? `Puis envoie-le à l'usine :
+curl -X POST ${adresse}/api/import/personas -H "Authorization: Bearer ${jeton}" -H "Content-Type: application/json" --data @persona.json
+` : ""}
+Format :
+${JSON.stringify(MODELE_PERSONA, null, 2)}`
+
+function creationPublic() {
+  const d = etat.departPublic
+  if (!d) return html`<div class="pile" style="gap:14px">
+    <p class="aide" style="margin:0">Pars de ce que tu as déjà. Tu pourras tout relire et corriger avant de l'utiliser.</p>
+    <div class="departs">${DEPARTS_PUBLIC.map(([id, picto, titre, texte]) => html`<button type="button" class="depart" data-action="depart-public" data-id="${id}">
+      <span class="depart-picto" aria-hidden="true">${picto}</span><strong>${titre}</strong><span class="aide">${texte}</span></button>`)}</div>
+    <div class="separe aide">Tu prépares tes publics sur ton ordinateur, avec un script ou ton assistant ? <button type="button" class="lien-bouton" data-action="fenetre" data-quoi="machine">Envoie-les depuis ta machine</button>.</div>
+  </div>`
+  const retour = html`<button type="button" class="lien-bouton" data-action="depart-public" data-id="">← Autres façons</button>`
+  const nom = html`<label class="titre-champ" for="persona-nom">Comment l'appeler ?</label>
+    <input id="persona-nom" name="nom" class="champ" required maxlength="80" placeholder="Ex. : Commerçant de quartier">`
+  const boutons = (texte) => html`<div class="rangee" style="justify-content:space-between">${retour}<button type="submit" class="btn btn-p">${texte}</button></div>`
+  if (d === "decrire") return html`<div class="pile" style="gap:10px">${formulairePublic({ retour })}</div>`
+  if (d === "documents") return html`<form class="pile" data-form="persona-nouveau" style="gap:12px">${nom}
+    <label class="titre-champ" for="persona-docs">Tes documents <span class="aide" style="font-weight:400">· 5 au plus, 2 Mo chacun</span></label>
+    <label class="depot-fichiers" for="persona-docs"><span aria-hidden="true">▤</span><span><strong>Choisir des fichiers</strong><br><span class="aide">PDF, Markdown, texte, CSV ou images. Depuis Google Drive : Fichier, Télécharger, en PDF ou en CSV.</span></span></label>
+    <input id="persona-docs" name="documents" type="file" multiple accept=".pdf,.md,.markdown,.txt,.csv,.png,.jpg,.jpeg,.webp" class="cache-visuel" data-fichiers="persona-docs-liste">
+    <ul class="liste-fichiers" id="persona-docs-liste"></ul>
+    <label class="titre-champ" for="persona-brief">Ce que l'usine doit savoir en plus <span class="aide" style="font-weight:400">· facultatif</span></label>
+    <textarea id="persona-brief" name="brief" class="champ" rows="2" placeholder="Ex. : on vise surtout les gérants qui n'ont pas encore de site."></textarea>
+    ${boutons("Lancer la recherche")}</form>`
+  if (d === "github") return html`<form class="pile" data-form="persona-nouveau" style="gap:12px">${nom}
+    <label class="titre-champ" for="persona-depot">Le dépôt</label>
+    <input id="persona-depot" name="depot" class="champ mono" required placeholder="propriétaire/nom, ou https://github.com/propriétaire/nom" spellcheck="false" autocomplete="off">
+    <div class="aide">L'usine lit sa description, son README et les fichiers de docs/ avec son propre compte GitHub. Le jeton ne quitte jamais l'usine.</div>
+    <label class="titre-champ" for="persona-brief">Ce que l'usine doit savoir en plus <span class="aide" style="font-weight:400">· facultatif</span></label>
+    <textarea id="persona-brief" name="brief" class="champ" rows="2" placeholder="Ex. : les utilisateurs de cet outil sont les commerciaux terrain."></textarea>
+    ${boutons("Lancer la recherche")}</form>`
+  return html`<form class="pile" data-form="persona-importer" style="gap:12px">
+    <label class="depot-fichiers" for="persona-fiche"><span aria-hidden="true">⇪</span><span><strong>Choisir la fiche (.json)</strong><br><span class="aide">Ou colle son contenu ci-dessous.</span></span></label>
+    <input id="persona-fiche" type="file" accept=".json,application/json" class="cache-visuel" data-fichiers="persona-fiche-liste">
+    <ul class="liste-fichiers" id="persona-fiche-liste"></ul>
+    <label class="titre-champ" for="persona-json">Contenu de la fiche</label>
+    <textarea id="persona-json" name="json" class="champ mono" rows="6" placeholder='{ "nom": "…", "fiche": { "resume": "…" }, … }' spellcheck="false"></textarea>
+    <div class="rangee" style="gap:8px"><button type="button" class="btn btn-s btn-petit" data-action="modele-persona">Télécharger le modèle</button><button type="button" class="btn btn-s btn-petit" data-action="copier" data-quoi="consigne">Copier la consigne pour ton assistant</button></div>
+    ${boutons("Importer la fiche")}</form>`
+}
+
+// Depuis sa machine : un jeton qui ne sert qu'à envoyer des fiches.
+function fenetreMachine() {
+  const j = etat.jetons
+  const adresse = location.origin
+  const c = etat.jetonCree
+  return fenetre("Envoyer des publics depuis ta machine", html`<div class="pile" style="gap:16px">
+    <p style="margin:0">Prépare la fiche sur ton ordinateur (avec ton assistant, un script ou à la main), puis envoie-la à l'usine. Elle arrive ici, prête à relire.</p>
+    ${c ? html`<div class="message ok pile" style="gap:8px;align-items:stretch"><strong>Ton jeton « ${c.nom} » : copie-le maintenant, il ne sera plus affiché.</strong>
+      <code class="mono jeton">${c.jeton}</code>
+      <div class="rangee" style="gap:8px"><button type="button" class="btn btn-s btn-petit" data-action="copier" data-quoi="jeton">Copier le jeton</button><button type="button" class="btn btn-s btn-petit" data-action="copier" data-quoi="commande">Copier la commande</button><button type="button" class="btn btn-s btn-petit" data-action="copier" data-quoi="consigne-jeton">Copier la consigne pour ton assistant</button></div></div>` : ""}
+    <ol class="etapes-machine">
+      <li><strong>Crée un jeton</strong> pour ton ordinateur. Il ne sert qu'à envoyer des fiches : il n'ouvre ni la console, ni les applications.
+        <form class="rangee" data-form="jeton-persona" style="flex-wrap:nowrap;margin-top:8px"><label class="cache" for="jeton-nom">Nom du jeton</label><input id="jeton-nom" name="nom" class="champ" required maxlength="60" placeholder="Ex. : Ordinateur de Marie"><button type="submit" class="btn btn-p">Créer</button></form></li>
+      <li><strong>Prépare la fiche</strong> au format du modèle. <button type="button" class="lien-bouton" data-action="modele-persona">Télécharger le modèle</button>, ou donne la consigne à ton assistant (Claude Code, par exemple) : il lit tes documents et écrit la fiche.</li>
+      <li><strong>Envoie-la</strong> :
+        <pre class="commande mono">curl -X POST ${adresse}/api/import/personas \\
+  -H "Authorization: Bearer usp_…" \\
+  -H "Content-Type: application/json" \\
+  --data @persona.json</pre>
+        <span class="aide">Sous Windows (PowerShell), écris curl.exe. La réponse donne l'adresse de la fiche.</span></li>
+    </ol>
+    <div class="pile" style="gap:6px"><strong>Tes jetons</strong>
+      ${!j ? html`<div class="chargement">Chargement…</div>` : j.length ? html`<ul class="membres carte">${j.map((x) => html`<li><span class="mono">${x.debut}…</span><strong style="flex:1">${x.nom}</strong>
+        <span class="aide">${x.utilise_le ? `utilisé le ${dateCourte(x.utilise_le)}` : "jamais utilisé"}</span>
+        <button type="button" class="btn btn-s btn-petit" data-action="retirer-jeton" data-id="${x.id}" aria-label="Retirer le jeton ${x.nom}">Retirer</button></li>`)}</ul>` : html`<div class="aide">Aucun jeton pour l'instant.</div>`}</div>
+  </div>`)
+}
+
+// Ce qu'il manque pour valider : les mêmes règles que l'usine, en liste à cocher.
+function pretAValider(p) {
+  const f = p.fiche ?? {}
+  const n = (p.scenarios ?? []).length
+  const points = [
+    [Boolean(f.resume), "Un résumé"],
+    [(f.problemes ?? []).length >= 3, `3 problèmes réels (${(f.problemes ?? []).length})`],
+    [(f.besoins ?? []).length >= 2, `2 besoins (${(f.besoins ?? []).length})`],
+    [(f.sources ?? []).length >= 2, `2 sources (${(f.sources ?? []).length})`],
+    [(p.hors_perimetre ?? []).length >= 1, "1 chose hors périmètre"],
+    [n >= 3 && n <= 5 && (p.scenarios ?? []).every((x) => x.situation && x.attendu), `3 à 5 situations de test (${n})`],
+  ]
+  const faits = points.filter(([ok]) => ok).length
+  return html`<div class="carte carte-p pile" style="gap:10px"><div class="barre"><strong>${faits === points.length ? "Prêt à valider" : "Pour pouvoir valider"}</strong><span class="aide">${faits} sur ${points.length}</span></div>
+    <div class="jauge" role="progressbar" aria-valuemin="0" aria-valuemax="${points.length}" aria-valuenow="${faits}" aria-label="Fiche complète"><span style="width:${Math.round((faits / points.length) * 100)}%"></span></div>
+    <ul class="coches">${points.map(([ok, texte]) => html`<li class="${ok ? "fait" : ""}"><span class="puce ${ok ? "faite" : ""}" aria-hidden="true">${ok ? "✓" : ""}</span>${texte}<span class="cache">${ok ? " : fait" : " : à compléter"}</span></li>`)}</ul></div>`
+}
+
+// La recherche en cours : les étapes s'allument tour à tour, pour voir que l'usine travaille.
+function rechercheEnCours(p) {
+  const etapes = [...(p.documents?.length ? [`Lecture de tes ${p.documents.length} document(s)`] : []), "Recherche sur le web", "Les problèmes et leurs preuves", "Les situations de test"]
+  return html`<section class="carte carte-p pile recherche-en-cours" aria-live="polite"><strong>L'usine étudie « ${p.nom} »</strong>
+    <ol class="etapes-recherche">${etapes.map((e, i) => html`<li style="animation-delay:${i * 2.5}s">${e}</li>`)}</ol>
+    <span class="aide">Quelques minutes. Cette page se met à jour toute seule.</span></section>`
+}
 
 function vuePersonas() {
   const liste = etat.personas
@@ -403,7 +528,7 @@ function vuePersonas() {
     ${barreHaut()}
     <div class="entete">
       <div><h1>Publics</h1><p class="chapeau">Les personnes pour qui tu construis. L'usine les étudie sur le web, construit pour elles, puis essaie chaque application à leur place avant de te la livrer.</p></div>
-      ${liste?.length ? html`<button type="button" class="btn btn-p" data-action="fenetre" data-quoi="public">+ Nouveau public</button>` : ""}
+      <div class="rangee" style="gap:8px"><button type="button" class="btn btn-s" data-action="fenetre" data-quoi="machine">Depuis ma machine</button>${liste?.length ? html`<button type="button" class="btn btn-p" data-action="fenetre" data-quoi="public">+ Nouveau public</button>` : ""}</div>
     </div>
     ${messageGlobal()}
     ${!liste ? html`<div class="chargement">Chargement…</div>` : liste.length ? html`<div class="cartes-publics">${liste.map((p) => html`<a class="carte carte-public" href="#/personas/${p.id}">
@@ -415,7 +540,7 @@ function vuePersonas() {
     : html`<section class="carte vide-grand">
         <span class="avatar grand" aria-hidden="true">?</span>
         <h2>Aucun public pour l'instant</h2>
-        <p class="aide">Un nom et deux phrases suffisent. Avec un public décrit, l'usine construit pour lui, puis essaie l'application à sa place.</p>
+        <p class="aide">Pars de deux phrases, de tes documents, d'un dépôt GitHub ou d'une fiche déjà prête. L'usine construit pour ce public, puis essaie l'application à sa place.</p>
         <button type="button" class="btn btn-p" data-action="fenetre" data-quoi="public">Décrire un premier public</button>
       </section>`}`
 }
@@ -454,7 +579,8 @@ function vuePersona() {
         ${p.statut === "valide" ? html`<button type="button" class="btn btn-p" data-action="construire-pour" data-id="${p.id}">Construire pour ce public</button>` : ""}
       </div>
     </section>
-    ${p.statut === "recherche" ? html`<div class="message info"><span>L'usine fait sa recherche sur le web. Cette page se met à jour toute seule, en quelques minutes.</span></div>` : ""}
+    ${p.statut === "recherche" ? rechercheEnCours(p) : ""}
+    ${!p.fiche && p.documents?.length ? html`<div class="carte carte-p pile" style="gap:6px"><strong>Documents fournis</strong><ul class="puces">${p.documents.map((x) => html`<li class="mono" style="font-size:13px">${x.nom.replace(/^\d-/, "")}</li>`)}</ul></div>` : ""}
     ${p.statut === "echec" ? html`<div class="message erreur"><span style="flex:1">La recherche n'a pas abouti : ${p.erreur ?? "raison inconnue"}</span><button type="button" class="btn btn-s btn-petit" data-action="persona-approfondir">Relancer la recherche</button></div>` : ""}
     ${p.statut === "a_valider" ? html`<div class="message info"><span>La fiche est prête : lis-la, corrige une section si besoin avec « Modifier », puis valide-la en haut.</span></div>` : ""}
     ${p.fiche ? html`<div class="colonnes">
@@ -466,8 +592,8 @@ function vuePersona() {
             ${zone("demographie", "Son profil", lignes(f.demographie), "Une information par ligne (âge, métier, taille de l'entreprise…).")}
             ${zone("psychographie", "Ce qui le motive, ce qui l'inquiète", lignes(f.psychographie), "Une idée par ligne.")}`)}
         ${section("problemes", "Ses problèmes",
-          (f.problemes ?? []).length ? html`<ol class="problemes">${f.problemes.map((x) => html`<li><strong>${x.probleme}</strong>${x.preuve ? html`<div class="aide">${x.preuve}${x.source ? html` · ${lienSur(x.source, "source")}` : ""}</div>` : ""}</li>`)}</ol>` : html`<div class="aide">Rien pour l'instant.</div>`,
-          zone("problemes", "Ses problèmes", lignes((f.problemes ?? []).map((x) => [x.probleme, x.preuve, x.source].filter(Boolean).join(" | "))), "Un problème par ligne. La preuve et la source suivent, séparées par « | ».", 6))}
+          (f.problemes ?? []).length ? html`<ol class="problemes">${f.problemes.map((x) => html`<li><strong>${x.probleme}</strong>${x.preuve ? html`<div class="aide">${x.preuve}${x.source ? html` · ${lienSur(x.source, "source")}` : x.document ? html` · ▤ ${x.document}` : ""}</div>` : ""}</li>`)}</ol>` : html`<div class="aide">Rien pour l'instant.</div>`,
+          zone("problemes", "Ses problèmes", lignes((f.problemes ?? []).map((x) => [x.probleme, x.preuve, x.source || (x.document ? `document : ${x.document}` : "")].filter(Boolean).join(" | "))), "Un problème par ligne. La preuve et la source suivent, séparées par « | » (une adresse web, ou « document : nom du fichier »).", 6))}
         ${section("attentes", "Ce qu'il attend",
           html`<div class="grille">
             <div class="pile" style="gap:6px"><div class="aide">Ses besoins</div>${puces(f.besoins)}</div>
@@ -493,11 +619,12 @@ function vuePersona() {
         ${section("hors", "Ce qu'on ne construit pas pour lui", etiquettes(p.hors_perimetre),
           zone("hors_perimetre", "Hors sujet", lignes(p.hors_perimetre), "Une chose par ligne. L'usine s'en tiendra à l'écart dans chaque projet pour ce public.", 4))}
         ${section("sources", "Les sources consultées",
-          (f.sources ?? []).length ? html`<ul class="puces">${f.sources.map((s) => html`<li>${lienSur(s.url, s.titre)}</li>`)}</ul>` : html`<div class="aide">Aucune source.</div>`,
-          zone("sources", "Sources", lignes((f.sources ?? []).map((s) => (s.titre ? `${s.titre} | ${s.url}` : s.url))), "Une par ligne : titre | adresse.", 4))}
+          (f.sources ?? []).length ? html`<ul class="puces">${f.sources.map((s) => html`<li>${s.url ? lienSur(s.url, s.titre) : html`▤ ${s.titre || s.document} <span class="aide">· document ${s.document}</span>`}</li>`)}</ul>` : html`<div class="aide">Aucune source.</div>`,
+          zone("sources", "Sources", lignes((f.sources ?? []).map((s) => { const ou = s.url || `document : ${s.document}`; return s.titre ? `${s.titre} | ${ou}` : ou })), "Une par ligne : titre | adresse web, ou titre | document : nom du fichier.", 4))}
       </div>
       <aside class="colonne-etroite pile">
-        ${p.statut === "valide" ? html`<div class="message ok"><span>Prêt${p.valide_par ? `, relu par ${p.valide_par}` : ""}. Si tu modifies la fiche, il faudra la relire.</span></div>` : ""}
+        ${p.statut === "valide" ? html`<div class="message ok"><span>Prêt${p.valide_par ? `, relu par ${p.valide_par}` : ""}. Si tu modifies la fiche, il faudra la relire.</span></div>` : pretAValider(p)}
+        ${p.documents?.length ? html`<div class="carte carte-p pile" style="gap:6px"><strong>Documents lus</strong><ul class="puces">${p.documents.map((x) => html`<li class="mono" style="font-size:13px">${x.nom.replace(/^\d-/, "")}</li>`)}</ul></div>` : ""}
         <div class="carte carte-p pile"><strong>Creuser davantage</strong>
           <label class="cache" for="consignes-persona">Ce que la recherche doit creuser</label>
           <textarea id="consignes-persona" class="champ" rows="4" placeholder="Ex. : regarde surtout les commerces alimentaires, et ce qu'ils paient déjà pour se faire connaître."></textarea>
@@ -1493,7 +1620,8 @@ const fenetreAjoutConnecteur = () => fenetre("Ajouter un connecteur", html`<form
 function dessinerFenetre() {
   const q = etat.fenetre
   if (!q) return ""
-  if (q === "public") return fenetre("Nouveau public", formulairePublic())
+  if (q === "public") return fenetre(etat.departPublic ? (DEPARTS_PUBLIC.find(([id]) => id === etat.departPublic) ?? [])[2] : "Nouveau public", creationPublic())
+  if (q === "machine") return fenetreMachine()
   if (q === "inviter") return fenetre("Inviter dans l'usine", etat.acces ? formulaireInviter() : html`<div class="chargement">Chargement…</div>`)
   if (q === "budget") return fenetreBudget()
   if (q.startsWith("integration-")) return fenetreIntegration(q.slice(12))
@@ -1579,7 +1707,10 @@ function rendre() {
   const enBas = !j || j.scrollTop + j.clientHeight >= j.scrollHeight - 20
   const a = document.activeElement
   const cleFocus = a && m.contains(a) && a !== m ? ["action", "id", "quoi", "choix", "hote"].map((k) => a.dataset?.[k] ?? "").join("|") + "|" + (a.id ?? "") : null
+  // La taille donnée à la main à un champ (poignée en bas à droite) survit au rafraîchissement.
+  const tailles = new Map([...document.querySelectorAll("#vue textarea[id]")].filter((t) => t.style.height).map((t) => [t.id, t.style.height]))
   $("#vue").innerHTML = html`${vue()}${listeFlottante()}${dessinerFenetre()}`[BRUT]
+  for (const [id, h] of tailles) { const t = document.getElementById(id); if (t) t.style.height = h }
   document.querySelector(".app").classList.toggle("plein-ecran", etat.route.vue === "demarrer")
   afficherMessages()
   if (cleFocus) {
@@ -1650,6 +1781,8 @@ async function charger({ silencieux = false } = {}) {
 
 // Pendant une saisie, on ne redessine pas (on perdrait le texte ou le curseur).
 function enSaisie() {
+  // Une section en cours de modification, ou une fenêtre ouverte : on ne redessine pas sous les doigts.
+  if (etat.personaSection || etat.fenetre) return true
   const a = document.activeElement
   if (a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && $("#principal").contains(a)) return true
   if (etat.planModifie || etat.confirmer || etat.occupe) return true
@@ -1712,10 +1845,10 @@ function lireFichePersona(f, p) {
     fiche: {
       ...base,
       resume: texte("resume", base.resume),
-      problemes: d.has("problemes") ? liste("problemes").map((l) => { const [probleme, preuve = "", source = ""] = parties(l); return { probleme, preuve, source } }) : base.problemes ?? [],
+      problemes: d.has("problemes") ? liste("problemes").map((l) => { const [probleme, preuve = "", source = ""] = parties(l); const doc = /^document\s*:\s*/i.test(source); return { probleme, preuve, source: doc ? "" : source, document: doc ? source.replace(/^document\s*:\s*/i, "") : "" } }) : base.problemes ?? [],
       besoins: liste("besoins", base.besoins), demographie: liste("demographie", base.demographie), psychographie: liste("psychographie", base.psychographie), outils_actuels: liste("outils_actuels", base.outils_actuels),
       prix_acceptable: texte("prix_acceptable", base.prix_acceptable), objections: liste("objections", base.objections), canaux: liste("canaux", base.canaux),
-      sources: d.has("sources") ? liste("sources").map((l) => { const x = parties(l); return x.length > 1 ? { titre: x[0], url: x.slice(1).join("|") } : { titre: "", url: x[0] } }) : base.sources ?? [],
+      sources: d.has("sources") ? liste("sources").map((l) => { const x = parties(l); const ou = x.length > 1 ? x.slice(1).join("|") : x[0]; const doc = /^document\s*:\s*/i.test(ou); return { titre: x.length > 1 ? x[0] : "", url: doc ? "" : ou, document: doc ? ou.replace(/^document\s*:\s*/i, "") : "" } }) : base.sources ?? [],
     },
     hors_perimetre: liste("hors_perimetre", p.hors_perimetre),
     scenarios: etat.personaSection === "situations" ? [...f.querySelectorAll("[data-scenario]")].map((s) => {
@@ -1876,6 +2009,11 @@ function suivreChatGPT() {
     etat.chatgpt = x
     if (JSON.stringify(x) !== avant && etat.route.vue === "reglages") rendre()
   }, 3000)
+}
+
+async function chargerJetons() {
+  etat.jetons = (await api("GET", "personas/jetons").catch(() => ({ jetons: [] }))).jetons
+  rendre()
 }
 
 const ACTIONS = {
@@ -2048,15 +2186,45 @@ const ACTIONS = {
   "voir-archives": () => { etat.filtre = "archives"; if (location.hash === "#/projets") rendre(); else location.hash = "#/projets" },
   fenetre: (el) => {
     etat.fenetre = el.dataset.quoi
+    if (el.dataset.quoi === "public") etat.departPublic = null
+    if (el.dataset.quoi === "machine") { etat.jetonCree = null; chargerJetons() }
     if (el.dataset.quoi === "inviter" && !etat.acces) charger({ silencieux: true })
     if (el.dataset.quoi === "budget" && !etat.reglages) charger({ silencieux: true })
     rendre()
     // Le premier champ à remplir, sinon le premier bouton du contenu (pas « Fermer »).
     ;($(".fenetre form :is(input:not([type=hidden]), textarea)") ?? $(".fenetre > :not(.barre) button"))?.focus()
   },
-  "fermer-fenetre": () => { etat.fenetre = null; etat.invites = []; rendre() },
+  "fermer-fenetre": () => { etat.fenetre = null; etat.invites = []; etat.jetonCree = null; etat.departPublic = null; rendre() },
   "retirer-invite": (el) => { etat.invites.splice(Number(el.dataset.id), 1); rendre(); $("#inv-email")?.focus() },
   "fermer-invitations": () => { etat.invitation = null; rendre() },
+  "depart-public": (el) => {
+    etat.departPublic = el.dataset.id || null
+    rendre()
+    ;($(".fenetre form :is(input:not([type=hidden]):not([type=file]), textarea)") ?? $(".fenetre .depart"))?.focus()
+  },
+  "modele-persona": () => {
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(MODELE_PERSONA, null, 2)], { type: "application/json" }))
+    a.download = "persona-modele.json"
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  },
+  copier: async (el) => {
+    const c = etat.jetonCree
+    const commande = `curl -X POST ${location.origin}/api/import/personas -H "Authorization: Bearer ${c?.jeton ?? "usp_…"}" -H "Content-Type: application/json" --data @persona.json`
+    const texte = { jeton: c?.jeton ?? "", commande, consigne: CONSIGNE_ASSISTANT(location.origin, null), "consigne-jeton": CONSIGNE_ASSISTANT(location.origin, c?.jeton) }[el.dataset.quoi] ?? ""
+    try {
+      await navigator.clipboard.writeText(texte)
+      etat.message = { type: "ok", texte: "Copié." }
+    } catch {
+      etat.message = { type: "erreur", texte: "La copie n'a pas marché : sélectionne le texte et copie-le à la main." }
+    }
+    afficherMessages()
+  },
+  "retirer-jeton": async (el) => {
+    if (!confirmer("Retirer ce jeton ? Ce qui l'utilise ne pourra plus envoyer de fiche.")) return
+    if (await agir(() => api("DELETE", `personas/jetons/${el.dataset.id}`, {}))) chargerJetons()
+  },
   "filtre-connecteurs": (el) => { etat.filtreConnecteurs = el.dataset.id; rendre() },
   "tester-connecteur": (el) => agir(() => api("POST", `connecteurs/${el.dataset.id}/tester`, {})),
   "retirer-cle-connecteur": (el) => {
@@ -2154,6 +2322,13 @@ document.addEventListener("input", (e) => {
   }
 })
 
+// Les fichiers choisis s'affichent sous le bouton (nom et taille), sans redessiner la fenêtre.
+document.addEventListener("change", (e) => {
+  const liste = e.target.dataset?.fichiers && document.getElementById(e.target.dataset.fichiers)
+  if (!liste) return
+  liste.innerHTML = [...e.target.files].map((x) => html`<li><span aria-hidden="true">▤</span> ${x.name} <span class="aide">· ${Math.max(1, Math.round(x.size / 1024))} Ko</span></li>`[BRUT]).join("")
+})
+
 document.addEventListener("submit", async (e) => {
   const f = e.target.closest("[data-form]")
   if (!f) return
@@ -2177,13 +2352,36 @@ document.addEventListener("submit", async (e) => {
     if (r?.id) location.hash = `#/projets/${r.id}`
   }
   if (type === "persona-nouveau") {
-    const r = await agir(() => api("POST", "personas", { nom: d.get("nom"), brief: d.get("brief") }), { succes: "Recherche lancée : la fiche arrive dans quelques minutes." })
+    const fichiers = [...(f.querySelector("input[type=file]")?.files ?? [])]
+    if (fichiers.length > 5) { etat.message = { type: "erreur", texte: "5 documents au plus." }; afficherMessages(); return }
+    const r = await agir(async () => {
+      const pieces = await Promise.all(fichiers.map(async (x) => ({ nom: x.name, type: x.type, base64: enBase64(await x.arrayBuffer()) })))
+      return api("POST", "personas", { nom: d.get("nom"), brief: d.get("brief") ?? "", pieces, depot: d.get("depot") || null })
+    })
     if (r?.id) {
       etat.fenetre = null
       // Dans l'assistant, on reste sur place : la recherche continue pendant les étapes suivantes.
       if (etat.route.vue === "demarrer") rendre()
       else location.hash = `#/personas/${r.id}`
     }
+  }
+  if (type === "persona-importer") {
+    const fichier = $("#persona-fiche")?.files?.[0]
+    const texte = fichier ? await fichier.text() : String(d.get("json") ?? "").trim()
+    let persona
+    try {
+      persona = JSON.parse(texte)
+    } catch {
+      etat.message = { type: "erreur", texte: texte ? "Ce n'est pas du JSON valide : compare-le au modèle." : "Choisis un fichier ou colle le contenu de la fiche." }
+      afficherMessages()
+      return
+    }
+    const r = await agir(() => api("POST", "personas/importer", { persona }))
+    if (r?.id) { etat.fenetre = null; etat.departPublic = null; location.hash = `#/personas/${r.id}` }
+  }
+  if (type === "jeton-persona") {
+    const r = await agir(() => api("POST", "personas/jetons", { nom: d.get("nom") }))
+    if (r?.jeton) { etat.jetonCree = { nom: String(d.get("nom")), jeton: r.jeton }; chargerJetons() }
   }
   if (type === "persona") {
     const r = await agir(() => api("PUT", `personas/${etat.persona.id}`, lireFichePersona(f, etat.persona)), { succes: "Section enregistrée." })
