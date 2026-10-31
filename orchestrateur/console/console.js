@@ -674,21 +674,39 @@ function blocReprise(p) {
 
 // La pyramide de l'expérience : chaque étage noté sur le produit fini, du sommet à la base,
 // le gouffre entre « Utilisable » et « Pratique ».
+// En liste compacte : un étage par ligne, une barre fine pour la note (la couleur ne porte jamais seule
+// l'information : la note est écrite à côté).
 function blocPyramide(r) {
   if (!r.pyramide) return ""
   const etages = r.pyramide.map((n, i) => ({ ...n, i })).reverse()
-  return html`<div class="pile" style="gap:6px">
+  const ton = (n) => ((n.note ?? 0) >= r.seuil ? (n.i <= r.etage ? "ok" : "moyen") : "faible")
+  return html`<div class="pile" style="gap:8px">
     <div><strong>Pyramide de l'expérience</strong><span class="aide" style="display:block">${r.verdict_pyramide}</span></div>
-    <ol style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;align-items:center;gap:4px">${etages.map((n) => html`
-      ${n.i === r.gouffre - 1 ? html`<li aria-hidden="true" class="aide" style="width:100%;text-align:center;border-top:1px dashed currentColor;padding-top:2px">au-dessus : ce qui fait aimer un produit</li>` : ""}
-      <li title="${n.observe}" style="width:${46 + n.i * 9}%;min-width:190px;border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px;background:${(n.note ?? 0) >= r.seuil ? (n.i <= r.etage ? "var(--ok-fond)" : "var(--signal-fond)") : "var(--danger-fond)"};color:var(--encre)">
-        <span>${n.i === r.etage ? html`<strong>${n.nom}</strong>` : n.nom}</span><span class="mono">${n.note ?? "?"}/10</span>
-      </li>`)}</ol>
+    <ol class="pyramide">${etages.map((n) => html`
+      ${n.i === r.gouffre - 1 ? html`<li class="gouffre" aria-hidden="true">au-dessus : ce qui fait aimer un produit</li>` : ""}
+      <li title="${n.observe}"><span>${n.i === r.etage ? html`<strong>${n.nom}</strong>` : n.nom}</span>
+        <span class="barre-note ${ton(n)}" aria-hidden="true"><span style="width:${Math.max(0, Math.min(10, n.note ?? 0)) * 10}%"></span></span>
+        <span class="mono note">${n.note ?? "?"}/10</span></li>`)}</ol>
     ${(() => {
+      // Le verdict dit déjà ce qu'il faut pour monter : on ne le répète pas.
       const suivant = r.pyramide[r.etage + 1]
-      return suivant?.pour_monter ? html`<div class="aide"><strong>Pour monter à « ${suivant.nom} » :</strong> ${suivant.pour_monter}</div>` : ""
+      return suivant?.pour_monter && !String(r.verdict_pyramide ?? "").includes(suivant.pour_monter) ? html`<div class="aide"><strong>Pour monter à « ${suivant.nom} » :</strong> ${suivant.pour_monter}</div>` : ""
     })()}
   </div>`
+}
+
+// Au-dessus des onglets, la recette tient en une ligne ; son détail a son propre onglet.
+function resumeRecette(p) {
+  const r = p.recette
+  // Onglet Recette ouvert : le résumé répéterait ce qui est juste en dessous.
+  if (!r || ongletProjet(p) === "recette") return ""
+  const points = r.points ?? (r.scenarios ?? []).filter((s) => !s.tenu).length
+  const aCorriger = points && r.propositions?.length && ["livre", "en_production"].includes(p.statut)
+  return html`<section class="carte resume-recette" aria-label="Recette">
+    <span class="badge ${r.erreur ? "rouge" : r.total && r.tenus === r.total ? "vert" : "orange"}">${r.erreur ? "recette impossible" : r.total ? `${r.tenus}/${r.total} situations tenues` : "recette faite"}</span>
+    <span class="resume-recette-texte"><strong>Recette${r.persona ? ` · ${r.persona}` : ""}</strong>${r.resume ? html` <span class="aide">· ${r.resume}</span>` : ""}</span>
+    <button type="button" class="btn ${aCorriger ? "btn-p" : "btn-s"} btn-petit" data-action="onglet-projet" data-id="recette">${aCorriger ? "Voir et corriger" : "Voir le détail"}</button>
+  </section>`
 }
 
 // La recette : les scénarios cachés du persona (s'il y en a) et la pyramide, joués sur le produit fini.
@@ -696,8 +714,8 @@ function blocRecette(p) {
   const r = p.recette
   if (!r) return ""
   const points = r.points ?? (r.scenarios ?? []).filter((s) => !s.tenu).length
-  return html`<section class="carte carte-p pile" aria-labelledby="recette"><div class="rangee" style="justify-content:space-between"><h2 id="recette">Recette${r.persona ? ` du persona « ${r.persona} »` : ""}</h2>
-    ${r.erreur ? html`<span class="badge rouge">impossible</span>` : r.total ? html`<span class="badge ${r.tenus === r.total ? "vert" : "orange"}">${r.tenus}/${r.total} scénario(s) tenu(s)</span>` : ""}</div>
+  return html`<section class="carte carte-p pile" aria-labelledby="recette"><div class="rangee" style="justify-content:space-between"><h2 id="recette">Recette${r.persona ? ` · ${r.persona}` : ""}</h2>
+    ${r.erreur ? html`<span class="badge rouge">impossible</span>` : r.total ? html`<span class="badge ${r.tenus === r.total ? "vert" : "orange"}">${r.tenus}/${r.total} situations tenues</span>` : ""}</div>
     ${r.erreur ? html`<div class="aide">La recette n'a pas pu être jouée : ${r.erreur}</div>` : html`
       ${r.resume ? html`<p style="margin:0">${r.resume}</p>` : ""}
       ${blocPyramide(r)}
@@ -1014,8 +1032,10 @@ const zoneSensible = (p) => html`<details class="carte carte-p" id="zone-sensibl
 
 function blocFabrication(p) {
   const o = ongletProjet(p)
-  const contenu = { avancement: ongletAvancement, apercu: ongletApercu, echanges: ongletEchanges, plus: ongletPlus }[o](p)
-  return html`<div class="onglets-projet" role="tablist" aria-label="Le projet">${ONGLETS_PROJET.map(([id, nom]) => html`<button type="button" role="tab" id="op-${id}" aria-selected="${String(o === id)}" aria-controls="op-panneau" tabindex="${o === id ? "0" : "-1"}" data-action="onglet-projet" data-id="${id}">${nom}${id === "apercu" && p.captures.length ? html` <span class="compte">${p.captures.length}</span>` : ""}</button>`)}</div>
+  const contenu = ({ avancement: ongletAvancement, apercu: ongletApercu, recette: blocRecette, echanges: ongletEchanges, plus: ongletPlus }[o] ?? ongletAvancement)(p)
+  // L'onglet Recette n'existe qu'une fois la recette jouée.
+  const onglets = p.recette ? [...ONGLETS_PROJET.slice(0, 2), ["recette", "Recette"], ...ONGLETS_PROJET.slice(2)] : ONGLETS_PROJET
+  return html`<div class="onglets-projet" role="tablist" aria-label="Le projet">${onglets.map(([id, nom]) => html`<button type="button" role="tab" id="op-${id}" aria-selected="${String(o === id)}" aria-controls="op-panneau" tabindex="${o === id ? "0" : "-1"}" data-action="onglet-projet" data-id="${id}">${nom}${id === "apercu" && p.captures.length ? html` <span class="compte">${p.captures.length}</span>` : ""}</button>`)}</div>
   <div class="pile" id="op-panneau" role="tabpanel" aria-labelledby="op-${o}" style="gap:16px">${contenu}</div>`
 }
 
@@ -1221,7 +1241,7 @@ function vueProjet() {
       <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-projet">Relancer l'analyste</button><button type="button" class="btn btn-s btn-petit" data-action="annuler-reorientation">Garder l'ancien plan</button></div></div>` : ""}
     ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : etat.planVue === "edition" || etat.planModifie ? blocPlan(p) : blocPlanLecture(p)) : ""}
     ${etat.reorienterOuvert ? blocReorienter(p) : ""}
-    ${blocRecette(p)}
+    ${avecOnglets ? resumeRecette(p) : blocRecette(p)}
     ${p.statut === "en_production" && avecOnglets ? "" : blocProduction(p)}
     ${avecOnglets ? blocFabrication(p) : zoneSensible(p)}`
 }

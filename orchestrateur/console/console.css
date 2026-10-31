@@ -508,3 +508,21 @@ label.depot-fichiers:has(+ .cache-visuel:focus-visible) { border-color: var(--ac
   .menu-liste { position: static; min-width: 0; margin-top: 6px }
   .onglets-projet button { padding: 10px 10px }
 }
+/* --- Recette : une ligne au-dessus des onglets, une pyramide compacte dans son onglet --- */
+.resume-recette { display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex-wrap: wrap }
+.resume-recette-texte { flex: 1 1 260px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px }
+.pyramide { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-width: 560px }
+.pyramide li { display: grid; grid-template-columns: minmax(110px, 140px) 1fr 48px; gap: 12px; align-items: center; font-size: 14px }
+.pyramide li.gouffre { display: block; margin-top: 2px; padding-top: 4px; border-top: 1px dashed var(--trait); color: var(--doux); font-size: 12px }
+.barre-note { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden }
+.barre-note > span { display: block; height: 100%; border-radius: 999px; background: var(--danger) }
+.barre-note.moyen > span { background: var(--signal) }
+.barre-note.ok > span { background: var(--ok-point) }
+.pyramide .note { color: var(--doux); text-align: right; font-size: 13px }
+@media (max-width: 600px) {
+  /* Le badge et le bouton sur une rangée, le texte dessous ; les onglets passent à la ligne au lieu de sortir de l’écran. */
+  .resume-recette { justify-content: space-between }
+  .resume-recette-texte { order: 3; flex-basis: 100%; white-space: normal }
+  .pyramide li { grid-template-columns: 96px 1fr 40px; gap: 8px }
+  .onglets-projet { flex-wrap: wrap }
+}
