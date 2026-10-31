@@ -104,7 +104,6 @@ const etat = {
   questions: null, // les réponses en cours aux questions de l'analyste : { projet, i, reponses }
   planVue: "lecture", // le plan à valider : lecture (par défaut) | edition
   prodReglages: false, // la mise en ligne : les réglages dépliés
-  produit: { projet: null, lot: null, i: 0 }, // le volet Produit : le lot et la capture affichés
   fenetre: null, // la fenêtre ouverte : public | inviter | budget | integration-<id>
   invites: [], // les adresses déjà saisies dans l'invitation, en pastilles
   personaSection: null, // la section de la fiche d'un public en cours de modification
@@ -187,9 +186,9 @@ function barreHaut() {
 
 // Une fenêtre par-dessus la page (création d'un public, invitation, intégration, budget).
 // Elle vient de l'état : le rafraîchissement automatique la redessine sans la fermer.
-function fenetre(titre, contenu) {
+function fenetre(titre, contenu, { large = false } = {}) {
   return html`<div class="voile" data-action="fermer-fenetre"></div>
-  <div class="fenetre" role="dialog" aria-modal="true" aria-labelledby="fenetre-titre">
+  <div class="fenetre${large ? " fenetre-large" : ""}" role="dialog" aria-modal="true" aria-labelledby="fenetre-titre">
     <div class="barre"><h2 id="fenetre-titre">${titre}</h2><button type="button" class="btn-icone" data-action="fermer-fenetre" aria-label="Fermer">✕</button></div>
     ${contenu}
   </div>`
@@ -881,85 +880,140 @@ function ongletActif(p) {
   return o === "direct" && !enCours ? "journal" : o
 }
 
-function blocFabrication(p) {
-  const plan = p.plan ?? { lots: [] }
-  const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
-  const onglet = ongletActif(p)
-  const lotCourant = enCours?.lot ?? Math.min(plan.lots.length, p.lot_livre + 1)
-  const tachesLot = p.taches.filter((t) => t.lot === lotCourant)
-  const STT = { fusionnee: ["ajoutée", "ok"], en_cours: ["en cours", "actif"], verification: ["essayée", "actif"], prete: ["à faire", ""], attente: ["à faire", ""], bloquee: ["à décider", "actif"], abandonnee: ["retirée", ""] }
-  const discussion = p.journal.filter((j) => ["demande", "decision", "corrections", "diagnostic", "validation", "plan", "design", "abandon", "production", "domaine"].includes(j.type))
-  const essai = enCours && (enCours.approche || enCours.tentative)
-  return html`
-    <div class="volets">
-      <div class="volet">
-        <section class="carte carte-p pile" style="gap:14px" aria-labelledby="en-ce-moment">
-          ${enCours ? html`
-            <div class="surtitre" id="en-ce-moment">En ce moment · lot ${lotCourant} sur ${plan.lots.length}</div>
-            <strong style="font-size:17px">Je construis : ${enCours.titre}</strong>
-            ${essai ? html`<span class="aide">${enCours.approche ? `Méthode ${enCours.approche + 1}` : `Essai ${enCours.tentative + 1}`} : la version précédente a été refusée par le contrôle, l'usine la reprend.</span>` : ""}
-            ${etapesTache(enCours, p.etapes_noms ?? [])}`
-          : html`<strong id="en-ce-moment">${p.statut === "en_production" ? "En ligne" : p.statut === "livre" ? "Tous les lots sont livrés" : p.statut === "creation" ? "L'usine prépare le dépôt et le socle" : "Aucune fonction en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">L'usine passe à la suite.</span>` : ""}`}
-          <details class="technique" id="technique" ${etat.techniqueOuvert ? "open" : ""}><summary>Détail technique : direct, journal, pull requests</summary>
-            <div class="pile" style="margin-top:12px">
-              ${enCours ? html`<div class="aide mono">${enCours.cle}${enCours.pr ? ` · PR #${enCours.pr}` : ""}${enCours.approche ? ` · approche ${enCours.approche + 1}, modèle renforcé` : enCours.tentative ? ` · correction ${enCours.tentative}` : ""}</div>` : ""}
-              <div class="onglets" role="tablist" aria-label="Détail technique">
-                ${[...(enCours ? [["direct", "● En direct"]] : []), ["journal", "Journal"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(onglet === id)}" tabindex="${onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
-              </div>
-              <div role="tabpanel" id="panneau" aria-labelledby="onglet-${onglet}">
-              ${onglet === "direct" ? html`<div class="direct mono" role="log" aria-live="off" id="direct">${dessinerDirect()}</div>
-                <div class="aide">${enCours.statut === "verification" ? "Le vérificateur reconstruit l'application et teste les critères." : "L'agent code dans son atelier."} Mis à jour toutes les 3 secondes ; les secrets sont masqués.</div>` : ""}
-              ${onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
-                ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
-                ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
-              </div>` : ""}
-              </div>
-            </div>
-          </details>
-        </section>
-        <section class="carte carte-p pile" style="gap:12px" aria-labelledby="fil-titre">
-          <h2 id="fil-titre" style="font-size:15px">Le fil</h2>
-          ${discussion.slice(-12).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type === "demande" || j.type === "decision" ? "Toi" : "L'usine"} · ${heure(j.le)}</small>${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
-          <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
-            <input id="message-libre" class="champ" placeholder="Une précision pour l'usine…">
-            <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
-          <div class="aide">Pendant la fabrication, une précision part avec la prochaine livraison. Pour changer de cap : « Changer de direction ».</div>
-        </section>
-      </div>
-      <div class="volet">
-        ${blocProduit(p)}
-        ${tachesLot.length ? html`<section class="carte carte-p"><h2 style="font-size:15px;margin-bottom:10px">Lot ${lotCourant} · ${plan.lots[lotCourant - 1]?.nom ?? ""}</h2>
-          <ul class="taches">${tachesLot.map((t) => html`<li><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></section>` : ""}
-      </div>
-    </div>`
+// La page d'un projet, en onglets : l'avancement, l'aperçu (les captures), les échanges, le reste.
+// Ce qui demande une action (décision, plan, mise en ligne, recette) reste au-dessus des onglets.
+const ONGLETS_PROJET = [["avancement", "Avancement"], ["apercu", "Aperçu"], ["echanges", "Échanges"], ["plus", "Plus"]]
+function ongletProjet(p) {
+  if (etat.ongletProjet?.projet !== p.id) etat.ongletProjet = { projet: p.id, id: ["livre", "en_production"].includes(p.statut) && p.captures.length ? "apercu" : "avancement" }
+  return etat.ongletProjet.id
 }
 
-// Le produit, à droite : les captures du contrôle (ordinateur et mobile), lot par lot, et le lien
-// vers l'aperçu. Pas de cadre intégré : les produits et le portier refusent d'être affichés dans
-// une autre page, c'est leur protection.
-function blocProduit(p) {
+// Une capture, nommée pour tout le monde : la fonction vérifiée, et l'écran (ordinateur ou téléphone).
+function decrireCapture(p, c) {
+  const mobile = /^mobile/i.test(c.fichier)
+  const nom = c.fichier.replace(/\.png$/i, "").replace(/^(mobile|ordinateur|desktop)[-_]?/i, "").replace(/[-_]+/g, " ").trim()
+  const tache = p.taches.find((t) => t.cle === c.tache)
+  return { ...c, mobile, titre: tache?.titre ?? (nom ? nom[0].toUpperCase() + nom.slice(1) : c.tache) }
+}
+function capturesFiltrees(p) {
+  if (etat.filtreCaptures?.projet !== p.id) etat.filtreCaptures = { projet: p.id, lot: "", ecran: "" }
+  const f = etat.filtreCaptures
+  return p.captures.map((c) => decrireCapture(p, c)).filter((c) => (!f.lot || String(c.lot) === f.lot) && (!f.ecran || (f.ecran === "mobile") === c.mobile))
+}
+
+function ongletAvancement(p) {
   const plan = p.plan ?? { lots: [] }
-  const lotsAvecCaptures = [...new Set(p.captures.map((c) => c.lot).filter(Boolean))].sort((a, b) => a - b)
-  if (etat.produit.projet !== p.id) etat.produit = { projet: p.id, lot: null, i: 0 }
-  const lot = etat.produit.lot ?? lotsAvecCaptures.at(-1) ?? null
-  const caps = p.captures.filter((c) => c.lot === lot)
-  const i = Math.min(etat.produit.i, Math.max(0, caps.length - 1))
-  const c = caps[i]
+  const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
+  const lotCourant = enCours?.lot ?? Math.min(plan.lots.length, p.lot_livre + 1)
+  const tachesLot = p.taches.filter((t) => t.lot === lotCourant)
+  const comptees = p.taches.filter((t) => t.statut !== "abandonnee")
+  const faites = comptees.filter((t) => t.statut === "fusionnee").length
+  const STT = { fusionnee: ["ajoutée", "ok"], en_cours: ["en cours", "actif"], verification: ["essayée", "actif"], prete: ["à faire", ""], attente: ["à faire", ""], bloquee: ["à décider", "actif"], abandonnee: ["retirée", ""] }
+  const essai = enCours && (enCours.approche || enCours.tentative)
+  return html`<section class="carte carte-p pile" style="gap:14px" aria-labelledby="en-ce-moment">
+      ${enCours ? html`<div class="surtitre" id="en-ce-moment">En ce moment · lot ${lotCourant} sur ${plan.lots.length}</div>
+        <strong style="font-size:17px">${enCours.titre}</strong>
+        ${essai ? html`<span class="aide">${enCours.approche ? `Méthode ${enCours.approche + 1}` : `Essai ${enCours.tentative + 1}`} : la version précédente a été refusée par le contrôle, l'usine la reprend.</span>` : ""}
+        ${etapesTache(enCours, p.etapes_noms ?? [])}`
+      : html`<strong id="en-ce-moment">${p.statut === "en_production" ? "En ligne" : p.statut === "livre" ? "Tous les lots sont livrés" : p.statut === "creation" ? "L'usine prépare le dépôt et le socle" : "Aucune fonction en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">L'usine passe à la suite.</span>` : ""}`}
+      ${comptees.length ? html`<div class="pile" style="gap:6px"><div class="barre aide"><span>${faites} fonction${faites > 1 ? "s" : ""} sur ${comptees.length}</span><span>${Math.min(p.lot_livre, plan.lots.length)} lot${p.lot_livre > 1 ? "s" : ""} livré${p.lot_livre > 1 ? "s" : ""} sur ${plan.lots.length}</span></div>
+        <div class="jauge" role="progressbar" aria-valuemin="0" aria-valuemax="${comptees.length}" aria-valuenow="${faites}" aria-label="Fonctions ajoutées"><span style="width:${Math.round((faites / comptees.length) * 100)}%"></span></div></div>` : ""}
+    </section>
+    ${tachesLot.length ? html`<details class="carte carte-p" id="lot-detail" ${etat.lotOuvert ? "open" : ""}><summary class="barre" style="cursor:pointer"><strong>Lot ${lotCourant} · ${plan.lots[lotCourant - 1]?.nom ?? ""}</strong><span class="aide">${tachesLot.filter((t) => t.statut === "fusionnee").length} sur ${tachesLot.length} · voir</span></summary>
+      <ul class="taches" style="margin-top:10px">${tachesLot.map((t) => html`<li><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></details>` : ""}`
+}
+
+// L'aperçu : une galerie sobre ; un clic agrandit.
+function ongletApercu(p) {
   const adresse = p.production ?? p.apercu
-  return html`<section class="carte carte-p pile produit" style="gap:12px" aria-labelledby="produit-titre">
-    <div class="barre"><h2 id="produit-titre" style="font-size:15px">Le produit</h2>${adresse ? html`<a class="btn btn-s btn-petit" href="${adresse}" target="_blank" rel="noopener">${p.production ? "Ouvrir le produit" : "Ouvrir l'aperçu"}</a>` : ""}</div>
-    <ol class="lots" aria-label="Lots">${plan.lots.map((l, j) => {
-      const n = j + 1
-      const cls = n <= p.lot_livre ? "livre" : n === Math.min(plan.lots.length, p.lot_livre + 1) && ["fabrication", "corrections", "creation"].includes(p.statut) ? "courant" : ""
-      return lotsAvecCaptures.includes(n)
-        ? html`<li class="mono ${cls}"><button type="button" data-action="produit-lot" data-id="${n}" aria-pressed="${String(lot === n)}" title="Lot ${n} : ${l.nom}">${n}</button></li>`
-        : html`<li class="mono ${cls}" title="Lot ${n} : ${l.nom}">${n}</li>`
-    })}</ol>
-    ${c ? html`<figure class="capture-grande"><a href="${c.url}" target="_blank" rel="noopener"><img src="${c.url}" alt="Capture du lot ${lot} : ${c.fichier}"></a>
-        <figcaption>Lot ${lot} · ${plan.lots[lot - 1]?.nom ?? ""} · ${i + 1} sur ${caps.length}</figcaption></figure>
-      ${caps.length > 1 ? html`<div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="produit-capture" data-id="${(i - 1 + caps.length) % caps.length}" aria-label="Capture précédente">←</button><button type="button" class="btn btn-s btn-petit" data-action="produit-capture" data-id="${(i + 1) % caps.length}" aria-label="Capture suivante">→</button></div>` : ""}`
-    : html`<div class="vide">${p.lot_livre ? "Pas de capture pour ce lot." : "Le produit apparaîtra ici dès le premier lot livré : le contrôle prend des captures, sur ordinateur et sur mobile, de chaque fonction vérifiée."}</div>`}
+  const ouvrir = adresse ? html`<a class="btn btn-s btn-petit" href="${adresse}" target="_blank" rel="noopener">${p.production ? "Ouvrir le produit" : "Ouvrir l'aperçu"} ↗</a>` : ""
+  if (!p.captures.length) return html`<section class="carte vide-grand"><h2>Pas encore d'aperçu</h2><p class="aide">Dès le premier lot livré, le contrôle photographie chaque fonction vérifiée, sur ordinateur et sur téléphone.</p>${ouvrir}</section>`
+  const caps = capturesFiltrees(p)
+  const f = etat.filtreCaptures
+  const lots = [...new Set(p.captures.map((c) => c.lot).filter(Boolean))].sort((a, b) => a - b)
+  const ecrans = new Set(p.captures.map((c) => decrireCapture(p, c).mobile))
+  return html`<div class="pile" style="gap:14px">
+    <div class="barre" style="flex-wrap:wrap;gap:8px">
+      <div class="rangee" style="gap:8px">
+        ${lots.length > 1 ? html`<label class="cache" for="cap-lot">Lot</label><select id="cap-lot" class="champ champ-petit" data-filtre-captures="lot"><option value="">Tous les lots</option>${lots.map((n) => html`<option value="${n}" ${f.lot === String(n) ? "selected" : ""}>Lot ${n} · ${p.plan?.lots?.[n - 1]?.nom ?? ""}</option>`)}</select>` : ""}
+        ${ecrans.size > 1 ? html`<div class="segmente" role="group" aria-label="Écran">${[["", "Tout"], ["ordinateur", "Ordinateur"], ["mobile", "Téléphone"]].map(([id, nom]) => html`<button type="button" data-action="filtre-captures" data-id="${id}" aria-pressed="${String(f.ecran === id)}">${nom}</button>`)}</div>` : ""}
+      </div>
+      ${ouvrir}
+    </div>
+    ${caps.length ? html`<ul class="galerie">${caps.map((c, i) => html`<li class="${c.mobile ? "mobile" : ""}"><button type="button" data-action="voir-capture" data-id="${i}" aria-label="Agrandir : ${c.titre}${c.mobile ? ", sur téléphone" : ""}"><img src="${c.url}" alt="" loading="lazy"></button><span title="${c.titre}">${c.titre}</span></li>`)}</ul>` : html`<div class="carte vide">Aucune capture pour ce choix.</div>`}
+  </div>`
+}
+
+function fenetreCapture(i) {
+  const p = etat.projet
+  const caps = p ? capturesFiltrees(p) : []
+  const c = caps[i]
+  if (!c) return ""
+  const n = caps.length
+  return fenetre(c.titre, html`<figure class="visionneuse"><img src="${c.url}" alt="${c.titre}${c.mobile ? ", sur téléphone" : ""}">
+      <figcaption class="aide">${c.lot ? `Lot ${c.lot} · ` : ""}${c.mobile ? "Téléphone" : "Ordinateur"} · ${i + 1} sur ${n}</figcaption></figure>
+    <div class="barre">${n > 1 ? html`<button type="button" class="btn btn-s" data-action="voir-capture" data-id="${(i - 1 + n) % n}" aria-label="Capture précédente">←</button>` : html`<span></span>`}
+      <a class="aide" href="${c.url}" target="_blank" rel="noopener">Taille réelle ↗</a>
+      ${n > 1 ? html`<button type="button" class="btn btn-s" data-action="voir-capture" data-id="${(i + 1) % n}" aria-label="Capture suivante">→</button>` : html`<span></span>`}</div>`, { large: true })
+}
+
+function ongletEchanges(p) {
+  const discussion = p.journal.filter((j) => ["demande", "decision", "corrections", "diagnostic", "validation", "plan", "design", "abandon", "production", "domaine"].includes(j.type))
+  return html`<section class="carte carte-p pile" style="gap:12px" aria-label="Échanges">
+    ${discussion.length ? discussion.slice(-12).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type === "demande" || j.type === "decision" ? "Toi" : "L'usine"} · ${heure(j.le)}</small>${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`) : html`<div class="aide">Aucun échange pour l'instant.</div>`}
+    <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
+      <input id="message-libre" class="champ" placeholder="Une précision pour l'usine…">
+      <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
+    <div class="aide">Pendant la fabrication, une précision part avec la prochaine livraison. Pour changer de cap : « Changer de direction », dans le menu ⋯ en haut.</div>
   </section>`
+}
+
+// Le reste, pour qui veut regarder sous le capot : le détail technique, la vidéo, la fiche du projet.
+function ongletPlus(p) {
+  const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
+  const onglet = ongletActif(p)
+  return html`
+    <section class="carte carte-p pile" style="gap:10px" aria-labelledby="fiche-projet"><h2 id="fiche-projet" style="font-size:15px">Le projet</h2>
+      <dl class="fiche-projet">
+        ${p.brique ? html`<dt>Type</dt><dd>${BRIQUES[p.brique] ?? p.brique}${p.repris ? " · application reprise" : ""}</dd>` : ""}
+        ${p.persona ? html`<dt>Pour</dt><dd><a href="#/personas/${p.persona_id}">${p.persona}</a></dd>` : ""}
+        ${p.cout ? html`<dt>Dépensé</dt><dd class="mono">${p.cout}${p.budget ? ` sur ${p.budget}` : ""}</dd>` : ""}
+        ${p.depot ? html`<dt>Code</dt><dd><a href="${p.depot}" target="_blank" rel="noopener">${p.depot.replace(/^https:\/\/github\.com\//, "")} ↗</a></dd>` : ""}
+      </dl></section>
+    ${blocVideo(p)}
+    <details class="carte carte-p technique" id="technique" ${etat.techniqueOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">Détail technique : direct, journal, pull requests</summary>
+      <div class="pile" style="margin-top:12px">
+        ${enCours ? html`<div class="aide mono">${enCours.cle}${enCours.pr ? ` · PR #${enCours.pr}` : ""}${enCours.approche ? ` · approche ${enCours.approche + 1}, modèle renforcé` : enCours.tentative ? ` · correction ${enCours.tentative}` : ""}</div>` : ""}
+        <div class="onglets" role="tablist" aria-label="Détail technique">
+          ${[...(enCours ? [["direct", "● En direct"]] : []), ["journal", "Journal"]].map(([id, nom]) => html`<button type="button" role="tab" id="onglet-${id}" aria-controls="panneau" aria-selected="${String(onglet === id)}" tabindex="${onglet === id ? "0" : "-1"}" data-action="onglet" data-id="${id}">${nom}</button>`)}
+        </div>
+        <div role="tabpanel" id="panneau" aria-labelledby="onglet-${onglet}">
+        ${onglet === "direct" ? html`<div class="direct mono" role="log" aria-live="off" id="direct">${dessinerDirect()}</div>
+          <div class="aide">${enCours.statut === "verification" ? "Le vérificateur reconstruit l'application et teste les critères." : "L'agent code dans son atelier."} Mis à jour toutes les 3 secondes ; les secrets sont masqués.</div>` : ""}
+        ${onglet === "journal" ? html`<div class="journal mono" role="log" aria-live="polite" id="journal">
+          ${p.journal.map((j) => html`<div class="t-${j.type}"><time>${heure(j.le)}</time>${j.type} · ${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`)}
+          ${p.etapes.length ? html`<div style="margin-top:8px;color:var(--code-doux)">— suivi —</div>${p.etapes.map((e) => html`<div>${e}</div>`)}` : ""}
+        </div>` : ""}
+        </div>
+      </div>
+    </details>
+    ${zoneSensible(p)}`
+}
+
+// La demande d'origine et la suppression, repliées tout en bas.
+const zoneSensible = (p) => html`<details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine, supprimer le projet</summary>
+  <p style="white-space:pre-wrap;color:var(--texte)">${p.prompt}</p>
+  <div class="confirmer" role="alertdialog" aria-labelledby="conf-sup" id="conf-supprimer" hidden><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
+    <div style="font-size:14px">L'aperçu et la production s'arrêtent et la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.</div>
+    <div class="rangee"><button type="button" class="btn btn-d" data-action="supprimer">Oui, supprimer le projet</button><button type="button" class="btn btn-s" data-action="annuler" data-quoi="supprimer">Annuler</button></div></div>
+  <div id="btn-supprimer"><button type="button" class="btn btn-d btn-petit" data-action="confirmer" data-quoi="supprimer">Supprimer le projet</button></div>
+</details>`
+
+function blocFabrication(p) {
+  const o = ongletProjet(p)
+  const contenu = { avancement: ongletAvancement, apercu: ongletApercu, echanges: ongletEchanges, plus: ongletPlus }[o](p)
+  return html`<div class="onglets-projet" role="tablist" aria-label="Le projet">${ONGLETS_PROJET.map(([id, nom]) => html`<button type="button" role="tab" id="op-${id}" aria-selected="${String(o === id)}" aria-controls="op-panneau" tabindex="${o === id ? "0" : "-1"}" data-action="onglet-projet" data-id="${id}">${nom}${id === "apercu" && p.captures.length ? html` <span class="compte">${p.captures.length}</span>` : ""}</button>`)}</div>
+  <div class="pile" id="op-panneau" role="tabpanel" aria-labelledby="op-${o}" style="gap:16px">${contenu}</div>`
 }
 
 // La mise en ligne : les réglages en une phrase (modifiables), puis un seul bouton.
@@ -1127,16 +1181,25 @@ function vueProjet() {
   const p = etat.projet
   if (!p || p.id !== etat.route.id) return html`${barreHaut()}<div class="chargement">Chargement du projet…</div>`
   const enPlan = p.statut === "plan_a_valider"
+  const avecOnglets = !enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut)
+  const adresse = p.production ?? p.apercu
+  // Une ligne discrète sous le titre, au lieu d'une rangée de badges.
+  const meta = [p.brique ? BRIQUES[p.brique] ?? p.brique : "", p.repris ? "application reprise" : "", p.persona ? html`pour <a href="#/personas/${p.persona_id}">${p.persona}</a>` : "", p.cout ? html`<span class="mono">${p.cout}</span> dépensés` : ""].filter(Boolean)
   return html`
     ${barreHaut()}
     <div class="entete">
       <div><a class="retour" href="#/">← Projets</a>
-        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${pastilleAttente(p)}${["echec", "arrete", "abandonne"].includes(p.statut) ? badgeStatut(p.statut) : ""}${p.brique ? html`<span class="badge">${BRIQUES[p.brique] ?? p.brique}</span>` : ""}${p.repris ? html`<span class="badge">Application reprise</span>` : ""}${p.persona ? html`<a class="badge bleu" href="#/personas/${p.persona_id}" style="text-decoration:none">Persona : ${p.persona}</a>` : ""}${p.cout ? html`<span class="badge mono" title="Coût estimé au tarif des API${p.budget ? `, sur un budget de ${p.budget}` : ""}">${p.cout}${p.budget ? ` / ${p.budget}` : ""}</span>` : ""}</div>
-        <p class="chapeau">${p.resume}</p></div>
-      <div class="rangee">
-        ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" class="btn btn-s" data-action="ouvrir-reorienter" aria-controls="reorienter" aria-expanded="${String(Boolean(etat.reorienterOuvert))}">Changer de direction</button>` : ""}
-        ${p.production ? html`<a class="btn btn-s" href="${p.production}" target="_blank" rel="noopener">Ouvrir le produit</a>` : p.apercu ? html`<a class="btn btn-s" href="${p.apercu}" target="_blank" rel="noopener">Ouvrir l'aperçu</a>` : ""}
-        ${p.depot ? html`<a class="btn btn-s" href="${p.depot}" target="_blank" rel="noopener">Voir le code</a>` : ""}
+        <div class="rangee" style="margin-top:8px;gap:12px"><h1>${p.nom}</h1>${pastilleAttente(p)}${["echec", "arrete", "abandonne"].includes(p.statut) ? badgeStatut(p.statut) : ""}</div>
+        <p class="chapeau">${p.resume}</p>
+        ${meta.length ? html`<p class="meta-projet aide">${meta.map((m, i) => html`${i ? " · " : ""}${m}`)}</p>` : ""}</div>
+      <div class="rangee" style="gap:8px">
+        ${adresse ? html`<a class="btn btn-p" href="${adresse}" target="_blank" rel="noopener">${p.production ? "Ouvrir le produit" : "Ouvrir l'aperçu"} ↗</a>` : ""}
+        <details class="menu-actions" id="menu-projet" ${etat.menuProjet ? "open" : ""}><summary class="btn btn-s" aria-label="Autres actions">⋯</summary>
+          <div class="menu-liste">
+            ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" data-action="ouvrir-reorienter" aria-controls="reorienter" aria-expanded="${String(Boolean(etat.reorienterOuvert))}">Changer de direction</button>` : ""}
+            ${p.depot ? html`<a href="${p.depot}" target="_blank" rel="noopener">Voir le code ↗</a>` : ""}
+            ${avecOnglets ? html`<button type="button" data-action="onglet-projet" data-id="plus">Vidéo, détail technique, supprimer…</button>` : html`<button type="button" data-action="voir-zone-sensible">Demande d'origine, supprimer…</button>`}
+          </div></details>
       </div>
     </div>
     ${ligneDeVie(p)}
@@ -1152,17 +1215,9 @@ function vueProjet() {
       <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-projet">Relancer l'analyste</button><button type="button" class="btn btn-s btn-petit" data-action="annuler-reorientation">Garder l'ancien plan</button></div></div>` : ""}
     ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : etat.planVue === "edition" || etat.planModifie ? blocPlan(p) : blocPlanLecture(p)) : ""}
     ${etat.reorienterOuvert ? blocReorienter(p) : ""}
-    ${!enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut) ? blocFabrication(p) : ""}
     ${blocRecette(p)}
     ${blocProduction(p)}
-    ${blocVideo(p)}
-    <details class="carte carte-p" id="zone-sensible" ${etat.detailsOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">La demande d'origine, supprimer le projet</summary>
-      <p style="white-space:pre-wrap;color:var(--texte)">${p.prompt}</p>
-      <div class="confirmer" role="alertdialog" aria-labelledby="conf-sup" id="conf-supprimer" hidden><strong id="conf-sup">Supprimer ${p.nom} ?</strong>
-        <div style="font-size:14px">L'aperçu et la production s'arrêtent et la place est libérée. Le code reste sur GitHub et les données de production restent sur le serveur.</div>
-        <div class="rangee"><button type="button" class="btn btn-d" data-action="supprimer">Oui, supprimer le projet</button><button type="button" class="btn btn-s" data-action="annuler" data-quoi="supprimer">Annuler</button></div></div>
-      <div id="btn-supprimer"><button type="button" class="btn btn-d btn-petit" data-action="confirmer" data-quoi="supprimer">Supprimer le projet</button></div>
-    </details>`
+    ${avecOnglets ? blocFabrication(p) : zoneSensible(p)}`
 }
 
 // Les services de l'usine, nommés pour tout le monde (le nom technique reste en info-bulle).
@@ -1663,6 +1718,7 @@ function dessinerFenetre() {
   if (!q) return ""
   if (q === "public") return fenetre(etat.departPublic ? (DEPARTS_PUBLIC.find(([id]) => id === etat.departPublic) ?? [])[2] : "Nouveau public", creationPublic())
   if (q === "machine") return fenetreMachine()
+  if (q.startsWith("capture-")) return fenetreCapture(Number(q.slice(8)))
   if (q === "inviter") return fenetre("Inviter dans l'usine", etat.acces ? formulaireInviter() : html`<div class="chargement">Chargement…</div>`)
   if (q === "budget") return fenetreBudget()
   if (q.startsWith("integration-")) return fenetreIntegration(q.slice(12))
@@ -2136,6 +2192,7 @@ const ACTIONS = {
   decider: (el) => agir(() => api("POST", `escalades/${el.dataset.id}`, { choix: el.dataset.choix, texte: $(`#consigne-${el.dataset.id}`)?.value ?? "" }), { succes: "Décision transmise : l'usine reprend." }),
   "valider-plan": () => agir(() => api("POST", `projets/${etat.projet.id}/valider`, {}), { succes: etat.projet.reorientation ? "Réorientation validée : l'usine ouvre les nouvelles tâches et reprend la fabrication." : "Plan validé : l'usine crée le dépôt et commence le lot 1." }),
   "ouvrir-reorienter": () => {
+    etat.menuProjet = false
     etat.reorienterOuvert = !etat.reorienterOuvert
     rendre()
     if (etat.reorienterOuvert) {
@@ -2317,8 +2374,10 @@ const ACTIONS = {
     const b = $("[data-action=prod-reglages]")
     if (b) b.textContent = etat.prodReglages ? "Masquer les réglages" : "Modifier les réglages"
   },
-  "produit-lot": (el) => { etat.produit.lot = Number(el.dataset.id); etat.produit.i = 0; rendre() },
-  "produit-capture": (el) => { etat.produit.i = Number(el.dataset.id); rendre() },
+  "onglet-projet": (el) => { etat.ongletProjet = { projet: etat.projet?.id, id: el.dataset.id }; etat.menuProjet = false; rendre(); $(`#op-${el.dataset.id}`)?.focus() },
+  "filtre-captures": (el) => { etat.filtreCaptures.ecran = el.dataset.id; rendre() },
+  "voir-capture": (el) => { etat.fenetre = `capture-${el.dataset.id}`; rendre() },
+  "voir-zone-sensible": () => { etat.menuProjet = false; etat.detailsOuvert = true; rendre(); $("#zone-sensible")?.scrollIntoView({ behavior: "smooth" }) },
   copier: async (el) => {
     try {
       await navigator.clipboard.writeText(el.dataset.texte)
@@ -2373,6 +2432,12 @@ document.addEventListener("input", (e) => {
     const v = $("[data-action=valider-plan]")
     if (v) v.disabled = true
   }
+})
+
+// Le lot des captures se choisit dans une liste.
+document.addEventListener("change", (e) => {
+  const cle = e.target.dataset?.filtreCaptures
+  if (cle && etat.filtreCaptures) { etat.filtreCaptures[cle] = e.target.value; rendre() }
 })
 
 // Les fichiers choisis s'affichent sous le bouton (nom et taille), sans redessiner la fenêtre.
@@ -2562,10 +2627,19 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault()
     return ajouterInvites(e.target)
   }
+  // Dans la visionneuse des captures, les flèches passent d'une capture à l'autre.
+  if (etat.fenetre?.startsWith("capture-") && ["ArrowLeft", "ArrowRight"].includes(e.key) && etat.projet) {
+    const n = capturesFiltrees(etat.projet).length
+    const i = Number(etat.fenetre.slice(8))
+    etat.fenetre = `capture-${(i + (e.key === "ArrowRight" ? 1 : -1) + n) % n}`
+    return rendre()
+  }
   const onglet = e.target.closest?.("[role=tab]")
   if (!onglet || !["ArrowLeft", "ArrowRight"].includes(e.key)) return
-  const tous = [...document.querySelectorAll("[role=tab]")]
+  // Chaque rangée d'onglets se parcourt seule : celle du projet, celle du détail technique.
+  const tous = [...onglet.parentElement.querySelectorAll("[role=tab]")]
   const i = (tous.indexOf(onglet) + (e.key === "ArrowRight" ? 1 : -1) + tous.length) % tous.length
+  if (onglet.parentElement.classList.contains("onglets-projet")) return ACTIONS["onglet-projet"](tous[i])
   etat.onglet = tous[i].dataset.id
   rendre()
   $(`#onglet-${etat.onglet}`)?.focus()
@@ -2574,6 +2648,8 @@ document.addEventListener("toggle", (e) => {
   if (e.target.id === "zone-sensible") etat.detailsOuvert = e.target.open
   if (e.target.id === "reorienter") etat.reorienterOuvert = e.target.open
   if (e.target.id === "technique") etat.techniqueOuvert = e.target.open
+  if (e.target.id === "lot-detail") etat.lotOuvert = e.target.open
+  if (e.target.id === "menu-projet") etat.menuProjet = e.target.open
 }, true)
 
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------

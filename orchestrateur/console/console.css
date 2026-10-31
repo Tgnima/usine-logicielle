@@ -466,3 +466,39 @@ label.depot-fichiers:has(+ .cache-visuel:focus-visible) { border-color: var(--ac
 @keyframes etape-allumee { to { opacity: 1 } }
 @keyframes pulsation { 50% { transform: scale(.6); opacity: .5 } }
 @media (prefers-reduced-motion: reduce) { .etapes-recherche li, .etapes-recherche li::before, .depart { animation: none; transition: none; opacity: 1 } }
+
+/* --- Page projet : l'essentiel en haut, le reste en onglets ; captures en galerie --- */
+.meta-projet { margin: 6px 0 0; font-size: 13px }
+.meta-projet a { color: inherit }
+.menu-actions { position: relative }
+.menu-actions > summary { list-style: none; min-width: 44px; justify-content: center }
+.menu-actions > summary::-webkit-details-marker { display: none }
+.menu-liste { position: absolute; right: 0; top: calc(100% + 6px); z-index: 15; min-width: 250px; display: flex; flex-direction: column; padding: 6px; background: var(--surface); border: 1px solid var(--trait); border-radius: var(--rayon-l); box-shadow: var(--ombre-fenetre) }
+.menu-liste > a, .menu-liste > button { all: unset; cursor: pointer; padding: 9px 12px; border-radius: var(--rayon-m); font-size: 14px; color: var(--encre) }
+.menu-liste > a:hover, .menu-liste > button:hover, .menu-liste > a:focus-visible, .menu-liste > button:focus-visible { background: var(--surface-2) }
+.onglets-projet { display: flex; gap: 4px; border-bottom: 1px solid var(--trait); overflow-x: auto; scrollbar-width: none }
+.onglets-projet button { all: unset; cursor: pointer; padding: 10px 14px; font-size: 14px; font-weight: 600; color: var(--doux); border-bottom: 2px solid transparent; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center }
+.onglets-projet button:hover { color: var(--encre) }
+.onglets-projet button[aria-selected="true"] { color: var(--encre); border-bottom-color: var(--accent) }
+.onglets-projet button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
+.compte { display: inline-flex; justify-content: center; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--doux); font-size: 12px }
+.segmente { display: inline-flex; border: 1px solid var(--trait); border-radius: 999px; padding: 2px; background: var(--surface) }
+.segmente button { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--doux) }
+.segmente button[aria-pressed="true"] { background: var(--accent-fond); color: var(--accent-fort) }
+.segmente button:focus-visible { outline: 2px solid var(--accent) }
+.galerie { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px 16px }
+.galerie li { display: flex; flex-direction: column; gap: 6px; min-width: 0 }
+.galerie button { all: unset; display: block; cursor: zoom-in; border-radius: 10px; overflow: hidden; background: var(--surface-2); aspect-ratio: 16 / 10; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); transition: transform .15s, box-shadow .15s }
+.galerie li.mobile button { aspect-ratio: 16 / 10; display: flex; justify-content: center }
+.galerie li.mobile img { width: auto; height: 100%; object-fit: contain }
+.galerie img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top }
+.galerie button:hover, .galerie button:focus-visible { transform: translateY(-2px); box-shadow: var(--ombre-carte) }
+.galerie button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.galerie li > span { font-size: 13px; color: var(--doux); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.fenetre.fenetre-large { width: min(1100px, calc(100vw - 32px)) }
+.visionneuse { margin: 0; display: flex; flex-direction: column; gap: 8px; align-items: center }
+.visionneuse img { max-width: 100%; max-height: calc(100vh - 230px); object-fit: contain; border-radius: 8px; background: var(--surface-2) }
+.fiche-projet { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 14px }
+.fiche-projet dt { color: var(--doux) }
+.fiche-projet dd { margin: 0; min-width: 0; overflow-wrap: anywhere }
+@media (prefers-reduced-motion: reduce) { .galerie button { transition: none } }
