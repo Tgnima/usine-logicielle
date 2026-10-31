@@ -8,6 +8,8 @@ const AIDE = `Usage : node src/cli.mjs <commande>
   repondre <n°> "<réponses>"     répond aux questions de l'analyste
   valider <n°>                   valide le plan : la fabrication commence
   corriger <n°> "<retours>"      corrige le plan (ou demande des corrections après livraison)
+  reorienter <n°> "<direction>" [persona_id]
+                                 change de direction pendant la fabrication (et de persona, s'il est validé)
   decider <escalade> <A|B|C> ["consigne"]
   production <n°> [--donnees demo|vide] [--emails captures|reels] [--horloge acceleree|reelle] [--autorises "a@b.fr,@domaine.fr"]
                                  met en production (après livraison)
@@ -31,6 +33,7 @@ const table = {
   repondre: () => appel("POST", `/repondre/${a}`, { texte: b }),
   valider: () => appel("POST", `/valider/${a}`, {}),
   corriger: () => appel("POST", `/corriger/${a}`, { texte: b }),
+  reorienter: () => appel("POST", `/reorienter/${a}`, { texte: b, persona_id: c ? Number(c) : null }),
   decider: () => appel("POST", `/decider/${a}`, { choix: String(b).toUpperCase(), texte: c }),
   production: () => {
     // Les options --cle valeur deviennent les choix de production.

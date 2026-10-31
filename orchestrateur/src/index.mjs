@@ -81,6 +81,7 @@ const routes = {
   "POST /production": (c, id) => livraison.mettreEnProduction(ctx, id, c.par ?? "cli", c.choix ?? null),
   "POST /relancer": (c, id) => actions.relancerProjet(ctx, id, c.par ?? "cli"),
   "POST /abandonner": (c, id) => actions.abandonnerPlan(ctx, id, c.par ?? "cli"),
+  "POST /reorienter": (c, id) => actions.reorienterProjet(ctx, id, { consigne: c.texte, personaId: Number(c.persona_id) || null, par: c.par ?? "cli" }),
   "POST /mettre-a-jour": (c) => mettreAJourUsine(ctx, c.par ?? "cli"),
   "POST /stop": (c) => actions.arreter(ctx, c.par ?? "cli"),
   "POST /reprendre": () => actions.reprendre(ctx),
