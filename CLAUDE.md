@@ -27,6 +27,8 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/reprise.mjs` | Reprendre un dépôt existant : mode copie ou direct, l'inventaire (mise au contrat d'hébergement, éprouvée par `porteInventaire()`), le socle gardé en patch |
 | `orchestrateur/src/personas.mjs` | Les personas : recherche sourcée, fiche vérifiée par `verifierPersona()`, ICP.md et MISSION.md |
 | `orchestrateur/src/recette.mjs` | La recette : les scénarios cachés du persona, joués à la fin par le vérificateur |
+| `orchestrateur/src/connecteurs.mjs` | Les connecteurs (serveurs MCP) donnés aux IA selon leur rôle (plan, construction, vérification) : catalogue, clés chiffrées passées en variables `CONNECTEUR_<ID>`, options de `scriptClaude()` et `scriptCodex()` (paramètre `role`) ; un nouveau connecteur s’ajoute dans `CATALOGUE` |
+| `orchestrateur/src/presentation.mjs` | Ce que la console et Slack montrent, en langage produit : les cinq phases d'un projet, s'il attend une décision, les questions à choix de l'analyste, la recommandation et la conséquence de chaque option d'une décision. Rien n'y est décidé |
 | `docs/INDUSTRIALISATION.md` | L'offre pour un hébergeur |
 | `usine.config.yml` | Le contrat (non suivi par Git, créé depuis l'exemple) |
 

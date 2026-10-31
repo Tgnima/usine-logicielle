@@ -89,7 +89,7 @@ export async function jouerRecette(ctx, projetId, sha) {
       `(setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/recette/app.log 2>&1 &)`,
       "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
       "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-      scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/recette/verdict.txt -`, entree: "/tmp/sorties/recette/consigne.md", journal: "/tmp/sorties/recette/codex.log", marqueur: "RECETTE_CODE" }),
+      scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/recette/verdict.txt -`, entree: "/tmp/sorties/recette/consigne.md", journal: "/tmp/sorties/recette/codex.log", marqueur: "RECETTE_CODE", role: "verification" }),
       "fi",
       "echo \"@@ CAPTURES $(cd /tmp/sorties/recette/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
       libererPort(4100),
@@ -122,7 +122,9 @@ export const lireRecette = (projet) => {
 
 // Les écarts de la recette, en demande de corrections (ce qu'on a observé, pas le scénario entier),
 // puis les étages de la pyramide à faire monter.
-export function ecartsEnCorrections(recette) {
+// garder : les index des points retenus (dans l'ordre de propositionsRecette), null pour tous ;
+// ajout : une demande de la personne, ajoutée à la fin.
+export function ecartsEnCorrections(recette, { garder = null, ajout = "" } = {}) {
   const ecarts = (recette?.scenarios ?? []).filter((s) => !s.tenu)
   const parties = []
   if (ecarts.length) {
@@ -133,8 +135,16 @@ export function ecartsEnCorrections(recette) {
   }
   const pyramide = pyramideEnCorrections(recette?.pyramide)
   if (pyramide) parties.push(pyramide)
-  return parties.join("\n\n")
+  if (!garder && !ajout.trim()) return parties.join("\n\n")
+  // Une sélection : chaque paragraphe ne garde que ses points retenus, et disparaît s'il n'en a plus.
+  let n = -1
+  const retenus = parties.map((p) => p.split("\n").filter((l) => !l.startsWith("- ") || (n++, !garder || garder.includes(n)))).filter((lignes) => lignes.some((l) => l.startsWith("- "))).map((l) => l.join("\n"))
+  if (ajout.trim()) retenus.push(`Demande de la personne qui a validé la recette :\n- ${ajout.trim()}`)
+  return retenus.join("\n\n")
 }
+
+// Les points de la recette, un par ligne, dans l'ordre : ce que la console propose de cocher.
+export const propositionsRecette = (recette) => ecartsEnCorrections(recette).split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2))
 
 // Le nombre de points à corriger : les écarts, et les étages de la pyramide à faire monter.
 export const pointsACorriger = (recette) => ecartsEnCorrections(recette).split("\n").filter((l) => l.startsWith("- ")).length

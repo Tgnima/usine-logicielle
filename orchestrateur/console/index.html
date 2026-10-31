@@ -12,22 +12,30 @@
 </head>
 <body>
 <div class="app">
-  <aside class="cote">
-    <a class="marque" href="#/">
-      <span class="logo mono" aria-hidden="true">U/</span>
-      <span><strong>Usine logicielle</strong><small class="mono" id="base">…</small></span>
-    </a>
-    <nav class="nav" aria-label="Navigation principale">
-      <a href="#/demarrer" data-nav="demarrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12l4 4L19 6"/></svg>Premiers pas</a>
-      <a href="#/" data-nav="projets"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Projets</a>
-      <a href="#/nouveau" data-nav="nouveau"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</a>
-      <a href="#/personas" data-nav="personas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4.5 4.5-6.5 8-6.5s6.5 2 8 6.5"/></svg>Personas</a>
-      <a href="#/sante" data-nav="sante"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Santé et coûts</a>
-      <a href="#/acces" data-nav="acces"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21c1-4 4-6 7-6s6 2 7 6M17 11l2 2 3-4"/></svg>Accès et clés</a>
-      <a href="#/historique" data-nav="historique"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Historique</a>
-      <a href="#/reglages" data-nav="reglages"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Réglages</a>
-    </nav>
-    <div class="cote-bas" id="cote-bas"></div>
+  <aside class="cote" id="cote">
+    <div class="cote-haut">
+      <a class="marque" href="#/">
+        <span class="logo mono" aria-hidden="true">U/</span>
+        <span><strong>Usine logicielle</strong><small class="mono" id="base">…</small></span>
+      </a>
+      <button type="button" class="btn-icone menu-mobile" data-action="menu" aria-expanded="false" aria-controls="cote-corps" aria-label="Menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    </div>
+    <div class="cote-corps" id="cote-corps">
+      <a class="btn btn-p nouveau-projet" href="#/nouveau"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</a>
+      <nav class="nav" aria-label="Démarrage">
+        <a href="#/demarrer" data-nav="demarrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12l4 4L19 6"/></svg>Premiers pas</a>
+      </nav>
+      <nav class="projets-cote" aria-labelledby="titre-projets">
+        <div class="barre"><span class="surtitre" id="titre-projets">Projets</span><a class="aide" href="#/projets" data-nav="projets">Tout voir</a></div>
+        <ul id="liste-projets"></ul>
+      </nav>
+      <nav class="nav" aria-label="Navigation principale">
+        <a href="#/personas" data-nav="personas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4.5 4.5-6.5 8-6.5s6.5 2 8 6.5"/></svg>Publics</a>
+        <a href="#/reglages" data-nav="reglages"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Réglages</a>
+      </nav>
+      <div class="cote-bas" id="cote-bas"></div>
+    </div>
   </aside>
   <main class="principal" id="principal" tabindex="-1">
     <div id="messages" aria-live="polite"></div>
@@ -36,7 +44,7 @@
 </div>
 <dialog class="palette" id="palette" aria-label="Commandes">
   <label class="cache" for="palette-saisie">Rechercher une commande ou un projet</label>
-  <input id="palette-saisie" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-liste" aria-autocomplete="list" placeholder="Rechercher un projet, lancer une commande…">
+  <input id="palette-saisie" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-liste" aria-autocomplete="list" placeholder="Rechercher un projet ou une page…">
   <ul id="palette-liste" role="listbox" aria-label="Résultats"></ul>
 </dialog>
 <script type="module" src="/console.js"></script>

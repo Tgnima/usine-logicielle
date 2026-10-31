@@ -9,6 +9,7 @@ import { join } from "node:path"
 
 const dossier = mkdtempSync(join(tmpdir(), "console-test-"))
 let portier, console_, base, ctx
+let invite = null // le dernier compte envoyé au portier
 const utilisateurs = [
   { id: 1, email: "admin@exemple.test", role: "admin", applis: ["*"], actif: 1, active: 1 },
   { id: 2, email: "marie@exemple.test", role: "membre", applis: ["prospecta"], actif: 1, active: 0 },
@@ -18,6 +19,17 @@ before(async () => {
   // Le faux portier : la session vient d'un cookie « s=admin » ou « s=membre ».
   portier = createServer((req, res) => {
     const s = /s=(\w+)/.exec(req.headers.cookie ?? "")?.[1]
+    if (req.url === "/_portier/api/utilisateurs" && req.method === "POST") {
+      let b = ""
+      req.on("data", (x) => (b += x))
+      return req.on("end", () => {
+        invite = JSON.parse(b)
+        // Le vrai portier refuse un email mal formé avec un 400.
+        const refus = !invite.email.includes("@")
+        res.writeHead(refus ? 400 : 201, { "content-type": "application/json" })
+        res.end(JSON.stringify(refus ? { erreur: "email invalide" } : { id: 9, lien: "http://exemple.test/invitation" }))
+      })
+    }
     res.writeHead(req.url.startsWith("/_portier/qui") && !s ? 401 : 200, { "content-type": "application/json" })
     if (req.url.startsWith("/_portier/qui")) {
       if (!s) return res.end("{}")
@@ -138,6 +150,39 @@ test("une décision inexistante ou une option inconnue est refusée", async () =
 test("accès : ni son propre compte, ni réinviter un compte existant", async () => {
   assert.equal((await appel("/api/acces/utilisateurs/1", { methode: "DELETE", corps: {} })).status, 409)
   assert.equal((await appel("/api/acces/utilisateurs", { methode: "POST", corps: { email: "marie@exemple.test" } })).status, 409)
+})
+
+test("accès : le rôle se change dans la liste, sauf le sien", async () => {
+  assert.equal((await appel("/api/acces/utilisateurs/1", { methode: "PATCH", corps: { role: "membre" } })).status, 409)
+  const r = await json(await appel("/api/acces/utilisateurs/2", { methode: "PATCH", corps: { role: "admin" } }))
+  assert.equal(r.statut, 200)
+  assert.match(r.corps.message, /administrateur/)
+})
+
+test("audit : textes bornés, projet inconnu en 404, choix d'option contraint", async () => {
+  assert.equal((await appel("/api/projets/99/corriger", { methode: "POST", corps: { texte: "Le bouton ne marche pas" } })).status, 404)
+  assert.equal((await appel("/api/projets/1/corriger", { methode: "POST", corps: { texte: "  " } })).status, 400)
+  assert.equal((await appel("/api/projets/99/corriger-recette", { methode: "POST", corps: {} })).status, 404)
+  assert.equal((await appel("/api/escalades/1", { methode: "POST", corps: { choix: "AB" } })).status, 400)
+})
+
+test("audit : l'invitation part nettoyée, et un refus du portier garde son message", async () => {
+  const r = await appel("/api/acces/utilisateurs", { methode: "POST", corps: { email: "  Nouveau@Exemple.test ", role: "chef", applis: ["prospecta", "../x", "*", "Avec Espace"] } })
+  assert.equal(r.status, 200)
+  assert.deepEqual({ email: invite.email, role: invite.role, applis: invite.applis }, { email: "nouveau@exemple.test", role: "membre", applis: ["prospecta", "*"] })
+  const refus = await json(await appel("/api/acces/utilisateurs", { methode: "POST", corps: { email: "sans-arobase" } }))
+  assert.equal(refus.statut, 400)
+  assert.match(refus.corps.erreur, /refuse : email invalide/)
+})
+
+test("connecteurs : le catalogue sans clé, un identifiant inconnu en 404, une adresse non https refusée", async () => {
+  const r = await json(await appel("/api/connecteurs"))
+  assert.equal(r.statut, 200)
+  assert.ok(r.corps.connecteurs.some((c) => c.id === "documentation") && r.corps.connecteurs.every((c) => !c.serveur))
+  assert.equal((await appel("/api/connecteurs/inconnu", { methode: "PUT", corps: { actif: true, roles: ["plan"] } })).status, 404)
+  assert.equal((await appel("/api/connecteurs", { methode: "POST", corps: { nom: "Outil", adresse: "http://outil.exemple.test" } })).status, 400)
+  const a = await json(await appel("/api/connecteurs/documentation", { methode: "PUT", corps: { actif: true, roles: ["plan"] } }))
+  assert.equal(a.statut, 200)
 })
 
 test("aucun fichier hors de la console, aucune capture hors de son dossier", async () => {

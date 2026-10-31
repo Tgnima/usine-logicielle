@@ -19,6 +19,7 @@ const FACTURATION_PAUSE = 60 * 60_000
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { q } from "./travaux.mjs"
 import { ordreModes } from "./fournisseurs.mjs"
+import { optionsClaude, optionsCodex } from "./connecteurs.mjs"
 
 export const MODES = ["abonnement", "cle", "passerelle"]
 export const PASSERELLE = "https://ai-gateway.vercel.sh"
@@ -129,7 +130,10 @@ const PREALABLE = { abonnement: "true", cle: null, passerelle: '[ -n "$AI_GATEWA
 //   args : les options de claude (sans le modèle) ; sortie : le fichier de résultat (json ou stream-json) ;
 //   entree : le fichier de la consigne, lu sur l'entrée standard. Jamais en argument : Linux refuse
 //   un argument de plus de 128 Ko (« Argument list too long »), ce qu'atteint un gros projet.
-export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null", entree = "/dev/null" }) {
+//   role : plan, construction ou verification ; les connecteurs actifs de ce rôle sont ajoutés.
+export function scriptClaude(ctx, { args: options, modele, sortie, erreurs = "/dev/null", entree = "/dev/null", role = null }) {
+  const mcp = optionsClaude(ctx, role)
+  const args = mcp.args ? `${options} ${mcp.args}` : options
   const modes = modesDisponibles(ctx, "claude-code")
   const essais = modes.map((mode) => {
     // L'abonnement Claude n'existe dans l'atelier que par son jeton (console ou serveur).
@@ -152,6 +156,7 @@ export function scriptClaude(ctx, { args, modele, sortie, erreurs = "/dev/null",
 fi`
   })
   return [
+    ...(mcp.script ? [mcp.script] : []),
     "FAIT=",
     ...essais,
     `[ -n "$FAIT" ] || echo "@@ EPUISE_CLAUDE"`,
@@ -162,7 +167,10 @@ fi`
 // La même chose pour Codex (le vérificateur et le relecteur design).
 //   args : les options après « codex exec » (« - » : la consigne est lue dans entree, comme pour Claude).
 //   journal : le fichier où va la sortie --json.
-export function scriptCodex(ctx, { args, journal, marqueur = "CODEX_CODE", entree = "/dev/null" }) {
+export function scriptCodex(ctx, { args: options, journal, marqueur = "CODEX_CODE", entree = "/dev/null", role = null }) {
+  // Les options -c des connecteurs vont avant celles du travail (dont « - », la consigne).
+  const mcp = optionsCodex(ctx, role)
+  const args = mcp ? `${mcp} ${options}` : options
   const modes = modesDisponibles(ctx, "codex")
   const essais = modes.map((mode) => {
     const prealable = { ...PREALABLE, cle: '[ -n "$OPENAI_API_KEY" ]' }[mode]

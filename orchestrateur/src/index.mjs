@@ -1,6 +1,7 @@
 // L'orchestrateur : il tient l'état, applique le contrat, parle à GitHub et à
 // Slack. Il ne touche jamais Docker (c'est le déployeur) et ne code jamais
 // (ce sont les agents de l'atelier).
+import { envConnecteurs } from "./connecteurs.mjs"
 import { createServer } from "node:http"
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
@@ -37,7 +38,7 @@ migrerCoffre(ctx)
 // GitHub : l'application de l'usine, si elle est connectée (sinon le jeton du serveur).
 await brancherForge(ctx).catch((e) => console.error("GitHub (application) :", e.message))
 brancherJetons(config)
-brancherEnvCommun((serveur) => envFournisseurs(ctx, serveur === config.verificateur.url ? "codex" : "claude-code"))
+brancherEnvCommun((serveur) => ({ ...envFournisseurs(ctx, serveur === config.verificateur.url ? "codex" : "claude-code"), ...envConnecteurs(ctx) }))
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
 if (config.secrets.slackBot && config.secrets.slackApp) {

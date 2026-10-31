@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { adresses } from "./config.mjs"
+import { envoiDisponible } from "./courriel.mjs"
 import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { ecrireEtat, ecrireFichierDepot, ouvrirPR, shaPrincipal } from "./github.mjs"
 import { analyserBrief, analyserCorrections, analyserSens } from "./analyste.mjs"
@@ -260,7 +261,7 @@ export async function mettreEnProduction(ctx, projetId, par, demande = null) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (!["livre", "en_production"].includes(projet.statut)) return { ok: false, message: `Le projet est « ${projet.statut} », pas encore livré.` }
-  if (demande?.emails === "reels" && !process.env.SMTP_HOST) return { ok: false, message: "Emails réels demandés, mais aucun service d'envoi n'est configuré (SMTP_HOST dans .env)." }
+  if (demande?.emails === "reels" && !envoiDisponible()) return { ok: false, message: "Emails réels demandés, mais aucun service d'envoi n'est configuré (SMTP_HOST dans .env)." }
   const choix = choixProduction(config, projet.production ? JSON.parse(projet.production) : null, demande)
   const sha = await shaPrincipal(config, projet.depot, brancheDeBase(projet))
   const a = adresses(config, projet.slug)
@@ -284,6 +285,7 @@ export async function mettreEnProduction(ctx, projetId, par, demande = null) {
 export async function demanderCorrections(ctx, projetId, retours, par) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
+  if (!projet) return { ok: false, message: "Projet introuvable." }
   if (!["livre", "en_production"].includes(projet.statut)) return { ok: false, message: `Le projet est « ${projet.statut} ».` }
   const avant = projet.statut
   maj(db, "projets", projetId, { statut: "corrections" })
