@@ -403,7 +403,8 @@ const formulairePublic = ({ retour = null } = {}) => html`<form class="pile" dat
 // Quatre points de départ pour un public : on part de ce qu'on a déjà.
 const DEPARTS_PUBLIC = [
   ["decrire", "✎", "Je le décris", "Un nom et deux phrases. L'usine fait la recherche sur le web."],
-  ["documents", "▤", "J'ai des documents", "Études, comptes rendus d'entretiens, exports Drive (PDF, CSV, notes). L'usine les lit d'abord."],
+  ["documents", "▤", "J'ai des documents", "Études, comptes rendus d'entretiens, notes (PDF, CSV, texte). L'usine les lit d'abord."],
+  ["drive", "▲", "Depuis Google Drive", "Le lien d'un dossier ou d'un document partagé avec l'usine : l'usine lit jusqu'à 5 documents."],
   ["github", "⌥", "Depuis un dépôt GitHub", "Le README et la documentation d'un projet existant, lus avec le compte GitHub de l'usine."],
   ["fiche", "⇪", "J'ai déjà une fiche", "Un fichier préparé sur ta machine, par exemple avec ton assistant. Aucune recherche, rien n'est consommé."],
 ]
@@ -451,6 +452,16 @@ function creationPublic() {
     <label class="titre-champ" for="persona-brief">Ce que l'usine doit savoir en plus <span class="aide" style="font-weight:400">· facultatif</span></label>
     <textarea id="persona-brief" name="brief" class="champ" rows="2" placeholder="Ex. : on vise surtout les gérants qui n'ont pas encore de site."></textarea>
     ${boutons("Lancer la recherche")}</form>`
+  if (d === "drive") return etat.drive?.configure ? html`<form class="pile" data-form="persona-nouveau" style="gap:12px">${nom}
+    <label class="titre-champ" for="persona-drive">Le lien du dossier ou du document</label>
+    <input id="persona-drive" name="drive" class="champ mono" required placeholder="https://drive.google.com/drive/folders/…" spellcheck="false" autocomplete="off">
+    <div class="aide">Partage-le d'abord avec <span class="mono">${etat.drive.email}</span> (lecteur suffit). Dans un dossier, l'usine lit les 5 documents les plus récents : Docs, Sheets, Slides, PDF, texte, CSV, images.</div>
+    <label class="titre-champ" for="persona-brief">Ce que l'usine doit savoir en plus <span class="aide" style="font-weight:400">· facultatif</span></label>
+    <textarea id="persona-brief" name="brief" class="champ" rows="2" placeholder="Ex. : ce dossier contient les entretiens avec nos clients restaurateurs."></textarea>
+    ${boutons("Lancer la recherche")}</form>`
+    : html`<div class="pile" style="gap:12px">
+      <div class="message info"><span>Google Drive n'est pas encore branché. Il faut une fois une adresse réservée à l'usine, avec qui tu partages tes dossiers.</span></div>
+      <div class="rangee" style="justify-content:space-between">${retour}<button type="button" class="btn btn-p" data-action="fenetre" data-quoi="integration-drive">Brancher Google Drive</button></div></div>`
   if (d === "github") return html`<form class="pile" data-form="persona-nouveau" style="gap:12px">${nom}
     <label class="titre-champ" for="persona-depot">Le dépôt</label>
     <input id="persona-depot" name="depot" class="champ mono" required placeholder="propriétaire/nom, ou https://github.com/propriétaire/nom" spellcheck="false" autocomplete="off">
@@ -1423,6 +1434,34 @@ function carteGithub(f) {
   </div>`
 }
 
+// Google Drive : un compte de service, avec qui on partage ses dossiers comme avec un collègue.
+function fenetreDrive() {
+  const g = etat.drive
+  if (!g) return fenetre("Google Drive", html`<div class="chargement">Chargement…</div>`)
+  if (g.configure) return fenetre("Google Drive", html`<div class="pile" style="gap:16px">
+    <div class="barre"><strong>Branché</strong><span class="badge vert">lecture seule</span></div>
+    <div class="pile" style="gap:6px"><span>Partage tes dossiers (ou des fichiers) avec cette adresse, comme avec un collègue, en <strong>lecteur</strong> :</span>
+      <code class="mono jeton">${g.email}</code>
+      <div><button type="button" class="btn btn-s btn-petit" data-action="copier" data-quoi="drive-email">Copier l'adresse</button></div></div>
+    <p class="aide" style="margin:0">L'usine ne voit que ce qui est partagé avec cette adresse. Pour créer un public : Publics, « Nouveau public », « Depuis Google Drive », puis colle le lien du dossier.</p>
+    <div class="rangee" style="justify-content:space-between;gap:8px"><button type="button" class="btn btn-d btn-petit" data-action="retirer-drive">Débrancher</button><button type="button" class="btn btn-s" data-action="tester-drive">Tester</button></div>
+  </div>`)
+  return fenetre("Brancher Google Drive", html`<div class="pile" style="gap:16px">
+    <p style="margin:0">L'usine lit les documents des dossiers que tu lui partages : études, comptes rendus d'entretiens, tableaux. Il faut une fois un « compte de service » Google, une adresse réservée à l'usine.</p>
+    <ol class="etapes-machine">
+      <li>Sur <span class="mono">console.cloud.google.com</span>, choisis (ou crée) un projet, puis active l'<strong>API Google Drive</strong> (API et services, Bibliothèque).</li>
+      <li>IAM et administration, <strong>Comptes de service</strong>, Créer un compte de service. Aucun rôle n'est nécessaire.</li>
+      <li>Dans ce compte : Clés, Ajouter une clé, Créer une clé, format <strong>JSON</strong>. Un fichier se télécharge.</li>
+      <li>Ouvre ce fichier avec un éditeur de texte et colle tout son contenu ici. Il est chiffré et ne s'affichera plus.</li>
+    </ol>
+    <form class="pile" data-form="drive-compte" style="gap:10px">
+      <label class="titre-champ" for="drive-cle">Contenu du fichier de clé (.json)</label>
+      <textarea id="drive-cle" name="cle" class="champ mono" rows="5" required autocomplete="off" spellcheck="false" placeholder='{ "type": "service_account", "project_id": "…", "private_key": "-----BEGIN PRIVATE KEY-----…", "client_email": "…@….iam.gserviceaccount.com", … }'></textarea>
+      <div class="rangee" style="justify-content:flex-end;gap:8px"><button type="button" class="btn btn-s" data-action="fermer-fenetre">Annuler</button><button type="submit" class="btn btn-p">Brancher</button></div>
+    </form>
+  </div>`)
+}
+
 // Les intégrations en cartes : un logo, une phrase, « Connecter » ou « Connecté » (Unify, MagicPath).
 function integrations() {
   const f = etat.fournisseurs
@@ -1434,6 +1473,7 @@ function integrations() {
     { id: "chatgpt", nom: "ChatGPT", logo: "G", couleur: "#0f7a5f", texte: "Contrôle chaque fonction, comme le ferait un visiteur.", branche: moteur("codex") },
     { id: "github", nom: "GitHub", logo: "GH", couleur: "#24292f", texte: "Range le code de chaque application et l'historique de ce qui a été fait.", branche: app.mode === "application" || r?.forge.compte?.ok ? true : app.mode === "a_installer" ? "presque" : false },
     { id: "slack", nom: "Slack", logo: "S", couleur: "#4a154b", texte: "Facultatif : des notifications et des boutons dans un canal de ton équipe.", branche: Boolean(r?.slack?.branche), facultatif: true },
+    { id: "drive", nom: "Google Drive", logo: "▲", couleur: "#1a73e8", texte: "Facultatif : lit les dossiers que tu partages avec l'usine, pour créer un public à partir de tes documents.", branche: Boolean(etat.drive?.configure), facultatif: true },
   ]
 }
 const badgeIntegration = (x) => (x.branche === true ? html`<span class="badge vert">Connecté</span>`
@@ -1479,6 +1519,7 @@ function fenetreIntegration(id) {
     const m = f.moteurs.find((x) => x.id === (id === "claude" ? "claude-code" : "codex"))
     return fenetre(id === "claude" ? "Claude" : "ChatGPT", m ? html`${carteMoteur(f, m)}<div class="rangee" style="justify-content:flex-end"><button type="button" class="btn btn-s" data-action="tester-fournisseurs">Tester la connexion</button></div>` : html`<div class="aide">Cette IA n'est pas prévue dans la configuration de l'usine.</div>`)
   }
+  if (id === "drive") return fenetreDrive()
   if (id === "github") return fenetre("GitHub", html`<p class="aide" style="margin:0">Chaque application a son espace sur GitHub, où l'usine range son code et l'historique de ce qu'elle a fait. Tu peux y jeter un œil, mais tu n'en as pas besoin au quotidien.</p>${carteGithub(r.forge)}`)
   return fenetre("Slack", html`<div class="pile" style="gap:10px">
     <div class="barre"><strong>${r.slack?.branche ? "Connecté" : "Pas connecté"}</strong>${r.slack?.branche && r.slack.canal ? html`<span class="aide">canal ${r.slack.canal}</span>` : ""}</div>
@@ -1764,6 +1805,7 @@ async function charger({ silencieux = false } = {}) {
     if (sec === "equipe" || r.vue === "demarrer") charge("acces", "acces")
     if (["integrations", "utilisation", "regles"].includes(sec) || r.vue === "demarrer") charge("reglages", "reglages")
     if (sec === "integrations" || r.vue === "demarrer") charge("fournisseurs", "fournisseurs")
+    if (sec === "integrations" || r.vue === "personas") taches.push(api("GET", "drive").catch(() => ({ configure: false })).then((x) => { if (frais()) { etat.drive = x; rendre() } }))
     if (sec === "connecteurs") taches.push(api("GET", "connecteurs").catch(() => ({ indisponible: true, connecteurs: [] })).then((x) => { if (frais()) { etat.connecteurs = x; rendre() } }))
     if (!etat.premiersPas || ["accueil", "demarrer", "reglages"].includes(r.vue)) taches.push(api("GET", "premiers-pas").then((x) => {
       if (!frais()) return
@@ -2011,6 +2053,11 @@ function suivreChatGPT() {
   }, 3000)
 }
 
+async function chargerDrive() {
+  etat.drive = await api("GET", "drive").catch(() => ({ configure: false }))
+  rendre()
+}
+
 async function chargerJetons() {
   etat.jetons = (await api("GET", "personas/jetons").catch(() => ({ jetons: [] }))).jetons
   rendre()
@@ -2188,6 +2235,7 @@ const ACTIONS = {
     etat.fenetre = el.dataset.quoi
     if (el.dataset.quoi === "public") etat.departPublic = null
     if (el.dataset.quoi === "machine") { etat.jetonCree = null; chargerJetons() }
+    if (["public", "integration-drive"].includes(el.dataset.quoi) && !etat.drive) chargerDrive()
     if (el.dataset.quoi === "inviter" && !etat.acces) charger({ silencieux: true })
     if (el.dataset.quoi === "budget" && !etat.reglages) charger({ silencieux: true })
     rendre()
@@ -2212,7 +2260,7 @@ const ACTIONS = {
   copier: async (el) => {
     const c = etat.jetonCree
     const commande = `curl -X POST ${location.origin}/api/import/personas -H "Authorization: Bearer ${c?.jeton ?? "usp_…"}" -H "Content-Type: application/json" --data @persona.json`
-    const texte = { jeton: c?.jeton ?? "", commande, consigne: CONSIGNE_ASSISTANT(location.origin, null), "consigne-jeton": CONSIGNE_ASSISTANT(location.origin, c?.jeton) }[el.dataset.quoi] ?? ""
+    const texte = { jeton: c?.jeton ?? "", commande, consigne: CONSIGNE_ASSISTANT(location.origin, null), "consigne-jeton": CONSIGNE_ASSISTANT(location.origin, c?.jeton), "drive-email": etat.drive?.email ?? "" }[el.dataset.quoi] ?? ""
     try {
       await navigator.clipboard.writeText(texte)
       etat.message = { type: "ok", texte: "Copié." }
@@ -2220,6 +2268,11 @@ const ACTIONS = {
       etat.message = { type: "erreur", texte: "La copie n'a pas marché : sélectionne le texte et copie-le à la main." }
     }
     afficherMessages()
+  },
+  "tester-drive": () => agir(() => api("POST", "drive/tester", {})),
+  "retirer-drive": async () => {
+    if (!confirmer("Débrancher Google Drive ? L'usine ne pourra plus lire les dossiers partagés. Tu pourras le rebrancher avec la même clé.")) return
+    if (await agir(() => api("DELETE", "drive/compte", {}))) chargerDrive()
   },
   "retirer-jeton": async (el) => {
     if (!confirmer("Retirer ce jeton ? Ce qui l'utilise ne pourra plus envoyer de fiche.")) return
@@ -2356,7 +2409,7 @@ document.addEventListener("submit", async (e) => {
     if (fichiers.length > 5) { etat.message = { type: "erreur", texte: "5 documents au plus." }; afficherMessages(); return }
     const r = await agir(async () => {
       const pieces = await Promise.all(fichiers.map(async (x) => ({ nom: x.name, type: x.type, base64: enBase64(await x.arrayBuffer()) })))
-      return api("POST", "personas", { nom: d.get("nom"), brief: d.get("brief") ?? "", pieces, depot: d.get("depot") || null })
+      return api("POST", "personas", { nom: d.get("nom"), brief: d.get("brief") ?? "", pieces, depot: d.get("depot") || null, drive: d.get("drive") || null })
     })
     if (r?.id) {
       etat.fenetre = null
@@ -2378,6 +2431,12 @@ document.addEventListener("submit", async (e) => {
     }
     const r = await agir(() => api("POST", "personas/importer", { persona }))
     if (r?.id) { etat.fenetre = null; etat.departPublic = null; location.hash = `#/personas/${r.id}` }
+  }
+  if (type === "drive-compte") {
+    const cle = String(d.get("cle") ?? "").trim()
+    // La clé ne reste pas dans la page : le champ est vidé avant l'envoi.
+    f.reset()
+    if (cle && (await agir(() => api("PUT", "drive/compte", { cle })))) chargerDrive()
   }
   if (type === "jeton-persona") {
     const r = await agir(() => api("POST", "personas/jetons", { nom: d.get("nom") }))

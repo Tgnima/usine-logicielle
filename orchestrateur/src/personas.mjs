@@ -16,6 +16,7 @@ import { enregistrer, usagesClaude } from "./couts.mjs"
 import { noterLimites, scriptClaude } from "./moteurs.mjs"
 import { enregistrerPieces, listerPieces, scriptPieces, verifierPieces } from "./pieces.mjs"
 import { documentsDepot } from "./github.mjs"
+import { documentsDrive } from "./google-drive.mjs"
 
 const SYSTEME = "Tu es chercheur en marketing produit dans une usine logicielle. Tu approfondis un persona par une recherche réelle sur le web, tu cites tes sources, et tu réponds uniquement par un objet JSON valide."
 
@@ -198,13 +199,16 @@ const DEPOT = /^(?:https:\/\/github\.com\/)?([A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.
 
 // Créer : un nom, et de quoi chercher. Un brief suffit ; avec des documents ou un dépôt GitHub,
 // il peut tenir en une ligne. Les documents sont contrôlés avant que le persona n'existe.
-export async function creerPersona(ctx, { nom, brief, pieces, depot, par }) {
+export async function creerPersona(ctx, { nom, brief, pieces, depot, drive, par }) {
   const n = texte(nom, 80)
   const b = texte(brief, 3000)
   if (n.length < 2) return { ok: false, message: "Donne un nom au persona (2 caractères au moins)." }
   let fichiers
   try {
-    fichiers = verifierPieces(pieces, { max: DOCUMENTS_MAX })
+    // Un lien Google Drive : ses documents (lus avec le compte de service de l'usine) rejoignent les pièces jointes.
+    const envoyes = Array.isArray(pieces) ? pieces : []
+    const depuisDrive = drive ? (await documentsDrive(ctx, drive, { max: Math.max(1, DOCUMENTS_MAX - envoyes.length) })).docs : []
+    fichiers = verifierPieces([...envoyes, ...depuisDrive], { max: DOCUMENTS_MAX })
   } catch (e) {
     return { ok: false, message: e.message }
   }

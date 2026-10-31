@@ -36,6 +36,7 @@ import { versDevise } from "./couts.mjs"
 import { page as pageCouts } from "./tableau.mjs"
 import { creerPersona, documentsPersona, importerPersona, lancerRecherche, lirePersona, listerPersonas, modifierPersona, obtenirPersona, supprimerPersona, validerPersona } from "./personas.mjs"
 import { creerJeton, listerJetons, noterEchec, retirerJeton, tropDEchecs, verifierJeton } from "./jetons-personas.mjs"
+import { etatDrive, poserCompteDrive, retirerCompteDrive, testerDrive } from "./google-drive.mjs"
 import { MODES_REPRISE } from "./reprise.mjs"
 import { lireReorientation } from "./reorientation.mjs"
 import { ecartsEnCorrections, lireRecette, pointsACorriger, propositionsRecette } from "./recette.mjs"
@@ -413,7 +414,7 @@ const ROUTES = [
     if (!p) throw erreur(404, "Persona introuvable.")
     return { ...p, documents: documentsPersona(ctx.config, p.id), projets: ctx.db.prepare("SELECT id, nom, statut FROM projets WHERE persona_id = ? AND statut != 'supprime' ORDER BY id DESC").all(p.id) }
   }],
-  ["POST", /^\/api\/personas$/, (ctx, _p, c, qui) => creerPersona(ctx, { nom: c.nom, brief: c.brief, pieces: c.pieces, depot: c.depot ? String(c.depot) : null, par: qui.email })],
+  ["POST", /^\/api\/personas$/, (ctx, _p, c, qui) => creerPersona(ctx, { nom: c.nom, brief: c.brief, pieces: c.pieces, depot: c.depot ? String(c.depot) : null, drive: c.drive ? String(c.drive).slice(0, 500) : null, par: qui.email })],
   ["POST", /^\/api\/personas\/importer$/, (ctx, _p, c, qui) => importerPersona(ctx, c.persona, qui.email)],
   ["GET", /^\/api\/personas\/jetons$/, (ctx) => ({ jetons: listerJetons(ctx) })],
   ["POST", /^\/api\/personas\/jetons$/, (ctx, _p, c, qui) => creerJeton(ctx, c.nom, qui.email)],
@@ -533,6 +534,12 @@ const ROUTES = [
   ["POST", /^\/api\/fournisseurs\/tester$/, (ctx) => testerFournisseurs(ctx)],
   ["POST", /^\/api\/fournisseurs\/chatgpt$/, (ctx, _p, _c, qui) => connecterChatGPT(ctx, qui.email)],
   ["GET", /^\/api\/fournisseurs\/chatgpt$/, (ctx) => etatChatGPT(ctx)],
+
+  // Google Drive : le compte de service avec qui l'entreprise partage ses dossiers (google-drive.mjs).
+  ["GET", /^\/api\/drive$/, (ctx) => etatDrive(ctx)],
+  ["PUT", /^\/api\/drive\/compte$/, (ctx, _p, c, qui) => poserCompteDrive(ctx, String(c.cle ?? "").slice(0, 10_000), qui.email)],
+  ["DELETE", /^\/api\/drive\/compte$/, (ctx, _p, _c, qui) => retirerCompteDrive(ctx, qui.email)],
+  ["POST", /^\/api\/drive\/tester$/, (ctx) => testerDrive(ctx)],
 
   // Les connecteurs : des outils (serveurs MCP) pour les IA de l'usine. Chaque champ est vérifié dans connecteurs.mjs.
   ["GET", /^\/api\/connecteurs$/, (ctx) => listerConnecteurs(ctx)],

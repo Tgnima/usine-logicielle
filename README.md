@@ -197,7 +197,10 @@ termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Da
 1. **Le persona** se crée dans la console (onglet *Publics*, « Nouveau public »), à partir de ce
    qu'on a déjà : deux phrases, des **documents** (PDF, Markdown, texte, CSV, images : 5 au plus,
    exports Drive compris), un **dépôt GitHub** (description, README et `docs/`, lus avec le jeton
-   de l'usine, que l'agent ne voit jamais), ou une **fiche déjà prête** (JSON, au format du modèle
+   de l'usine, que l'agent ne voit jamais), un **dossier Google Drive** (les 5 documents les plus
+   récents : Docs en texte, Sheets en CSV, Slides, PDF, lus par le compte de service de l'usine,
+   avec qui on partage le dossier en lecteur ; Réglages, Intégrations, Google Drive), ou une
+   **fiche déjà prête** (JSON, au format du modèle
    téléchargeable). Sauf pour une fiche prête, un agent l'approfondit (les documents d'abord, le web
    ensuite) et rend une fiche (problèmes avec preuves, besoins, outils actuels, objections),
    **ce qui est hors périmètre**, et **3 à 5 scénarios cachés**. Une source est une page web ou un
