@@ -884,7 +884,9 @@ function ongletActif(p) {
 // Ce qui demande une action (décision, plan, mise en ligne, recette) reste au-dessus des onglets.
 const ONGLETS_PROJET = [["avancement", "Avancement"], ["apercu", "Aperçu"], ["echanges", "Échanges"], ["plus", "Plus"]]
 function ongletProjet(p) {
-  if (etat.ongletProjet?.projet !== p.id) etat.ongletProjet = { projet: p.id, id: ["livre", "en_production"].includes(p.statut) && p.captures.length ? "apercu" : "avancement" }
+  // Un projet livré ou en ligne s'ouvre sur ce qu'on en voit (ses captures), sinon sur les échanges.
+  const fini = ["livre", "en_production"].includes(p.statut)
+  if (etat.ongletProjet?.projet !== p.id) etat.ongletProjet = { projet: p.id, id: fini ? (p.captures.length ? "apercu" : "echanges") : "avancement" }
   return etat.ongletProjet.id
 }
 
@@ -915,7 +917,7 @@ function ongletAvancement(p) {
         <strong style="font-size:17px">${enCours.titre}</strong>
         ${essai ? html`<span class="aide">${enCours.approche ? `Méthode ${enCours.approche + 1}` : `Essai ${enCours.tentative + 1}`} : la version précédente a été refusée par le contrôle, l'usine la reprend.</span>` : ""}
         ${etapesTache(enCours, p.etapes_noms ?? [])}`
-      : html`<strong id="en-ce-moment">${p.statut === "en_production" ? "En ligne" : p.statut === "livre" ? "Tous les lots sont livrés" : p.statut === "creation" ? "L'usine prépare le dépôt et le socle" : "Aucune fonction en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">L'usine passe à la suite.</span>` : ""}`}
+      : html`<strong id="en-ce-moment">${p.statut === "en_production" ? "En ligne" : p.statut === "livre" ? "Tous les lots sont livrés" : p.statut === "creation" ? "L'usine prépare le code de départ" : "Aucune fonction en cours"}</strong>${p.statut === "fabrication" ? html`<span class="aide">L'usine passe à la suite.</span>` : ""}`}
       ${comptees.length ? html`<div class="pile" style="gap:6px"><div class="barre aide"><span>${faites} fonction${faites > 1 ? "s" : ""} sur ${comptees.length}</span><span>${Math.min(p.lot_livre, plan.lots.length)} lot${p.lot_livre > 1 ? "s" : ""} livré${p.lot_livre > 1 ? "s" : ""} sur ${plan.lots.length}</span></div>
         <div class="jauge" role="progressbar" aria-valuemin="0" aria-valuemax="${comptees.length}" aria-valuenow="${faites}" aria-label="Fonctions ajoutées"><span style="width:${Math.round((faites / comptees.length) * 100)}%"></span></div></div>` : ""}
     </section>
@@ -927,7 +929,7 @@ function ongletAvancement(p) {
 function ongletApercu(p) {
   const adresse = p.production ?? p.apercu
   const ouvrir = adresse ? html`<a class="btn btn-s btn-petit" href="${adresse}" target="_blank" rel="noopener">${p.production ? "Ouvrir le produit" : "Ouvrir l'aperçu"} ↗</a>` : ""
-  if (!p.captures.length) return html`<section class="carte vide-grand"><h2>Pas encore d'aperçu</h2><p class="aide">Dès le premier lot livré, le contrôle photographie chaque fonction vérifiée, sur ordinateur et sur téléphone.</p>${ouvrir}</section>`
+  if (!p.captures.length) return html`<section class="carte vide-grand">${p.lot_livre ? html`<h2>Aucune capture enregistrée</h2><p class="aide">Ce projet n'a pas gardé de captures. Ouvre-le pour le voir tel qu'il est.</p>` : html`<h2>Pas encore d'aperçu</h2><p class="aide">Dès le premier lot livré, le contrôle photographie chaque fonction vérifiée, sur ordinateur et sur téléphone.</p>`}${ouvrir}</section>`
   const caps = capturesFiltrees(p)
   const f = etat.filtreCaptures
   const lots = [...new Set(p.captures.map((c) => c.lot).filter(Boolean))].sort((a, b) => a - b)
@@ -940,7 +942,7 @@ function ongletApercu(p) {
       </div>
       ${ouvrir}
     </div>
-    ${caps.length ? html`<ul class="galerie">${caps.map((c, i) => html`<li class="${c.mobile ? "mobile" : ""}"><button type="button" data-action="voir-capture" data-id="${i}" aria-label="Agrandir : ${c.titre}${c.mobile ? ", sur téléphone" : ""}"><img src="${c.url}" alt="" loading="lazy"></button><span title="${c.titre}">${c.titre}</span></li>`)}</ul>` : html`<div class="carte vide">Aucune capture pour ce choix.</div>`}
+    ${caps.length ? html`<ul class="galerie">${caps.map((c, i) => html`<li class="${c.mobile ? "mobile" : ""}"><button type="button" data-action="voir-capture" data-id="${i}" aria-label="Agrandir : ${c.titre}${c.mobile ? ", sur téléphone" : ""}"><img src="${c.url}" alt="" loading="lazy"></button><span title="${c.titre}">${c.titre}${c.mobile ? " · téléphone" : ""}</span></li>`)}</ul>` : html`<div class="carte vide">Aucune capture pour ce choix.</div>`}
   </div>`
 }
 
@@ -963,7 +965,7 @@ function ongletEchanges(p) {
     ${discussion.length ? discussion.slice(-12).map((j) => html`<div class="bulle ${j.type === "demande" || j.type === "decision" ? "moi" : "usine"}"><small>${j.type === "demande" || j.type === "decision" ? "Toi" : "L'usine"} · ${heure(j.le)}</small>${nettoyer(j.message.length > 600 ? j.message.slice(0, 600) + "…" : j.message)}</div>`) : html`<div class="aide">Aucun échange pour l'instant.</div>`}
     <div class="rangee" style="flex-wrap:nowrap"><label class="cache" for="message-libre">Message à l'usine</label>
       <input id="message-libre" class="champ" placeholder="Une précision pour l'usine…">
-      <button type="button" class="btn btn-p" data-action="message" data-source="message-libre">Envoyer</button></div>
+      <button type="button" class="btn btn-s" data-action="message" data-source="message-libre">Envoyer</button></div>
     <div class="aide">Pendant la fabrication, une précision part avec la prochaine livraison. Pour changer de cap : « Changer de direction », dans le menu ⋯ en haut.</div>
   </section>`
 }
@@ -973,6 +975,7 @@ function ongletPlus(p) {
   const enCours = p.taches.find((t) => ["en_cours", "verification"].includes(t.statut))
   const onglet = ongletActif(p)
   return html`
+    ${p.statut === "en_production" ? blocProduction(p) : ""}
     <section class="carte carte-p pile" style="gap:10px" aria-labelledby="fiche-projet"><h2 id="fiche-projet" style="font-size:15px">Le projet</h2>
       <dl class="fiche-projet">
         ${p.brique ? html`<dt>Type</dt><dd>${BRIQUES[p.brique] ?? p.brique}${p.repris ? " · application reprise" : ""}</dd>` : ""}
@@ -980,7 +983,7 @@ function ongletPlus(p) {
         ${p.cout ? html`<dt>Dépensé</dt><dd class="mono">${p.cout}${p.budget ? ` sur ${p.budget}` : ""}</dd>` : ""}
         ${p.depot ? html`<dt>Code</dt><dd><a href="${p.depot}" target="_blank" rel="noopener">${p.depot.replace(/^https:\/\/github\.com\//, "")} ↗</a></dd>` : ""}
       </dl></section>
-    ${blocVideo(p)}
+    ${p.statut === "en_production" ? "" : blocVideo(p)}
     <details class="carte carte-p technique" id="technique" ${etat.techniqueOuvert ? "open" : ""}><summary style="cursor:pointer;font-weight:600">Détail technique : direct, journal, pull requests</summary>
       <div class="pile" style="margin-top:12px">
         ${enCours ? html`<div class="aide mono">${enCours.cle}${enCours.pr ? ` · PR #${enCours.pr}` : ""}${enCours.approche ? ` · approche ${enCours.approche + 1}, modèle renforcé` : enCours.tentative ? ` · correction ${enCours.tentative}` : ""}</div>` : ""}
@@ -1183,6 +1186,9 @@ function vueProjet() {
   const enPlan = p.statut === "plan_a_valider"
   const avecOnglets = !enPlan && p.plan?.lots?.length && !["analyse", "questions"].includes(p.statut)
   const adresse = p.production ?? p.apercu
+  // Une seule action principale à l'écran : quand une décision, une recette ou une mise en ligne
+  // attend, le bouton d'ouverture redevient secondaire.
+  const actionAttendue = p.escalades.length || enPlan || ["questions", "livre"].includes(p.statut) || Boolean(p.recette)
   // Une ligne discrète sous le titre, au lieu d'une rangée de badges.
   const meta = [p.brique ? BRIQUES[p.brique] ?? p.brique : "", p.repris ? "application reprise" : "", p.persona ? html`pour <a href="#/personas/${p.persona_id}">${p.persona}</a>` : "", p.cout ? html`<span class="mono">${p.cout}</span> dépensés` : ""].filter(Boolean)
   return html`
@@ -1193,7 +1199,7 @@ function vueProjet() {
         <p class="chapeau">${p.resume}</p>
         ${meta.length ? html`<p class="meta-projet aide">${meta.map((m, i) => html`${i ? " · " : ""}${m}`)}</p>` : ""}</div>
       <div class="rangee" style="gap:8px">
-        ${adresse ? html`<a class="btn btn-p" href="${adresse}" target="_blank" rel="noopener">${p.production ? "Ouvrir le produit" : "Ouvrir l'aperçu"} ↗</a>` : ""}
+        ${adresse && p.statut !== "en_production" ? html`<a class="btn ${actionAttendue ? "btn-s" : "btn-p"}" href="${adresse}" target="_blank" rel="noopener">Ouvrir l'aperçu ↗</a>` : ""}
         <details class="menu-actions" id="menu-projet" ${etat.menuProjet ? "open" : ""}><summary class="btn btn-s" aria-label="Autres actions">⋯</summary>
           <div class="menu-liste">
             ${["fabrication", "bloque"].includes(p.statut) ? html`<button type="button" data-action="ouvrir-reorienter" aria-controls="reorienter" aria-expanded="${String(Boolean(etat.reorienterOuvert))}">Changer de direction</button>` : ""}
@@ -1216,7 +1222,7 @@ function vueProjet() {
     ${enPlan ? (p.reorientation ? blocPlanReorientation(p) : etat.planVue === "edition" || etat.planModifie ? blocPlan(p) : blocPlanLecture(p)) : ""}
     ${etat.reorienterOuvert ? blocReorienter(p) : ""}
     ${blocRecette(p)}
-    ${blocProduction(p)}
+    ${p.statut === "en_production" && avecOnglets ? "" : blocProduction(p)}
     ${avecOnglets ? blocFabrication(p) : zoneSensible(p)}`
 }
 
@@ -2376,7 +2382,8 @@ const ACTIONS = {
   },
   "onglet-projet": (el) => { etat.ongletProjet = { projet: etat.projet?.id, id: el.dataset.id }; etat.menuProjet = false; rendre(); $(`#op-${el.dataset.id}`)?.focus() },
   "filtre-captures": (el) => { etat.filtreCaptures.ecran = el.dataset.id; rendre() },
-  "voir-capture": (el) => { etat.fenetre = `capture-${el.dataset.id}`; rendre() },
+  // La visionneuse prend le focus, comme les autres fenêtres : Tab ne parcourt plus la page derrière.
+  "voir-capture": (el) => { etat.fenetre = `capture-${el.dataset.id}`; rendre(); ($(".fenetre .barre button[data-action=voir-capture]:last-of-type") ?? $(".fenetre .btn-icone"))?.focus() },
   "voir-zone-sensible": () => { etat.menuProjet = false; etat.detailsOuvert = true; rendre(); $("#zone-sensible")?.scrollIntoView({ behavior: "smooth" }) },
   copier: async (el) => {
     try {
@@ -2411,6 +2418,8 @@ const ACTIONS = {
 }
 
 document.addEventListener("click", (e) => {
+  // Un clic à côté du menu ⋯ le ferme.
+  if (etat.menuProjet && !e.target.closest("#menu-projet")) { etat.menuProjet = false; $("#menu-projet")?.removeAttribute("open") }
   const el = e.target.closest("[data-action]")
   if (!el) return
   if (el.dataset.action === "confirmer" && el.dataset.quoi === "abandonner") {
@@ -2623,6 +2632,8 @@ document.addEventListener("submit", async (e) => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && etat.fenetre && !$("#palette").open) { ACTIONS["fermer-fenetre"](); return }
+  // Échap ferme le menu ⋯ et rend le focus à son bouton.
+  if (e.key === "Escape" && etat.menuProjet) { etat.menuProjet = false; rendre(); $("#menu-projet summary")?.focus(); return }
   if (e.target.matches?.("[data-saisie-invites]") && ["Enter", ","].includes(e.key) && e.target.value.trim()) {
     e.preventDefault()
     return ajouterInvites(e.target)
@@ -2632,7 +2643,8 @@ document.addEventListener("keydown", (e) => {
     const n = capturesFiltrees(etat.projet).length
     const i = Number(etat.fenetre.slice(8))
     etat.fenetre = `capture-${(i + (e.key === "ArrowRight" ? 1 : -1) + n) % n}`
-    return rendre()
+    rendre()
+    return ($(".fenetre .barre button[data-action=voir-capture]:last-of-type") ?? $(".fenetre .btn-icone"))?.focus()
   }
   const onglet = e.target.closest?.("[role=tab]")
   if (!onglet || !["ArrowLeft", "ArrowRight"].includes(e.key)) return

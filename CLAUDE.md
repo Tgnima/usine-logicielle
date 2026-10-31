@@ -65,5 +65,6 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
   sont lancées sans shell.
 - Les outils s'installent en dernière version (`@latest`) : après une reconstruction, on teste un projet.
 - Les scripts envoyés aux serveurs de travaux s'écrivent avec `q()` et `ecrireFichier()` (travaux.mjs).
+- Un changement de la console (`orchestrateur/console/`) passe par l’agent `designer-console` (`.claude/agents/`, avec `node scripts/controle-console.mjs`) ; un changement de route, par `auditeur-backend`.
 - Commentaires et messages en français.
 - Tests : `cd orchestrateur && npm test`.

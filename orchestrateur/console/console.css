@@ -218,7 +218,7 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 
 /* --- Refonte : le produit au centre ------------------------------------------------------ */
 /* Le menu en deux groupes : le travail, puis l'usine. */
-.nav-groupe { padding: 14px 12px 4px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--doux) }
+.nav-groupe { padding: 14px 12px 4px; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--doux) }
 
 /* La ligne de vie : cinq phases, la phase en cours remplie selon l'avancement. */
 .vie { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px }
@@ -279,7 +279,7 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .suite { border-top: 1px solid var(--trait-2); padding-top: 14px }
 .coche { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer }
 .coche input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none }
-@media (max-width: 720px) { .vie li { font-size: 11px } .vie small { display: none } }
+@media (max-width: 720px) { .vie li { font-size: 12px } .vie small { display: none } }
 @media (max-width: 720px) { .etapes { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 10px } }
 
 /* Les publics (personas), en liste simple. */
@@ -457,7 +457,7 @@ label.depot-fichiers:has(+ .cache-visuel:focus-visible) { border-color: var(--ac
 .coches { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px }
 .coches li { display: flex; gap: 10px; align-items: center; color: var(--doux) }
 .coches li.fait { color: var(--encre) }
-.coches .puce { width: 20px; height: 20px; font-size: 11px }
+.coches .puce { width: 20px; height: 20px; font-size: 12px }
 .jauge { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden }
 .jauge > span { transition: width .4s ease }
 .etapes-recherche { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px }
@@ -502,3 +502,9 @@ label.depot-fichiers:has(+ .cache-visuel:focus-visible) { border-color: var(--ac
 .fiche-projet dt { color: var(--doux) }
 .fiche-projet dd { margin: 0; min-width: 0; overflow-wrap: anywhere }
 @media (prefers-reduced-motion: reduce) { .galerie button { transition: none } }
+/* Revue design : le menu ⋯ reste dans l'écran sur téléphone, la rangée d'onglets se resserre. */
+@media (max-width: 600px) {
+  .menu-actions[open] { flex-basis: 100% }
+  .menu-liste { position: static; min-width: 0; margin-top: 6px }
+  .onglets-projet button { padding: 10px 10px }
+}
