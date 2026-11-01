@@ -177,7 +177,7 @@ export function scriptCodex(ctx, { args: options, journal, marqueur = "CODEX_COD
     const lancer = {
       abonnement: `env -u OPENAI_API_KEY codex exec ${args}`,
       cle: `codex exec -c preferred_auth_method='"apikey"' ${args}`,
-      passerelle: `codex exec -c model_provider='"passerelle"' -c model_providers.passerelle.name='"Passerelle"' -c model_providers.passerelle.base_url='"${PASSERELLE}/v1"' -c model_providers.passerelle.env_key='"AI_GATEWAY_API_KEY"' -c model_providers.passerelle.wire_api='"chat"' -c model='"${ctx.config.secours?.modele_codex_passerelle ?? "openai/gpt-5.5"}"' ${args}`,
+      passerelle: `codex exec -c model_provider='"passerelle"' -c model_providers.passerelle.name='"Passerelle"' -c model_providers.passerelle.base_url='"${PASSERELLE}/v1"' -c model_providers.passerelle.env_key='"AI_GATEWAY_API_KEY"' -c model_providers.passerelle.wire_api='"responses"' -c model='"${ctx.config.secours?.modele_codex_passerelle ?? "openai/gpt-5.5"}"' ${args}`,
     }[mode]
     return `if [ -z "$FAIT" ] && ${prealable}; then
   : > ${q(journal)}
