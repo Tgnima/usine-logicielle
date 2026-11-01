@@ -272,8 +272,10 @@ createServer(async (req, res) => {
       }
       const demande = String(req.headers["x-forwarded-uri"] ?? "/")
       if (u) return envoyerHtml(res, 403, page("Accès refusé", `<h1>Accès refusé</h1><p class="sous">${echapper(u.email)} n'a pas accès à ${echapper(appli.nom)}.</p><p class="pied"><a href="/_portier/deconnexion">Changer de compte</a></p>`, { appli: appli.nom }))
-      // Une requête d'API (fetch) reçoit un 401, une page reçoit la connexion.
-      if (demande.startsWith("/api/")) return envoyerJson(res, 401, { erreur: "connexion requise" })
+      // Une requête d'API (fetch) reçoit un 401, une page reçoit la connexion. Les retours de GitHub
+      // sur la console sont des navigations du navigateur : ils reçoivent la connexion, puis reprennent.
+      const retourGithub = appli.slug === "tableau" && methode === "GET" && ["/api/github/manifeste", "/api/github/installe"].includes(chemin)
+      if (demande.startsWith("/api/") && !retourGithub) return envoyerJson(res, 401, { erreur: "connexion requise" })
       return rediriger(res, `/_portier/connexion?retour=${encodeURIComponent(retourSur(demande))}`)
     }
 

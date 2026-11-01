@@ -41,6 +41,18 @@ test("sans session : une page renvoie vers la connexion, une API reçoit 401", a
   assert.equal((await appel("/_portier/verifier", { entetes: { "x-forwarded-uri": "/api/contacts" } })).status, 401)
 })
 
+test("sans session : le retour de GitHub sur la console renvoie vers la connexion, pas vers un 401", async () => {
+  const retour = (uri, hote = `console.${BASE}`, methode = "GET") => appel("/_portier/verifier", { hote, entetes: { "x-forwarded-uri": uri, "x-forwarded-method": methode } })
+  const r = await retour("/api/github/manifeste?code=abc&state=xyz")
+  assert.equal(r.status, 302)
+  assert.equal(r.headers.get("location"), `/_portier/connexion?retour=${encodeURIComponent("/api/github/manifeste?code=abc&state=xyz")}`)
+  assert.equal((await retour("/api/github/installe?installation_id=1&code=c")).status, 302)
+  // Les autres adresses d'API, une autre méthode ou une autre application gardent le 401.
+  assert.equal((await retour("/api/projets")).status, 401)
+  assert.equal((await retour("/api/github/installe", `console.${BASE}`, "POST")).status, 401)
+  assert.equal((await retour("/api/github/installe", `prospecta.${BASE}`)).status, 401)
+})
+
 test("l'API d'administration exige le jeton", async () => {
   assert.equal((await appel("/_portier/api/utilisateurs")).status, 401)
 })
