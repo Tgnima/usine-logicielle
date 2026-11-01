@@ -133,11 +133,12 @@ async function synchroniserEtat() {
   const dossier = join(SRV, "etat")
   const depot = depotEtat()
   if (!depot || !jetonForge()) return // GitHub pas encore connecté
-  if (!existsSync(join(dossier, ".git"))) await ok("git", ["clone", "-q", `https://github.com/${depot}.git`, dossier], { git: true })
+  // 2 à 3 minutes au plus : quand le réseau de l'hébergeur coupe, git attendrait 15 min par tour.
+  if (!existsSync(join(dossier, ".git"))) await ok("git", ["clone", "-q", `https://github.com/${depot}.git`, dossier], { git: true, minutes: 3 })
   else {
     // Le compte GitHub a changé (connexion depuis la console) : on suit le nouveau dépôt d'état.
     await ok("git", ["remote", "set-url", "origin", `https://github.com/${depot}.git`], { cwd: dossier })
-    await ok("git", ["fetch", "-q", "origin"], { cwd: dossier, git: true })
+    await ok("git", ["fetch", "-q", "origin"], { cwd: dossier, git: true, minutes: 2 })
     await ok("git", ["reset", "-q", "--hard", "origin/HEAD"], { cwd: dossier })
   }
   const souhaits = []
@@ -497,9 +498,12 @@ async function mesurerPlace() {
 }
 
 async function ecrireSante() {
-  const df = (await lancer("df", ["-B1", "--output=size,used,avail", "/"])).sortie.trim().split("\n").pop().trim().split(/\s+/).map(Number)
+  const df = (await lancer("df", ["-B1", "--output=size,used,avail", "/"], { minutes: 1 })).sortie.trim().split("\n").pop().trim().split(/\s+/).map(Number)
   const mem = Object.fromEntries(readFileSync("/proc/meminfo", "utf8").split("\n").filter(Boolean).map((l) => [l.split(":")[0], Number(l.split(":")[1].trim().split(" ")[0]) * 1024]))
-  const conteneurs = (await lancer("docker", ["ps", "-a", "--format", "{{json .}}"])).sortie.split("\n").filter(Boolean).flatMap((l) => {
+  // Docker trop lent ou injoignable : la liste est inconnue (null), pas vide.
+  // Une liste vide ferait croire à la console que tous les conteneurs ont disparu.
+  const ps = await lancer("docker", ["ps", "-a", "--format", "{{json .}}"], { minutes: 1 })
+  const conteneurs = ps.code !== 0 ? null : ps.sortie.split("\n").filter(Boolean).flatMap((l) => {
     try {
       const c = JSON.parse(l)
       return [{ nom: c.Names, etat: c.State, statut: c.Status, image: c.Image }]
@@ -516,9 +520,26 @@ async function ecrireSante() {
     produits: placeProduits,
     entretien: dernierEntretien,
     mise_a_jour: miseAJour,
+    boucle_le: boucleLe, // la fin du dernier tour de déploiement : un tour bloqué se voit
   }
   writeFileSync(`${FICHIER_SANTE}.tmp`, JSON.stringify(sante, null, 2))
   renameSync(`${FICHIER_SANTE}.tmp`, FICHIER_SANTE)
+}
+
+// Le bilan de santé a son propre rythme (30 s), hors de la boucle des déploiements : un tour
+// bloqué (réseau coupé, git qui attend) ne doit pas figer la console sur un vieux bilan.
+let santeEnCours = false
+let boucleLe = null
+async function bilanSante() {
+  if (santeEnCours) return
+  santeEnCours = true
+  try {
+    await ecrireSante()
+  } catch (e) {
+    log(`Santé : ${e.message}`)
+  } finally {
+    santeEnCours = false
+  }
 }
 
 // --- L'entretien (toutes les 6 heures) --------------------------------------------------
@@ -570,7 +591,7 @@ async function appliquerMiseAJour(demande) {
   if (!USINE_DIR || !existsSync(join(USINE_DIR, ".git"))) return log("Mise à jour impossible : USINE_DIR n'est pas monté.")
   log(`Mise à jour de l'usine demandée par ${demande.par ?? "?"}…`)
   miseAJour = { ...miseAJour, en_cours: demande.demande_le }
-  await ecrireSante()
+  await bilanSante()
   const gidDocker = (await lancer("stat", ["-c", "%g", "/var/run/docker.sock"])).sortie.trim()
   await lancer("docker", ["rm", "-f", "usine-mise-a-jour"])
   // Toute erreur arrête la mise à jour avant le redémarrage : l'usine continue alors dans sa
@@ -646,6 +667,8 @@ async function isolerProduits() {
 
 mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
+await bilanSante()
+setInterval(bilanSante, 30_000)
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
 log(`Déployeur prêt : tire ${depotEtat() || "(dépôt d'état pas encore connu : GitHub à connecter dans la console)"} toutes les 20 s.`)
 // Une mise à jour vient d'être appliquée : on note sa fin (l'orchestrateur l'annonce).
@@ -663,7 +686,8 @@ for (let n = 0; ; n++) {
   if (n % 30 === 0) await verifierMiseAJour().catch((e) => log(`Vérification de mise à jour : ${e.message}`))
   if (n % 1080 === 540) await entretenir().catch((e) => log(`Entretien : ${e.message}`))
   await suivreMiseAJour().catch((e) => log(`Suivi de la mise à jour : ${e.message}`))
-  await ecrireSante().catch((e) => log(`Santé : ${e.message}`))
+  boucleLe = horodatage()
+  await bilanSante()
   if (demandeMiseAJour?.demande_le && demandeMiseAJour.demande_le !== derniereDemande) {
     derniereDemande = demandeMiseAJour.demande_le
     await verifierMiseAJour().catch(() => {})

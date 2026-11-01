@@ -74,8 +74,12 @@ export async function etatUsine(ctx) {
   const ajouter = (nom, etat, detail) => c.push({ nom, etat, detail })
   const ageDeployeur = s ? (Date.now() - new Date(s.le).getTime()) / 1000 : Infinity
 
-  // Le serveur.
-  if (!s || ageDeployeur > 180) ajouter("déployeur", "panne", s ? `dernier signe il y a ${Math.round(ageDeployeur / 60)} min` : "aucun bilan de santé")
+  // Le serveur. Un bilan trop ancien ne dit plus rien des conteneurs : ils passent en
+  // « inconnu » au lieu d'être déclarés absents (la console croirait l'usine en panne).
+  const perime = !s || ageDeployeur > 180
+  if (perime) ajouter("déployeur", "panne", s ? `dernier signe il y a ${Math.round(ageDeployeur / 60)} min` : "aucun bilan de santé")
+  else if (s.boucle_le && Date.now() - new Date(s.boucle_le).getTime() > 20 * 60_000) ajouter("déployeur", "alerte", `aucun tour de déploiement terminé depuis ${Math.round((Date.now() - new Date(s.boucle_le).getTime()) / 60_000)} min (réseau ou GitHub injoignable ?)`)
+  const listeConnue = !perime && Array.isArray(s.conteneurs)
   if (s) {
     const d = s.disque
     ajouter("disque", d.pct >= 90 ? "panne" : d.pct >= 80 ? "alerte" : "ok", `${d.pct} % utilisés, ${d.libre_go} Go libres sur ${d.total_go}`)
@@ -83,16 +87,21 @@ export async function etatUsine(ctx) {
     ajouter("mémoire", m.dispo_mo < 200 ? "panne" : m.dispo_mo < 400 ? "alerte" : "ok", `${m.dispo_mo} Mo disponibles sur ${m.total_mo}${m.swap_utilise_mo > 500 ? ` · ${m.swap_utilise_mo} Mo en swap` : ""}`)
     // Les conteneurs de l'usine.
     for (const [nom, conteneur] of SERVICES) {
-      if (nom === "orchestrateur") continue
+      if (nom === "orchestrateur" || c.some((x) => x.nom === nom)) continue // le déployeur, déjà jugé plus haut
+      if (!listeConnue) {
+        ajouter(nom, "inconnu", perime ? "bilan du serveur trop ancien" : "liste des conteneurs illisible (Docker trop lent ?)")
+        continue
+      }
       const ct = s.conteneurs.find((x) => x.nom === conteneur)
       if (!ct) ajouter(nom, "panne", "conteneur absent")
       else if (ct.etat !== "running") ajouter(nom, "panne", ct.statut)
       else ajouter(nom, /unhealthy/i.test(ct.statut) ? "alerte" : "ok", ct.statut.replace(/^Up /, "en marche depuis ").replace(/ \(healthy\)/, ""))
     }
     // Les applications en ligne.
-    const applis = s.conteneurs.filter((x) => /^usine-(apercu|prod)-/.test(x.nom))
+    const applis = listeConnue ? s.conteneurs.filter((x) => /^usine-(apercu|prod)-/.test(x.nom)) : []
     const arretees = applis.filter((x) => x.etat !== "running")
-    ajouter("applications", arretees.length ? "alerte" : "ok", arretees.length ? `arrêtée(s) : ${arretees.map((x) => x.nom.replace(/^usine-/, "")).join(", ")}` : `${applis.length} en ligne`)
+    if (!listeConnue) ajouter("applications", "inconnu", "état inconnu pour l'instant")
+    else ajouter("applications", arretees.length ? "alerte" : "ok", arretees.length ? `arrêtée(s) : ${arretees.map((x) => x.nom.replace(/^usine-/, "")).join(", ")}` : `${applis.length} en ligne`)
     // Le déployeur n'arrive plus à comparer l'usine à GitHub : elle se croirait à jour.
     const e = s.mise_a_jour?.erreur
     if (e) ajouter("mises à jour", "alerte", `vérification impossible depuis ${new Date(e.depuis).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} : ${e.message}`)
@@ -104,11 +113,13 @@ export async function etatUsine(ctx) {
     const r = await santeServeurTravaux(url)
     const ligne = c.find((x) => x.nom === nom)
     if (!r && ligne) Object.assign(ligne, { etat: "panne", detail: "ne répond pas" })
+    else if (r && ligne?.etat === "inconnu") Object.assign(ligne, { etat: "ok", detail: r.occupe ? "répond · au travail" : "répond" })
     else if (r && ligne && r.occupe) ligne.detail = `${ligne.detail} · au travail`
   }
   const p = await ping("http://portier:8080/_portier/connexion")
   const lp = c.find((x) => x.nom === "portier")
   if (lp && !p?.ok) Object.assign(lp, { etat: "panne", detail: "ne répond pas" })
+  else if (lp?.etat === "inconnu") Object.assign(lp, { etat: "ok", detail: "répond" })
 
   // GitHub (et le quota d'appels).
   const g = await ping("https://api.github.com/rate_limit", { headers: { authorization: `Bearer ${config.secrets.github}` } })
