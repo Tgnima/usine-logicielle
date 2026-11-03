@@ -54,6 +54,8 @@ Méthode :
 - Environnement de l'application : DEMO=1, emails capturés par Mailpit (SMTP_HOST=mailpit, interface web sur http://mailpit:8025, API /api/v1/messages), aucune liste de destinataires autorisés. Si un critère dépend d'une variable d'environnement (voir le tableau d'AGENTS.md, par exemple EMAIL_DESTINATAIRES_AUTORISES), arrête l'application et relance-la toi-même avec cette variable (\`PORT=4100 DATA_DIR=… ${profil.demarrer}\`), puis remets-la comme avant.
 - Un critère est validé seulement si tu l'as observé. Dans le doute, il est refusé.
 - Note aussi un défaut grave hors critères (page blanche, erreur 500, donnée incohérente).
+- Ne modifie pas les données de démonstration existantes : pour tester une action (diffuser, clore, corriger, supprimer), crée tes propres données, avec un nom unique. Sinon les captures et le relecteur design jugeraient un état que tu as fabriqué.
+- "problemes" ne contient que des défauts BLOQUANTS du produit : chacun refuse la tâche. Ce que tu as fait pour vérifier, et une remarque non bloquante, vont dans "resume".
 
 Non-régression :
 - Lis /tmp/sorties/verif/e2e-echecs.txt : ce sont des tests de critères DÉJÀ validés par le passé (dossier .usine/e2e/) qui échouent maintenant. Pour chacun, décide : régression (ce qui marchait est cassé) → mets-le dans "regressions" ; changement voulu par CETTE tâche (l'écran ou la route a légitimement changé) → réécris ce test sous le même nom dans /tmp/sorties/verif/e2e/.
