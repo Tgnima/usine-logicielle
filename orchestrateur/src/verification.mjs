@@ -40,6 +40,18 @@ try {
   if (ok.length) process.stdout.write("\\n\\nCe que le vérificateur a DÉJÀ testé dans l'application en marche, et validé. Ne le remets pas en cause à partir des captures : une capture qui semble le contredire vient d'un autre essai. Juge ce que tu vois (lisibilité, cohérence visuelle, libellés), pas ces comportements :\\n" + ok.join("\\n") + "\\n")
 } catch {}`
 
+// Les motifs de design du refus précédent de la même tâche : le relecteur vérifie d'abord qu'ils sont corrigés, au lieu de
+// faire naître un défaut nouveau à chaque tentative (T19 d'Acte Clair, T81 et T82 de Vigie Copro : le défaut se déplaçait).
+export function retoursDesign(tache) {
+  const precedents = String(tache?.retours ?? "").split("\n").filter((l) => l.startsWith("- design : ")).map((l) => `- ${l.slice(11)}`)
+  if (!precedents.length) return ""
+  return `Au passage précédent sur cette tâche, tu as refusé pour ces défauts de design :
+${precedents.join("\n")}
+Vérifie d'abord, sur les captures, s'ils sont corrigés : un défaut corrigé ne revient pas dans ta réponse. Un NOUVEAU défaut « grave » ne vaut que s'il est flagrant (page cassée, texte illisible ou tronqué, information fausse à l'écran) ; un détail que tu n'avais pas relevé la dernière fois va dans « mineurs ».
+
+`
+}
+
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
 
@@ -95,7 +107,7 @@ N'invente rien de ce que tu ne vois pas. Une remarque = un écran + le défaut +
 Les captures sont souvent prises en page entière : une barre de navigation ou un bouton fixé en bas de l'écran y apparaît alors au milieu de la page, par-dessus le contenu qui défile. C'est un effet de la capture, pas un défaut. Ne le signale que si un contenu reste masqué tout en bas de la page, là où le défilement s'arrête.
 Ne conclus qu'un résultat contredit une saisie que si leurs noms de fichier désignent le même scénario (même début de nom, « -saisie » puis « -resultat ») : deux captures de scénarios différents (un rattachement, puis une nouvelle affaire) ne se comparent pas. Les données créées pendant les essais du vérificateur (une affaire de plus, par exemple) ne sont pas un défaut du produit.
 
-Réponds UNIQUEMENT par ce JSON :
+${retoursDesign(tache)}Réponds UNIQUEMENT par ce JSON :
 {"graves": [{"ecran": "…", "defaut": "…", "correction": "…"}], "mineurs": [{"ecran": "…", "defaut": "…", "correction": "…"}], "note": 0, "resume": "une phrase"}
 (note : de 0 à 10, la qualité perçue de ces écrans)
 
