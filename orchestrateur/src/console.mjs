@@ -201,7 +201,7 @@ async function detailProjet(ctx, id) {
       const r = lireReorientation(db, id)
       if (!r) return null
       const persona = r.persona_id ? lirePersona(obtenirPersona(db, r.persona_id))?.nom ?? null : null
-      return { consigne: r.consigne, par: r.par, le: r.le, persona, livre: ["livre", "en_production"].includes(r.statut_avant), garde: r.garde ?? null, abandonnees: r.garde === undefined ? [] : t.filter((x) => !["fusionnee", "abandonnee"].includes(x.statut)).map((x) => x.cle) }
+      return { consigne: r.consigne, par: r.par, le: r.le, persona, depot: r.depot ?? null, livre: ["livre", "en_production"].includes(r.statut_avant), garde: r.garde ?? null, abandonnees: r.garde === undefined ? [] : t.filter((x) => !["fusionnee", "abandonnee"].includes(x.statut)).map((x) => x.cle) }
     })(),
     inventaire: p.inventaire ? JSON.parse(p.inventaire) : null,
     profil: p.profil ? JSON.parse(p.profil) : null,
@@ -447,7 +447,7 @@ const ROUTES = [
   ["POST", /^\/api\/projets\/(\d+)\/abandonner$/, (ctx, [id], _c, qui) => actions.abandonnerPlan(ctx, Number(id), qui.email)],
   // Changer de direction pendant la fabrication (reorientation.mjs).
   ["POST", /^\/api\/projets\/(\d+)\/reorienter$/, (ctx, [id], c, qui) => {
-    const r = actions.reorienterProjet(ctx, Number(id), { consigne: String(c.consigne ?? ""), personaId: personaValide(ctx, c.persona_id), par: qui.email })
+    const r = actions.reorienterProjet(ctx, Number(id), { consigne: String(c.consigne ?? ""), personaId: personaValide(ctx, c.persona_id), depot: c.depot ? String(c.depot) : null, par: qui.email })
     if (!r.ok) throw erreur(409, r.message)
     return r
   }],

@@ -182,8 +182,8 @@ console, là où il a échoué : une création échouée (GitHub indisponible, p
 avec le plan déjà validé, sans repasser par l'analyste ; une analyse échouée repart de la demande.
 Un projet en fabrication ne se relance pas : ses tâches bloquées se débloquent par leur décision.
 
-**Changer de direction** (en fabrication, bloqué, livré ou en ligne) : `/usine reorienter <n°> [persona <nom>] : <la
-nouvelle direction>`, ou *Changer de direction* dans la page du projet de la console. L'usine
+**Changer de direction** (en fabrication, bloqué, livré ou en ligne) : `/usine reorienter <n°> [persona <nom>]
+[depot <adresse GitHub>] : <la nouvelle direction>`, ou *Changer de direction* dans la page du projet de la console. L'usine
 termine la tâche en cours puis s'arrête sur ce projet ; l'analyste garde les lots qui ont du code
 fusionné et refait la suite (les demandes laissées dans le fil partent avec). Le nouveau plan se
 valide comme le premier : les tâches pas encore faites sont abandonnées (issues fermées), les
@@ -196,6 +196,13 @@ le produit reste tel quel (en ligne s'il l'est) pendant que l'analyste prépare 
 validation, les nouveaux lots se fabriquent et se livrent comme d'habitude ; la production ne
 change qu'à la prochaine mise en ligne validée. *Garder le produit tel qu'il est* annule tout. Pour
 une simple évolution sans changer de cap, `/usine corriger` reste plus léger (un lot de plus).
+
+Un **dépôt GitHub de référence** peut accompagner la nouvelle direction (un concept, une maquette, un
+prototype codé à part) : l'analyste lit sa description, son README et ses `docs/` avec le compte
+GitHub de l'usine, sans voir le jeton, et s'en inspire pour écrire les nouveaux lots. Il ne copie
+pas son code : la suite se fabrique dans la pile et le code du produit. Un dépôt invisible pour
+l'usine arrête la préparation avec un message clair. Pour repartir du code d'un dépôt, c'est
+`/usine reprendre` (un nouveau projet).
 
 **Reprendre un dépôt existant, pour un persona.** Le cas d'usage : un reverse engineering (REA)
 a reproduit une partie d'une application ; l'usine la reprend, la spécialise pour une cible et la

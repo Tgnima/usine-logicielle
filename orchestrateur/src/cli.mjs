@@ -8,8 +8,9 @@ const AIDE = `Usage : node src/cli.mjs <commande>
   repondre <n°> "<réponses>"     répond aux questions de l'analyste
   valider <n°>                   valide le plan : la fabrication commence
   corriger <n°> "<retours>"      corrige le plan (ou demande des corrections après livraison)
-  reorienter <n°> "<direction>" [persona_id]
-                                 change de direction pendant la fabrication (et de persona, s'il est validé)
+  reorienter <n°> "<direction>" [persona_id] [o/depot]
+                                 change de direction (en fabrication ou livré), de persona s'il est validé,
+                                 avec un dépôt GitHub de référence que l'analyste lit (persona_id : 0 pour aucun)
   decider <escalade> <A|B|C> ["consigne"]
   production <n°> [--donnees demo|vide] [--emails captures|reels] [--horloge acceleree|reelle] [--autorises "a@b.fr,@domaine.fr"]
                                  met en production (après livraison)
@@ -19,7 +20,7 @@ const AIDE = `Usage : node src/cli.mjs <commande>
   mettre-a-jour                  met l'usine à jour depuis GitHub (après la tâche en cours)
   relancer <n°> · stop · reprendre`
 
-const [commande, a, b, c] = process.argv.slice(2)
+const [commande, a, b, c, d] = process.argv.slice(2)
 const appel = async (methode, chemin, corps) => {
   const res = await fetch(`http://127.0.0.1:8090${chemin}`, { method: methode, headers: { "content-type": "application/json" }, body: corps ? JSON.stringify(corps) : undefined })
   return res.json()
@@ -33,7 +34,7 @@ const table = {
   repondre: () => appel("POST", `/repondre/${a}`, { texte: b }),
   valider: () => appel("POST", `/valider/${a}`, {}),
   corriger: () => appel("POST", `/corriger/${a}`, { texte: b }),
-  reorienter: () => appel("POST", `/reorienter/${a}`, { texte: b, persona_id: c ? Number(c) : null }),
+  reorienter: () => appel("POST", `/reorienter/${a}`, { texte: b, persona_id: Number(c) || null, depot: d || null }),
   decider: () => appel("POST", `/decider/${a}`, { choix: String(b).toUpperCase(), texte: c }),
   production: () => {
     // Les options --cle valeur deviennent les choix de production.

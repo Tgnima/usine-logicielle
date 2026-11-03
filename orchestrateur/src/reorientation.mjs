@@ -8,13 +8,18 @@
 //   3. le plan repasse « à valider » : valider abandonne les tâches non faites, ouvre les
 //      nouvelles et relance la fabrication ; « garder l'ancien plan » remet tout comme avant.
 //
+// Un dépôt GitHub de référence peut accompagner la nouvelle direction (« depot o/r ») :
+// l'analyste lit sa description, son README et ses docs/ (avec le jeton de l'usine, qu'il ne
+// voit jamais) et s'en inspire pour la suite, sans copier son code.
+//
 // La demande vit dans le réglage reorientation_<id> (elle survit à un redémarrage).
 import { maj, noter, obtenir, plan as lirePlan, taches } from "./db.mjs"
 import { ecrireReglage, enregistrer, lireReglage } from "./couts.mjs"
 import { analyserReorientation, planEnMarkdown } from "./analyste.mjs"
 import { designEnMarkdown } from "./design.mjs"
 import { ouvrirTaches } from "./creation.mjs"
-import { ajouterEtiquettes, commenter, creerEtiquettes, ecrireFichierDepot, fermerIssue, retirerEtiquette } from "./github.mjs"
+import { ajouterEtiquettes, commenter, creerEtiquettes, documentsDepot, ecrireFichierDepot, fermerIssue, retirerEtiquette } from "./github.mjs"
+import { lireAdresseDepot } from "./reprise.mjs"
 import { apresFusion, retirerFile } from "./livraison.mjs"
 import { brancheDeBase, lireProfil } from "./profil.mjs"
 import { icpEnMarkdown, lirePersona, missionEnMarkdown, obtenirPersona, personaEnTexte } from "./personas.mjs"
@@ -53,7 +58,25 @@ export function fusionner(plan, gardes, r) {
   return nouveau
 }
 
-export function reorienterProjet(ctx, projetId, { consigne, personaId = null, par = "?" }) {
+// La commande Slack « reorienter <n°> [persona <nom>] [depot <adresse>] : <nouvelle direction> ».
+// L'adresse peut contenir « : » (https://…) : le séparateur est le premier « : » qui la suit.
+export function lireCommandeReorienter(texte) {
+  const m = /^\S+\s+(\d+)\s*(?:persona\s+(.+?))?\s*(?:d[ée]p[ôo]t\s+(<[^>]+>|\S+))?\s*:\s*([\s\S]+)$/i.exec(String(texte ?? "").trim())
+  if (!m) return null
+  return { projet: Number(m[1]), persona: m[2]?.trim() || null, depot: m[3] ?? null, consigne: m[4].trim() }
+}
+
+// La taille du texte d'un dépôt de référence confiée à l'analyste.
+export const REFERENCE_MAX = 60_000
+
+// Le dépôt de référence lu pour l'analyste : { nom, texte } ; une erreur explicite s'il est invisible.
+export async function lireReference(config, depot) {
+  const doc = await documentsDepot(config, depot)
+  if (!doc) throw new Error(`le dépôt de référence ${depot} est introuvable, ou privé et invisible pour le compte GitHub de l'usine (invite-le en lecture, ou garde l'ancien plan et recommence sans dépôt)`)
+  return { nom: doc.nom, texte: doc.texte.slice(0, REFERENCE_MAX) }
+}
+
+export function reorienterProjet(ctx, projetId, { consigne, personaId = null, depot = null, par = "?" }) {
   const { db } = ctx
   const projet = obtenir(db, "projets", projetId)
   if (!projet || projet.statut === "supprime") return { ok: false, message: `Pas de projet ${projetId}.` }
@@ -69,16 +92,22 @@ export function reorienterProjet(ctx, projetId, { consigne, personaId = null, pa
     const p = obtenirPersona(db, personaId)
     if (!p || p.statut !== "valide") return { ok: false, message: "Ce persona n'est pas validé : relis sa fiche et valide-la d'abord." }
   }
+  // Le dépôt de référence (facultatif) : son adresse est vérifiée ici, sa lecture par l'analyste.
+  let reference = null
+  if (depot !== null && String(depot).trim()) {
+    reference = lireAdresseDepot(depot)?.depot ?? null
+    if (!reference) return { ok: false, message: "Adresse du dépôt de référence illisible : donne-la sous la forme https://github.com/proprietaire/depot (ou proprietaire/depot)." }
+  }
   // Les demandes mises en file pendant la fabrication partent avec la réorientation, pas après la livraison.
   const enFile = retirerFile(db, projetId)
   const complete = enFile.length ? `${texte}\n\nDemandes reçues pendant la fabrication :\n${enFile.map((d) => `- ${d.texte}`).join("\n")}` : texte
-  ecrire(db, projetId, { consigne: complete, persona_id: personaId, par, le: new Date().toISOString(), statut_avant: projet.statut, plan_avant: projet.plan })
+  ecrire(db, projetId, { consigne: complete, persona_id: personaId, depot: reference, par, le: new Date().toISOString(), statut_avant: projet.statut, plan_avant: projet.plan })
   maj(db, "projets", projetId, { statut: "reorientation" })
-  db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Réorientation demandée", complete, par)
-  noter(db, { projet: projetId, type: "reorientation", message: `Réorientation demandée par ${par} : ${complete}` })
+  db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Réorientation demandée", reference ? `${complete}\n\nDépôt de référence : ${reference}` : complete, par)
+  noter(db, { projet: projetId, type: "reorientation", message: `Réorientation demandée par ${par}${reference ? ` (dépôt de référence ${reference})` : ""} : ${complete}` })
   const enCours = taches(db, projetId).find((t) => ["en_cours", "verification"].includes(t.statut))
   const debut = enCours ? `L'usine termine ${enCours.cle} (en cours), puis` : LIVRES.includes(projet.statut) ? `Le produit livré reste tel quel${projet.statut === "en_production" ? " et en ligne" : ""} ; en attendant,` : "La fabrication est en pause :"
-  ctx.notifier.etape(projet, `:twisted_rightwards_arrows: *Réorientation* demandée par ${par} :\n>${complete.replace(/\n/g, "\n>")}\n${debut} l'analyste refait la suite du plan. Les lots déjà fabriqués sont gardés ; tu valideras le nouveau plan avant que la fabrication reprenne.`).catch(() => {})
+  ctx.notifier.etape(projet, `:twisted_rightwards_arrows: *Réorientation* demandée par ${par} :\n>${complete.replace(/\n/g, "\n>")}\n${reference ? `Dépôt de référence : https://github.com/${reference} (l'analyste lit sa description, son README et ses docs/).\n` : ""}${debut} l'analyste refait la suite du plan. Les lots déjà fabriqués sont gardés ; tu valideras le nouveau plan avant que la fabrication reprenne.`).catch(() => {})
   preparer(ctx, projetId).catch((e) => console.error("Réorientation :", e))
   return { ok: true, message: enCours ? `Réorientation enregistrée : l'usine termine ${enCours.cle}, puis l'analyste refait la suite du plan.` : "Réorientation enregistrée : l'analyste refait la suite du plan." }
 }
@@ -104,7 +133,8 @@ export async function preparer(ctx, projetId, { retours = null } = {}) {
     await ctx.notifier.etape(projet, `:brain: L'analyste refait la suite du plan (${garde ? `lot${garde > 1 ? "s" : ""} 1${garde > 1 ? ` à ${garde}` : ""} gardé${garde > 1 ? "s" : ""}` : "rien n'est encore fabriqué"}, ${nonFaites.length} tâche(s) non faite(s) à revoir)…`)
     const mesurer = (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s })
     const proposition = retours && projet.plan ? JSON.stringify({ ...lirePlan(projet), lots: lirePlan(projet).lots.slice(garde) }) : null
-    const objet = await analyserReorientation(config, projet, planAvant, { gardes, nonFaites, derniere, consigne: r.consigne, persona: persona ? personaEnTexte(persona) : null, proposition, retours, mesurer, ctx })
+    const reference = r.depot ? await lireReference(config, r.depot) : null
+    const objet = await analyserReorientation(config, projet, planAvant, { gardes, nonFaites, derniere, consigne: r.consigne, persona: persona ? personaEnTexte(persona) : null, proposition, retours, mesurer, ctx, reference, livre: LIVRES.includes(r.statut_avant) })
     // Gardé l'ancien plan pendant l'analyse : la proposition ne sert plus.
     if (!lireReorientation(db, projetId)) return
     const plan = fusionner(planAvant, gardes, objet)
@@ -167,7 +197,7 @@ export async function validerReorientation(ctx, projetId, par) {
       await creerEtiquettes(config, nomDepot, nouveaux.map((l, i) => [`lot:${r.garde + i + 1}`, "ededed", l.nom.slice(0, 90)]))
       for (const [i, lot] of nouveaux.entries()) await ouvrirTaches(ctx, projetId, nomDepot, lot, r.garde + i + 1)
       // 5. La fabrication reprend, avec la nouvelle direction dans les décisions que lisent les agents.
-      db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Réorientation (nouvelle direction)", r.consigne, par)
+      db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Réorientation (nouvelle direction)", r.depot ? `${r.consigne}\n\nDépôt de référence (lu par l'analyste pour écrire ces lots) : ${r.depot}` : r.consigne, par)
       maj(db, "projets", projetId, { statut: "fabrication", debut_fabrication: new Date().toISOString() })
       effacer(db, projetId)
       const n = nouveaux.reduce((s, l) => s + l.taches.length, 0)

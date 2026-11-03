@@ -27,6 +27,10 @@ before(async () => {
     appels.push(`${method} ${u.pathname}`)
     const repondre = (status, json) => ({ ok: status < 400, status, json: async () => json })
     if (u.hostname === "127.0.0.1") return repondre(503, {})
+    // Les dépôts de référence : l'un est visible (avec un README), l'autre non.
+    if (u.pathname.startsWith("/repos/essai/invisible")) return repondre(404, {})
+    if (u.pathname === "/repos/essai/la-ville") return repondre(200, { full_name: "essai/la-ville", description: "La Ville, un CRM gamifié", default_branch: "main" })
+    if (u.pathname === "/repos/essai/la-ville/readme") return repondre(200, { content: Buffer.from("# La Ville\nChaque vente est un bâtiment.").toString("base64") })
     if (method === "GET" && u.pathname.includes("/contents/")) return repondre(404, {})
     if (method === "POST" && u.pathname.endsWith("/issues")) return repondre(201, { number: ++issue })
     return repondre(200, {})
@@ -178,4 +182,38 @@ test("valider la réorientation d'un produit livré : la suite s'ajoute après t
   assert.equal(t.T6.statut, "attente")
   assert.ok(["T1", "T2", "T3", "T4", "T5"].every((c) => t[c].statut === "fusionnee"))
   assert.ok(!messages.slice(avant).some((x) => typeof x === "string" && x.includes("Lot 3 terminé")), "le lot 3 n'est pas relivré")
+})
+
+test("la commande Slack : persona et dépôt de référence facultatifs, adresse avec « : » comprise", () => {
+  assert.deepEqual(m.lireCommandeReorienter("reorienter 9 : on vise les artisans"), { projet: 9, persona: null, depot: null, consigne: "on vise les artisans" })
+  assert.deepEqual(m.lireCommandeReorienter("reorienter 9 depot https://github.com/o/r : la Ville : gamifiée"), { projet: 9, persona: null, depot: "https://github.com/o/r", consigne: "la Ville : gamifiée" })
+  assert.deepEqual(m.lireCommandeReorienter("reorienter 9 persona Négociateur immo dépôt <https://github.com/o/r|o/r> : x"), { projet: 9, persona: "Négociateur immo", depot: "<https://github.com/o/r|o/r>", consigne: "x" })
+  assert.equal(m.lireCommandeReorienter("reorienter neuf : x"), null)
+})
+
+test("un dépôt de référence à l'adresse illisible est refusé, sans rien changer", () => {
+  const r = pipeline.reorienterProjet(ctx, 3, { consigne: "Un carnet partagé entre amis.", depot: "pas une adresse !", par: "moi" })
+  assert.equal(r.ok, false)
+  assert.match(r.message, /illisible/)
+  assert.equal(obtenir(ctx.db, "projets", 3).statut, "en_production")
+})
+
+test("le dépôt de référence est lu pour l'analyste : sa description et son README ; un dépôt invisible est refusé", async () => {
+  const ref = await m.lireReference(ctx.config, "essai/la-ville")
+  assert.equal(ref.nom, "essai/la-ville")
+  assert.match(ref.texte, /La Ville, un CRM gamifié/)
+  assert.match(ref.texte, /Chaque vente est un bâtiment/)
+  await assert.rejects(m.lireReference(ctx.config, "essai/invisible"), /introuvable, ou privé et invisible/)
+})
+
+test("réorienter avec un dépôt de référence : il est gardé, annoncé, et un dépôt invisible arrête la préparation", async () => {
+  const r = pipeline.reorienterProjet(ctx, 3, { consigne: "Un carnet partagé entre amis.", depot: "https://github.com/essai/invisible", par: "moi" })
+  assert.equal(r.ok, true)
+  assert.equal(m.lireReorientation(ctx.db, 3).depot, "essai/invisible")
+  assert.ok(messages.some((x) => typeof x === "string" && x.includes("Dépôt de référence : https://github.com/essai/invisible")))
+  await new Promise((ok) => setTimeout(ok, 50))
+  assert.equal(obtenir(ctx.db, "projets", 3).statut, "reorientation")
+  assert.ok(messages.some((x) => typeof x === "string" && x.includes("dépôt de référence essai/invisible est introuvable")))
+  assert.equal(pipeline.abandonnerPlan(ctx, 3, "moi").ok, true)
+  assert.equal(obtenir(ctx.db, "projets", 3).statut, "en_production")
 })

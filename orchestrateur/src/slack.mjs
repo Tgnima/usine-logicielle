@@ -22,6 +22,7 @@ import { choixProduction, demanderCorrections, mettreEnProduction } from "./livr
 import { adresses, estAdminSlack } from "./config.mjs"
 import { envoiDisponible } from "./courriel.mjs"
 import { listerPersonas, trouverPersona } from "./personas.mjs"
+import { lireCommandeReorienter } from "./reorientation.mjs"
 import { pyramideEnLignes, verdictPyramide } from "./pyramide.mjs"
 import { pointsACorriger } from "./recette.mjs"
 import { normaliserQuestions } from "./presentation.mjs"
@@ -183,7 +184,7 @@ export async function demarrerSlack(ctx) {
     const [mot, arg] = texte.split(/\s+/)
     const repondre = (t) => respond({ response_type: "ephemeral", text: t })
     if (!texte || mot === "aide") {
-      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine reorienter <n°> [persona <nom>] : <la nouvelle direction>` : changer de direction, pendant la fabrication ou sur un produit livré ; l'usine garde ce qui est fait et te propose la suite du plan.\n`/usine reprendre <dépôt GitHub> persona <nom> [mode copie|direct] [: ce que tu veux en faire]` : l'usine reprend un dépôt existant (un reverse engineering, par exemple) et le termine pour ce persona · `/usine personas` : les personas (création et relecture dans la console).\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
+      return repondre("*Usine logicielle*\n`/usine <ce que tu veux construire>` : du prompt au produit en ligne.\n`/usine corriger <n°> <ce qui ne va pas>` : l'usine enquête sur un produit livré et le corrige.\n`/usine reorienter <n°> [persona <nom>] [depot <adresse GitHub>] : <la nouvelle direction>` : changer de direction, pendant la fabrication ou sur un produit livré ; l'usine garde ce qui est fait et te propose la suite du plan, en s'inspirant du dépôt de référence s'il y en a un.\n`/usine reprendre <dépôt GitHub> persona <nom> [mode copie|direct] [: ce que tu veux en faire]` : l'usine reprend un dépôt existant (un reverse engineering, par exemple) et le termine pour ce persona · `/usine personas` : les personas (création et relecture dans la console).\n`/usine sante` : la santé de l'usine · `/usine supprimer <n°>` : retirer un projet · `/usine acces` : qui peut entrer dans les applications · `/usine tableau` : le tableau de bord web · `/usine couts` : ce que coûte l'usine ce mois-ci · `/usine couts <n°>` : ce qu'un projet a coûté.\n`/usine statut` · `/usine stop` · `/usine reprendre` · `/usine relancer <n°>` · `/usine production <n°>` (ouvre les réglages de production)\n`/usine domaine <n°> <adresse>` : servir un produit en production sur ton propre domaine · `/usine domaine <n°>` : ses domaines · `/usine domaine <n°> retirer <adresse>`")
     }
     if (mot === "tableau" || mot === "dashboard") {
       return respond({ response_type: "ephemeral", text: adresseTableau(config), blocks: [section(":bar_chart: *Console de l'usine* : projets en direct, décisions, production, santé, coûts et accès."), { type: "actions", elements: [lien("Ouvrir le tableau de bord", adresseTableau(config))] }] })
@@ -229,16 +230,16 @@ export async function demarrerSlack(ctx) {
       return repondre(r.message)
     }
     if (mot === "reorienter" || mot === "réorienter") {
-      // /usine reorienter <n°> [persona <nom>] : <nouvelle direction>
-      const m = /^\S+\s+(\d+)\s*(?:persona\s+(.+?))?\s*:\s*([\s\S]+)$/i.exec(texte)
-      if (!m) return repondre("Écris : `/usine reorienter <n°> [persona <nom>] : <la nouvelle direction>`, par exemple `/usine reorienter 4 : on vise les artisans plutôt que les agences ; retire la facturation`.")
+      // /usine reorienter <n°> [persona <nom>] [depot <adresse>] : <nouvelle direction>
+      const m = lireCommandeReorienter(texte)
+      if (!m) return repondre("Écris : `/usine reorienter <n°> [persona <nom>] [depot <adresse GitHub>] : <la nouvelle direction>`, par exemple `/usine reorienter 4 depot Tgnima/agenda-artisans : on vise les artisans plutôt que les agences ; retire la facturation`.")
       let personaId = null
-      if (m[2]) {
-        const p = trouverPersona(db, m[2].trim())
-        if (!p) return repondre(`Je ne trouve pas le persona « ${m[2].trim()} ». \`/usine personas\` pour la liste.`)
+      if (m.persona) {
+        const p = trouverPersona(db, m.persona)
+        if (!p) return repondre(`Je ne trouve pas le persona « ${m.persona} ». \`/usine personas\` pour la liste.`)
         personaId = p.id
       }
-      return repondre(actions.reorienterProjet(ctx, Number(m[1]), { consigne: m[3], personaId, par: command.user_name }).message)
+      return repondre(actions.reorienterProjet(ctx, m.projet, { consigne: m.consigne, personaId, depot: m.depot, par: command.user_name }).message)
     }
     if (mot === "stop") return repondre(actions.arreter(ctx, command.user_name).message)
     if (mot === "reprendre") return repondre(actions.reprendre(ctx).message)

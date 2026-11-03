@@ -1161,6 +1161,9 @@ function blocReorienter(p) {
         <option value="">${p.persona ? `Garder « ${p.persona} »` : "Sans persona"}</option>
         ${liste.filter((x) => x.id !== p.persona_id).map((x) => html`<option value="${x.id}">${x.nom}</option>`)}
       </select>
+      <label class="titre-champ" for="depot-reorienter">Dépôt GitHub de référence <span class="aide" style="font-weight:400">· facultatif : un concept, une maquette, un prototype dont l'analyste s'inspire</span></label>
+      <input id="depot-reorienter" class="champ" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://github.com/proprietaire/depot">
+      <p class="aide" style="margin:0">L'analyste lit sa description, son README et ses docs/ avec le compte GitHub de l'usine (un dépôt privé doit lui être accessible). Il ne copie pas son code : il s'en inspire pour la suite du plan.</p>
       <div><button type="button" class="btn btn-p" data-action="reorienter">Réorienter le projet</button></div>
     </div></details>`
 }
@@ -1176,7 +1179,8 @@ function blocPlanReorientation(p) {
     <div class="colonnes">
       <div class="colonne-large pile">
         <div class="message info pile" style="align-items:flex-start"><span><strong>Réorientation demandée${r.par ? ` par ${r.par}` : ""}.</strong> ${r.consigne}</span>
-          ${r.persona ? html`<span class="aide">Nouveau persona : ${r.persona}</span>` : ""}</div>
+          ${r.persona ? html`<span class="aide">Nouveau persona : ${r.persona}</span>` : ""}
+          ${r.depot ? html`<span class="aide">Dépôt de référence : <a href="https://github.com/${r.depot}" target="_blank" rel="noopener">${r.depot}</a></span>` : ""}</div>
         ${garde ? html`<section class="carte carte-p pile"><strong>Gardé (déjà fabriqué)</strong>
           <ol style="margin:0;padding-left:20px">${plan.lots.slice(0, garde).map((l) => html`<li>${l.nom}</li>`)}</ol></section>` : ""}
         ${r.abandonnees.length ? html`<div class="aide">À la validation, les fonctions pas encore construites de l'ancien plan seront laissées de côté (${r.abandonnees.length}).</div>` : ""}
@@ -2263,7 +2267,7 @@ const ACTIONS = {
     const consigne = $("#consigne-reorienter")?.value.trim()
     if (!consigne) return $("#consigne-reorienter")?.focus()
     if (!confirmer("Réorienter le projet ? La fabrication s'arrête après la tâche en cours, le temps que tu valides le nouveau plan.")) return
-    return agir(() => api("POST", `projets/${etat.projet.id}/reorienter`, { consigne, persona_id: $("#persona-reorienter")?.value || null }))
+    return agir(() => api("POST", `projets/${etat.projet.id}/reorienter`, { consigne, persona_id: $("#persona-reorienter")?.value || null, depot: $("#depot-reorienter")?.value.trim() || null }))
   },
   "annuler-reorientation": () => confirmer(etat.projet.reorientation?.livre ? "Garder le produit tel qu'il est ? La nouvelle direction est abandonnée ; rien ne change sur le produit livré." : "Garder l'ancien plan ? La fabrication reprend là où elle s'était arrêtée.") && agir(() => api("POST", `projets/${etat.projet.id}/abandonner`, {})),
   "relancer-projet": () => agir(() => api("POST", `projets/${etat.projet.id}/relancer`, {}), { succes: "Relance lancée : cette page se met à jour toute seule." }),
