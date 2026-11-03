@@ -201,7 +201,7 @@ async function detailProjet(ctx, id) {
       const r = lireReorientation(db, id)
       if (!r) return null
       const persona = r.persona_id ? lirePersona(obtenirPersona(db, r.persona_id))?.nom ?? null : null
-      return { consigne: r.consigne, par: r.par, le: r.le, persona, garde: r.garde ?? null, abandonnees: r.garde === undefined ? [] : t.filter((x) => !["fusionnee", "abandonnee"].includes(x.statut)).map((x) => x.cle) }
+      return { consigne: r.consigne, par: r.par, le: r.le, persona, livre: ["livre", "en_production"].includes(r.statut_avant), garde: r.garde ?? null, abandonnees: r.garde === undefined ? [] : t.filter((x) => !["fusionnee", "abandonnee"].includes(x.statut)).map((x) => x.cle) }
     })(),
     inventaire: p.inventaire ? JSON.parse(p.inventaire) : null,
     profil: p.profil ? JSON.parse(p.profil) : null,

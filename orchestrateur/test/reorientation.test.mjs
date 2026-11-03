@@ -48,6 +48,11 @@ before(async () => {
   const ins = base.prepare("INSERT INTO projets (prompt, statut, nom, slug, plan, depot, lot_livre, debut_fabrication) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
   ins.run("un agenda", "fabrication", "Agenda", "agenda", JSON.stringify(PLAN), "essai/agenda", 1, "2026-10-20T10:00:00Z") // 1
   ins.run("livré", "livre", "Vitrine", "vitrine", JSON.stringify(PLAN), "essai/vitrine", 3, null) // 2
+  ins.run("en ligne", "en_production", "Carnet", "carnet", JSON.stringify(PLAN), "essai/carnet", 3, null) // 3
+  ins.run("des questions", "questions", "Brouillon", "brouillon", null, null, 0, null) // 4
+  // Les produits livrés : toutes leurs tâches sont fusionnées.
+  const fini = base.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, issue, statut) VALUES (?, ?, ?, 'x', 'd', '[]', '[]', ?, 'fusionnee')")
+  for (const p of [2, 3]) ["T1", "T2", "T3", "T4", "T5"].forEach((c, i) => fini.run(p, c, [1, 1, 2, 2, 3][i], 200 + p * 10 + i))
   const t = base.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, issue, statut) VALUES (1, ?, ?, ?, 'd', '[]', '[]', ?, ?)")
   t.run("T1", 1, "Liste", 1, "fusionnee")
   t.run("T2", 1, "Fiche", 2, "fusionnee")
@@ -73,11 +78,38 @@ test("fusionner : nom, slug et brique ne bougent pas ; la suite et le cap change
   assert.deepEqual(nouveau.lots.map((l) => l.nom), ["Socle", "Facturation", "Agenda partagé"])
 })
 
-test("seule une fabrication en cours se réoriente", () => {
-  const r = pipeline.reorienterProjet(ctx, 2, { consigne: "on vise les artisans", par: "moi" })
+test("un projet pas encore planifié ne se réoriente pas ; une direction trop courte non plus", () => {
+  const r = pipeline.reorienterProjet(ctx, 4, { consigne: "on vise les artisans", par: "moi" })
   assert.equal(r.ok, false)
-  assert.match(r.message, /livré/)
+  assert.match(r.message, /pas encore validé/)
   assert.equal(pipeline.reorienterProjet(ctx, 1, { consigne: "court", par: "moi" }).ok, false)
+})
+
+test("un produit livré se réoriente : tous ses lots sont gardés, et il reste tel quel en attendant", async () => {
+  assert.equal(m.partager(PLAN, taches(ctx.db, 2)).garde, 3)
+  assert.deepEqual(m.partager(PLAN, taches(ctx.db, 2)).nonFaites, [])
+  const r = pipeline.reorienterProjet(ctx, 2, { consigne: "On vise les artisans plutôt que les agences.", par: "moi" })
+  assert.equal(r.ok, true)
+  assert.equal(obtenir(ctx.db, "projets", 2).statut, "reorientation")
+  assert.equal(m.lireReorientation(ctx.db, 2).statut_avant, "livre")
+  assert.ok(messages.some((x) => typeof x === "string" && x.includes("Le produit livré reste tel quel ;")))
+  await new Promise((ok) => setTimeout(ok, 50)) // l'analyste injoignable : rien ne bouge
+  // Garder le produit : il redevient livré, avec son plan d'origine.
+  const g = pipeline.abandonnerPlan(ctx, 2, "moi")
+  assert.equal(g.ok, true)
+  assert.match(g.message, /reste tel qu'il a été livré/)
+  const p = obtenir(ctx.db, "projets", 2)
+  assert.equal(p.statut, "livre")
+  assert.deepEqual(JSON.parse(p.plan), PLAN)
+})
+
+test("un produit en ligne se réoriente et, gardé tel quel, reste en ligne", async () => {
+  const r = pipeline.reorienterProjet(ctx, 3, { consigne: "Un carnet partagé entre amis, avec des listes.", par: "moi" })
+  assert.equal(r.ok, true)
+  assert.ok(messages.some((x) => typeof x === "string" && x.includes("reste tel quel et en ligne")))
+  await new Promise((ok) => setTimeout(ok, 50))
+  assert.equal(pipeline.abandonnerPlan(ctx, 3, "moi").ok, true)
+  assert.equal(obtenir(ctx.db, "projets", 3).statut, "en_production")
 })
 
 test("réorienter : la fabrication s'arrête, les demandes en file partent avec, les décisions attendent", async () => {
@@ -129,4 +161,21 @@ test("valider la réorientation : non faites abandonnées, nouvelles tâches ouv
   assert.ok(ctx.db.prepare("SELECT 1 FROM decisions WHERE projet_id = 1 AND question = 'Réorientation (nouvelle direction)'").get())
   assert.ok(appels.includes("PUT /repos/essai/agenda/contents/docs/PLAN.md"))
   assert.ok(appels.includes("PUT /repos/essai/agenda/contents/MISSION.md"))
+})
+
+test("valider la réorientation d'un produit livré : la suite s'ajoute après tous ses lots, sans relivrer l'ancien", async () => {
+  const plan = m.fusionner(PLAN, PLAN.lots, { lots: [{ nom: "Pour les artisans", objectif: "viser les artisans", taches: [tache("T6", "Devis", ["T1"])] }] })
+  ctx.db.prepare("INSERT INTO reglages (cle, valeur) VALUES ('reorientation_2', ?)").run(JSON.stringify({ consigne: "les artisans", par: "moi", statut_avant: "livre", plan_avant: JSON.stringify(PLAN), garde: 3 }))
+  ctx.db.prepare("UPDATE projets SET statut = 'plan_a_valider', plan = ? WHERE id = 2").run(JSON.stringify(plan))
+  const avant = messages.length
+  assert.equal((await pipeline.validerPlan(ctx, 2, "moi")).ok, true)
+  for (let i = 0; i < 50 && obtenir(ctx.db, "projets", 2).statut !== "fabrication"; i++) await new Promise((ok) => setTimeout(ok, 20))
+  const p = obtenir(ctx.db, "projets", 2)
+  assert.equal(p.statut, "fabrication")
+  assert.equal(p.lot_livre, 3)
+  const t = Object.fromEntries(taches(ctx.db, 2).map((x) => [x.cle, x]))
+  assert.equal(t.T6.lot, 4)
+  assert.equal(t.T6.statut, "attente")
+  assert.ok(["T1", "T2", "T3", "T4", "T5"].every((c) => t[c].statut === "fusionnee"))
+  assert.ok(!messages.slice(avant).some((x) => typeof x === "string" && x.includes("Lot 3 terminé")), "le lot 3 n'est pas relivré")
 })

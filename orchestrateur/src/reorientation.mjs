@@ -1,6 +1,8 @@
-// Réorienter un projet en cours de fabrication : « /usine reorienter <n°> : <nouvelle direction> ».
+// Réorienter un projet : « /usine reorienter <n°> : <nouvelle direction> ».
+// En fabrication ou bloqué, mais aussi livré ou en ligne : un produit fini peut changer de cap.
 //
 //   1. la fabrication du projet s'arrête après la tâche en cours (statut « reorientation ») ;
+//      un produit livré reste tel quel (et en ligne s'il l'est) pendant que la suite se prépare ;
 //   2. l'analyste refait la suite du plan : les lots déjà fabriqués sont gardés tels quels,
 //      les tâches pas encore faites sont reprises ou laissées, selon la nouvelle direction ;
 //   3. le plan repasse « à valider » : valider abandonne les tâches non faites, ouvre les
@@ -17,7 +19,9 @@ import { apresFusion, retirerFile } from "./livraison.mjs"
 import { brancheDeBase, lireProfil } from "./profil.mjs"
 import { icpEnMarkdown, lirePersona, missionEnMarkdown, obtenirPersona, personaEnTexte } from "./personas.mjs"
 
-export const STATUTS_REORIENTABLES = ["fabrication", "bloque"]
+export const STATUTS_REORIENTABLES = ["fabrication", "bloque", "livre", "en_production"]
+// Un produit fini : rien n'est en cours, tous ses lots sont gardés, la production continue de tourner.
+const LIVRES = ["livre", "en_production"]
 const cle = (projetId) => `reorientation_${Number(projetId)}`
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const enPreparation = new Set() // les projets dont la suite est en train d'être refaite
@@ -55,8 +59,8 @@ export function reorienterProjet(ctx, projetId, { consigne, personaId = null, pa
   if (!projet || projet.statut === "supprime") return { ok: false, message: `Pas de projet ${projetId}.` }
   if (lireReorientation(db, projetId)) return { ok: false, message: "Une réorientation est déjà en cours sur ce projet : valide le nouveau plan, révise-le, ou garde l'ancien." }
   if (!STATUTS_REORIENTABLES.includes(projet.statut)) {
-    const conseil = ["livre", "en_production"].includes(projet.statut) ? " Le produit est livré : décris l'évolution voulue (`/usine corriger`), l'analyste ajoutera un lot." : ["questions", "plan_a_valider"].includes(projet.statut) ? " Son plan n'est pas encore validé : corrige-le directement." : ""
-    return { ok: false, message: `Le projet ${projetId} est « ${projet.statut} » : seule une fabrication en cours se réoriente.${conseil}` }
+    const conseil = ["questions", "plan_a_valider"].includes(projet.statut) ? " Son plan n'est pas encore validé : corrige-le directement." : ""
+    return { ok: false, message: `Le projet ${projetId} est « ${projet.statut} » : seul un projet en fabrication, bloqué, livré ou en ligne se réoriente.${conseil}` }
   }
   const texte = String(consigne ?? "").trim()
   if (texte.length < 10) return { ok: false, message: "Décris la nouvelle direction (10 caractères au moins)." }
@@ -73,7 +77,8 @@ export function reorienterProjet(ctx, projetId, { consigne, personaId = null, pa
   db.prepare("INSERT INTO decisions (projet_id, question, reponse, par) VALUES (?, ?, ?, ?)").run(projetId, "Réorientation demandée", complete, par)
   noter(db, { projet: projetId, type: "reorientation", message: `Réorientation demandée par ${par} : ${complete}` })
   const enCours = taches(db, projetId).find((t) => ["en_cours", "verification"].includes(t.statut))
-  ctx.notifier.etape(projet, `:twisted_rightwards_arrows: *Réorientation* demandée par ${par} :\n>${complete.replace(/\n/g, "\n>")}\n${enCours ? `L'usine termine ${enCours.cle} (en cours), puis` : "La fabrication est en pause :"} l'analyste refait la suite du plan. Les lots déjà fabriqués sont gardés ; tu valideras le nouveau plan avant que la fabrication reprenne.`).catch(() => {})
+  const debut = enCours ? `L'usine termine ${enCours.cle} (en cours), puis` : LIVRES.includes(projet.statut) ? `Le produit livré reste tel quel${projet.statut === "en_production" ? " et en ligne" : ""} ; en attendant,` : "La fabrication est en pause :"
+  ctx.notifier.etape(projet, `:twisted_rightwards_arrows: *Réorientation* demandée par ${par} :\n>${complete.replace(/\n/g, "\n>")}\n${debut} l'analyste refait la suite du plan. Les lots déjà fabriqués sont gardés ; tu valideras le nouveau plan avant que la fabrication reprenne.`).catch(() => {})
   preparer(ctx, projetId).catch((e) => console.error("Réorientation :", e))
   return { ok: true, message: enCours ? `Réorientation enregistrée : l'usine termine ${enCours.cle}, puis l'analyste refait la suite du plan.` : "Réorientation enregistrée : l'analyste refait la suite du plan." }
 }
@@ -107,7 +112,7 @@ export async function preparer(ctx, projetId, { retours = null } = {}) {
     ecrire(db, projetId, { ...lireReorientation(db, projetId), garde })
     maj(db, "projets", projetId, { statut: "plan_a_valider", plan: JSON.stringify(plan) })
     noter(db, { projet: projetId, type: "plan", message: `Nouveau plan de réorientation : ${garde} lot(s) gardé(s), ${objet.lots.length} nouveau(x), ${nonFaites.length} tâche(s) non faite(s) abandonnée(s) à la validation` })
-    return ctx.notifier.plan(obtenir(db, "projets", projetId), { ...plan, reorientation: { garde, abandonnees: nonFaites.map((t) => t.cle) } })
+    return ctx.notifier.plan(obtenir(db, "projets", projetId), { ...plan, reorientation: { garde, abandonnees: nonFaites.map((t) => t.cle), livre: LIVRES.includes(r.statut_avant) } })
   } catch (error) {
     noter(db, { projet: projetId, type: "erreur", message: `Réorientation : ${error.message}` })
     await ctx.notifier.etape(obtenir(db, "projets", projetId), `:x: L'analyste n'a pas pu refaire le plan : ${error.message.slice(0, 600)}\nLa fabrication reste en pause. Relance avec \`/usine relancer ${projetId}\`, ou garde l'ancien plan (bouton « Garder l'ancien plan » de la console).`).catch(() => {})
@@ -187,9 +192,11 @@ export function abandonnerReorientation(ctx, projetId, par) {
   if (!r) return { ok: false, message: "Ce projet n'est pas en réorientation." }
   effacer(db, projetId)
   maj(db, "projets", projetId, { statut: r.statut_avant ?? "fabrication", plan: r.plan_avant })
-  noter(db, { projet: projetId, type: "abandon", message: `Réorientation abandonnée par ${par} : la fabrication reprend sur l'ancien plan` })
-  ctx.notifier.etape(obtenir(db, "projets", projetId), `:leftwards_arrow_with_hook: Réorientation abandonnée par ${par} : la fabrication reprend sur l'ancien plan.`).catch(() => {})
-  return { ok: true, message: "Réorientation abandonnée : la fabrication reprend sur l'ancien plan." }
+  // Un produit livré redevient livré (ou en ligne) : il n'y a pas de fabrication à reprendre.
+  const suite = LIVRES.includes(r.statut_avant) ? "le produit reste tel qu'il a été livré" : "la fabrication reprend sur l'ancien plan"
+  noter(db, { projet: projetId, type: "abandon", message: `Réorientation abandonnée par ${par} : ${suite}` })
+  ctx.notifier.etape(obtenir(db, "projets", projetId), `:leftwards_arrow_with_hook: Réorientation abandonnée par ${par} : ${suite}.`).catch(() => {})
+  return { ok: true, message: `Réorientation abandonnée : ${suite}.` }
 }
 
 // Réviser la proposition (comme on corrige un plan avant sa validation).
