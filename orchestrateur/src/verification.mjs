@@ -62,7 +62,7 @@ Non-régression :
 - Pour chaque critère que tu valides et qui s'observe par HTTP ou dans le navigateur, écris un test autonome /tmp/sorties/verif/e2e/${tache.cle}-<n>.cjs : un script Node CommonJS qui lit process.env.BASE (ex. http://localhost:4100), utilise fetch ou require('playwright') (Chromium), vérifie le critère et termine par process.exit(1) s'il n'est plus tenu (process.exit(0) sinon). Il doit être robuste : données de démo seulement en lecture, ou ses propres données avec un nom unique ; pas de dépendance à l'heure exacte ; 60 secondes au plus.
 
 Captures d'écran (pour le relecteur design) :
-- Si le produit a une interface web, enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…). Une API sans interface : pas de capture, mais vérifie que chaque route de la tâche est décrite dans docs/API.md.
+- Si le produit a une interface web, enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…). Les étapes d'un même parcours (la saisie, puis son résultat) viennent du MÊME essai, et le nom dit le scénario (appel-rattacher-saisie-bureau.png, appel-rattacher-resultat-bureau.png, appel-nouvelle-resultat-bureau.png) : sinon le relecteur design comparerait deux essais différents. Une API sans interface : pas de capture, mais vérifie que chaque route de la tâche est décrite dans docs/API.md.
 
 Réponds UNIQUEMENT par ce JSON, sans rien autour :
 {"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "regressions": ["test : ce qui est cassé"], "problemes": ["…"], "resume": "une phrase"}`
@@ -84,6 +84,7 @@ Classe ce que tu VOIS sur les captures :
 - « mineur » : à polir (espacements, alignements, hiérarchie, libellés, états vides perfectibles).
 N'invente rien de ce que tu ne vois pas. Une remarque = un écran + le défaut + la correction précise.
 Les captures sont souvent prises en page entière : une barre de navigation ou un bouton fixé en bas de l'écran y apparaît alors au milieu de la page, par-dessus le contenu qui défile. C'est un effet de la capture, pas un défaut. Ne le signale que si un contenu reste masqué tout en bas de la page, là où le défilement s'arrête.
+Ne conclus qu'un résultat contredit une saisie que si leurs noms de fichier désignent le même scénario (même début de nom, « -saisie » puis « -resultat ») : deux captures de scénarios différents (un rattachement, puis une nouvelle affaire) ne se comparent pas. Les données créées pendant les essais du vérificateur (une affaire de plus, par exemple) ne sont pas un défaut du produit.
 
 Réponds UNIQUEMENT par ce JSON :
 {"graves": [{"ecran": "…", "defaut": "…", "correction": "…"}], "mineurs": [{"ecran": "…", "defaut": "…", "correction": "…"}], "note": 0, "resume": "une phrase"}
