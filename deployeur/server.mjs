@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
+import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 
 const env = process.env
 // Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
@@ -67,8 +68,8 @@ const log = (...a) => console.log(horodatage(), ...a)
 // Le jeton passe par la configuration git de l'environnement : jamais dans les
 // arguments (visibles dans ps) ni dans .git/config.
 // Avec l'application GitHub de l'usine, l'orchestrateur dépose un jeton de courte durée
-// (/jetons/github.json) pour l'état et les produits ; la mise à jour de l'usine elle-même
-// (DEPOT_USINE) garde le jeton du serveur.
+// (/jetons/github.json) pour l'état et les produits. La mise à jour de l'usine elle-même
+// (DEPOT_USINE) l'essaie aussi en premier, puis le jeton du serveur, puis sans jeton (jetons.mjs).
 function lireJetons() {
   try {
     return JSON.parse(readFileSync(join(env.JETONS_DIR ?? "/jetons", "github.json"), "utf8"))
@@ -76,10 +77,12 @@ function lireJetons() {
     return {}
   }
 }
-function jetonForge() {
+// Le jeton de la console, s'il est encore valable deux minutes (sinon null).
+function jetonConsole() {
   const j = lireJetons()
-  return j.jeton && j.expire - Date.now() > 2 * 60_000 ? j.jeton : JETON
+  return j.jeton && j.expire - Date.now() > 2 * 60_000 ? j.jeton : null
 }
+const jetonForge = () => jetonConsole() ?? JETON
 // Le dépôt d'état : celui du compte GitHub connecté dans la console, sinon celui du contrat.
 const depotEtat = () => lireJetons().depot_etat || DEPOT_ETAT
 const envGit = (jeton = jetonForge()) => ({
@@ -91,9 +94,10 @@ const envGit = (jeton = jetonForge()) => ({
 })
 
 // Une commande, sans shell (les valeurs ne sont jamais interprétées).
+// git : true (jeton de la forge) ; { jeton } impose un jeton précis (null : sans jeton).
 function lancer(cmd, args, { cwd, git = false, minutes = 15, max = 20_000 } = {}) {
   return new Promise((resolve) => {
-    const jeton = git === "usine" ? JETON : git ? jetonForge() : null
+    const jeton = typeof git === "object" && git !== null ? git.jeton : git ? jetonForge() : null
     const p = spawn(cmd, args, { cwd, env: jeton ? envGit(jeton) : env })
     let sortie = ""
     const garder = (d) => (sortie = (sortie + d).slice(-max))
@@ -102,7 +106,8 @@ function lancer(cmd, args, { cwd, git = false, minutes = 15, max = 20_000 } = {}
     const minuterie = setTimeout(() => p.kill("SIGKILL"), minutes * 60_000)
     p.on("close", (code) => {
       clearTimeout(minuterie)
-      resolve({ code, sortie: jeton ? sortie.replaceAll(jeton, "***").replaceAll(JETON, "***") : sortie.replaceAll(JETON, "***") })
+      // Les jetons sont masqués ; un jeton vide (serveur sans jeton) ne masque rien.
+      resolve({ code, sortie: [jeton, JETON].filter(Boolean).reduce((s, j) => s.replaceAll(j, "***"), sortie) })
     })
     p.on("error", (e) => resolve({ code: -1, sortie: e.message }))
   })
@@ -572,7 +577,17 @@ async function verifierMiseAJour() {
   if (!USINE_DIR || !DEPOT_USINE || !existsSync(join(USINE_DIR, ".git"))) return
   const git = (args, options = {}) => lancer("git", ["-c", `safe.directory=${USINE_DIR}`, "-C", USINE_DIR, ...args], options)
   // 3 minutes au plus : un fetch bloqué ne doit pas suspendre les vérifications suivantes.
-  const f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: "usine", minutes: 3 })
+  // La connexion de la console d'abord, puis le jeton du serveur, puis sans jeton (dépôt public).
+  const sources = { console: jetonConsole(), serveur: JETON }
+  let f
+  for (const jeton of jetonsMiseAJour(sources)) {
+    f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: { jeton }, minutes: 3 })
+    if (f.code === 0) {
+      if (miseAJour.source !== origineJeton(jeton, sources)) log(`Mise à jour de l'usine : dépôt lu avec ${origineJeton(jeton, sources)}.`)
+      miseAJour = { ...miseAJour, source: origineJeton(jeton, sources) }
+      break
+    }
+  }
   if (f.code !== 0) {
     const message = (f.sortie.trim().split("\n").filter(Boolean).slice(-3).join(" · ") || (f.code === null ? "interrompu au bout de 3 min" : `code ${f.code}`)).slice(0, 400)
     if (miseAJour.erreur?.message !== message) log(`Vérification de mise à jour impossible (git fetch ${DEPOT_USINE}) : ${message}`)

@@ -8,5 +8,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker /usr/local/libexec/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
 WORKDIR /app
-COPY deployeur/server.mjs deployeur/chemins.mjs ./
+COPY deployeur/server.mjs deployeur/chemins.mjs deployeur/jetons.mjs ./
 CMD ["node", "server.mjs"]

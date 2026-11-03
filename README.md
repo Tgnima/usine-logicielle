@@ -149,7 +149,9 @@ les dépôts ». L'usine n'utilise ensuite que des jetons qui expirent : le jeto
 (1 h, renouvelé, aussi déposé pour le déployeur) et, sur un compte personnel, le jeton de
 l'utilisateur pour créer un dépôt. La clé privée de l'application est chiffrée dans le coffre.
 Sans application, le jeton du serveur (`github_token`) sert comme avant ; il n'est plus exigé
-à l'installation. La mise à jour de l'usine elle-même garde le jeton du serveur (`deploy_token`).
+à l'installation. La mise à jour de l'usine elle-même lit son dépôt avec la connexion de la console d'abord,
+puis le jeton du serveur (`deploy_token`, facultatif), puis sans jeton si le dépôt est public :
+un jeton du serveur expiré ne la bloque plus.
 
 ## Fournisseurs d'IA
 
