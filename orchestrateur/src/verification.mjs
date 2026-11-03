@@ -31,6 +31,15 @@ export async function enregistrerJuge(ctx, { serveur, jeton, projet, tache = nul
   enregistrer(ctx.db, { projet: projet.id, tache: tache?.id ?? null, role, moteur: "codex", usages: usagesCodex(await lireFichier(serveur, jeton, journal), modeleCodex, ctx.config), duree_s })
 }
 
+// Les critères que le vérificateur a validés, lus dans son verdict, ajoutés à la consigne du relecteur design.
+// Il juge ce qu'il voit ; il ne remet pas en cause un comportement testé dans l'application en marche.
+export const CRITERES_VALIDES = `const t = require("fs").readFileSync(0, "utf8")
+try {
+  const v = JSON.parse(t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1))
+  const ok = (v.criteres || []).filter((c) => c.ok === true).map((c) => "- " + c.critere)
+  if (ok.length) process.stdout.write("\\n\\nCe que le vérificateur a DÉJÀ testé dans l'application en marche, et validé. Ne le remets pas en cause à partir des captures : une capture qui semble le contredire vient d'un autre essai. Juge ce que tu vois (lisibilité, cohérence visuelle, libellés), pas ces comportements :\\n" + ok.join("\\n") + "\\n")
+} catch {}`
+
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
 
@@ -227,6 +236,8 @@ export async function verifier(ctx, projet, tache, sha) {
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
     // Les mêmes captures, par leur chemin : un juge sans option --image (Claude) les ouvre lui-même.
     "if [ -n \"$IMAGES\" ]; then printf '\\n\\nLes captures à juger (ouvre chacune) :\\n' >> /tmp/sorties/verif/consigne-design.md; ls /tmp/sorties/verif/captures/*.png | head -6 | sed 's/^/- /' >> /tmp/sorties/verif/consigne-design.md; fi",
+    // Ce que le vérificateur a déjà testé et validé : le relecteur design ne le contredit pas sur la foi d'une capture.
+    `node -e ${q(CRITERES_VALIDES)} < /tmp/sorties/verif/verdict.txt >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || true`,
     "if [ -n \"$IMAGES\" ] && grep -q '\"approuve\"' /tmp/sorties/verif/verdict.txt 2>/dev/null; then",
     scriptJuge(ctx, "design", { texte: "/tmp/sorties/verif/design.txt", entree: "/tmp/sorties/verif/consigne-design.md", journal: "/tmp/sorties/verif/design.log", sortieClaude: "/tmp/sorties/verif/claude-design.json", images: "$IMAGES", marqueur: "DESIGN_CODE" }),
     "fi",
