@@ -56,7 +56,8 @@ services:
     dns: *dns
     build: { context: ., dockerfile: verificateur/Dockerfile }
     restart: unless-stopped
-    secrets: [verificateur_token, openai_api_key, ai_gateway_api_key]
+    # Les clés de Claude aussi : il juge à la place de Codex quand celui-ci est épuisé.
+    secrets: [verificateur_token, openai_api_key, ai_gateway_api_key, claude_code_oauth_token, anthropic_api_key]
     volumes:
       - codex:/home/node/.codex
     shm_size: 256m

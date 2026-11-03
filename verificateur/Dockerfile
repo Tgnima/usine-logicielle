@@ -1,13 +1,16 @@
 # Le vérificateur indépendant : il ne voit jamais les notes ni le raisonnement
 # de l'agent qui a codé. Il reconstruit le produit à partir de la pull request,
 # le démarre et le teste comme un visiteur (curl, Playwright + Chromium), puis
-# Codex (une autre famille de modèles que l'atelier) rend son verdict.
+# Codex (une autre famille de modèles que l'atelier) rend son verdict ; Claude prend le
+# relais quand Codex est à sa limite.
 # Python : pour un dépôt repris dans cette pile. psmisc : fuser, pour libérer un port.
 FROM node:24-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl jq procps psmisc ffmpeg python3 python3-venv python3-pip \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install -g @openai/codex@latest playwright@latest && npm cache clean --force
+# Claude Code : le juge de secours, quand Codex est épuisé (relais des moteurs, moteurs.mjs).
+RUN npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest playwright@latest && npm cache clean --force
+ENV DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_PATH=/usr/local/lib/node_modules
 RUN npx playwright install --with-deps chromium && chmod -R a+rx /ms-playwright
 

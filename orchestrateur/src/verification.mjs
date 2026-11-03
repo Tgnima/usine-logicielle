@@ -9,12 +9,27 @@
 // un test de non-régression (.usine/e2e/), rejoué à chaque tâche suivante.
 //
 // La décision finale est prise par porte(), en code : un modèle ne fusionne jamais.
-import { noterLimites, scriptCodex, signalerFacturation } from "./moteurs.mjs"
+import { bilanJuge, nomMoteur, relais, scriptJuge } from "./moteurs.mjs"
+import { noter } from "./db.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS, NEUTRALISER, VERROUS, brancheDeBase, libererPort, lireProfil, proteges } from "./profil.mjs"
 import { extraireJson } from "./analyste.mjs"
-import { ecrireReglage, enregistrer, usagesCodex } from "./couts.mjs"
+import { ecrireReglage, enregistrer, usagesClaude, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
+
+// La consommation du juge qui a servi (Codex : son journal --json ; Claude : sa réponse json).
+export async function enregistrerJuge(ctx, { serveur, jeton, projet, tache = null, role, moteur, journal, sortieClaude, modeleCodex = null, duree_s = 0 }) {
+  if (moteur === "claude-code") {
+    let sortie = null
+    try {
+      sortie = JSON.parse(String((await lireFichier(serveur, jeton, sortieClaude)) ?? ""))
+    } catch {}
+    if (sortie) enregistrer(ctx.db, { projet: projet.id, tache: tache?.id ?? null, role, moteur: "claude-code", usages: usagesClaude(sortie), duree_s })
+    return
+  }
+  if (modeleCodex) ecrireReglage(ctx.db, "modele_codex", modeleCodex)
+  enregistrer(ctx.db, { projet: projet.id, tache: tache?.id ?? null, role, moteur: "codex", usages: usagesCodex(await lireFichier(serveur, jeton, journal), modeleCodex, ctx.config), duree_s })
+}
 
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
@@ -195,7 +210,9 @@ export async function verifier(ctx, projet, tache, sha) {
     ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
     `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 180 node /tmp/sorties/verif/captures.cjs; fi`,
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/verif/verdict.txt -`, entree: "/tmp/sorties/verif/consigne.md", journal: "/tmp/sorties/verif/codex.log", marqueur: "CODEX_CODE", role: "verification" }),
+    // Le relais du vérificateur : Codex, sinon le moteur suivant (réglable dans la console).
+    "rm -f /tmp/sorties/verif/verdict.txt /tmp/sorties/verif/claude.json",
+    scriptJuge(ctx, "verification", { texte: "/tmp/sorties/verif/verdict.txt", entree: "/tmp/sorties/verif/consigne.md", journal: "/tmp/sorties/verif/codex.log", sortieClaude: "/tmp/sorties/verif/claude.json", marqueur: "CODEX_CODE", connecteurs: "verification" }),
     // Le modèle réellement utilisé, lu dans la session Codex (pour le suivi des coûts).
     "  echo \"@@ CODEX_MODELE $(grep -ho '\"model\":\"[^\"]*\"' $(ls -t $(find ~/.codex/sessions -name '*.jsonl' 2>/dev/null) 2>/dev/null | head -1) 2>/dev/null | head -1 | cut -d'\"' -f4)\"",
     `else tail -30 /tmp/sorties/verif/app.log | ${NEUTRALISER}; fi`,
@@ -205,23 +222,22 @@ export async function verifier(ctx, projet, tache, sha) {
     ecrireFichier("/tmp/sorties/verif/consigne-design.md", consigneDesign(projet, tache)),
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
+    // Les mêmes captures, par leur chemin : un juge sans option --image (Claude) les ouvre lui-même.
+    "if [ -n \"$IMAGES\" ]; then printf '\\n\\nLes captures à juger (ouvre chacune) :\\n' >> /tmp/sorties/verif/consigne-design.md; ls /tmp/sorties/verif/captures/*.png | head -6 | sed 's/^/- /' >> /tmp/sorties/verif/consigne-design.md; fi",
     "if [ -n \"$IMAGES\" ] && grep -q '\"approuve\"' /tmp/sorties/verif/verdict.txt 2>/dev/null; then",
-    scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox $IMAGES --output-last-message /tmp/sorties/verif/design.txt -`, entree: "/tmp/sorties/verif/consigne-design.md", journal: "/tmp/sorties/verif/design.log", marqueur: "DESIGN_CODE" }),
+    scriptJuge(ctx, "design", { texte: "/tmp/sorties/verif/design.txt", entree: "/tmp/sorties/verif/consigne-design.md", journal: "/tmp/sorties/verif/design.log", sortieClaude: "/tmp/sorties/verif/claude-design.json", images: "$IMAGES", marqueur: "DESIGN_CODE" }),
     "fi",
     LIBERER_PORT,
   ].join("\n"), { minutes: 40 })
 
   const m = r.marqueurs
   if ("PORT_OCCUPE" in m) return { ok: false, infra: true, raisons: ["le port 4100 du vérificateur est occupé par un ancien serveur impossible à arrêter"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
-  const accesCodex = noterLimites(ctx, "codex", m)
-  await signalerFacturation(ctx, "codex", accesCodex)
-  if (accesCodex.epuise) return { ok: false, infra: true, limite: true, reprise: accesCodex.reprise, raisons: ["Codex à sa limite d'usage (abonnement et secours)"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
-  // La consommation de Codex, même quand il refuse ou échoue.
-  if ("CODEX_CODE" in m) {
-    const journalCodex = await lireFichier(serveur, jeton, "/tmp/sorties/verif/codex.log")
-    if (m.CODEX_MODELE) ecrireReglage(ctx.db, "modele_codex", m.CODEX_MODELE)
-    enregistrer(ctx.db, { projet: projet.id, tache: tache.id, role: "verificateur", moteur: "codex", usages: usagesCodex(journalCodex, m.CODEX_MODELE, config), duree_s: r.duree_s ?? 0 })
-  }
+  const juge = await bilanJuge(ctx, "verification", m, "CODEX_CODE")
+  if (juge.epuise) return { ok: false, infra: true, limite: true, reprise: juge.reprise, raisons: [`${relais(ctx, "verification").map(nomMoteur).join(" et ")} à leur limite d'usage (toutes les façons essayées)`], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
+  // Le relais a servi : on le dit (le juge habituel était indisponible).
+  if (juge.moteur && juge.moteur !== relais(ctx, "verification")[0]) noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${nomMoteur(relais(ctx, "verification")[0])} indisponible, ${nomMoteur(juge.moteur)} a vérifié à sa place.` })
+  // La consommation du juge, même quand il refuse ou échoue.
+  if ("CODEX_CODE" in m) await enregistrerJuge(ctx, { serveur, jeton, projet, tache, role: "verificateur", moteur: juge.moteur, journal: "/tmp/sorties/verif/codex.log", sortieClaude: "/tmp/sorties/verif/claude.json", modeleCodex: m.CODEX_MODELE, duree_s: r.duree_s ?? 0 })
   let verdict = null
   if ("APP_STARTED" in m) {
     const texte = await lireFichier(serveur, jeton, "/tmp/sorties/verif/verdict.txt")
@@ -233,8 +249,8 @@ export async function verifier(ctx, projet, tache, sha) {
   }
   let design = null
   if ("DESIGN_CODE" in m) {
-    const journalDesign = await lireFichier(serveur, jeton, "/tmp/sorties/verif/design.log")
-    enregistrer(ctx.db, { projet: projet.id, tache: tache.id, role: "designer", moteur: "codex", usages: usagesCodex(journalDesign, m.CODEX_MODELE, config), duree_s: 0 })
+    const relecteur = await bilanJuge(ctx, "design", m, "DESIGN_CODE")
+    await enregistrerJuge(ctx, { serveur, jeton, projet, tache, role: "designer", moteur: relecteur.moteur, journal: "/tmp/sorties/verif/design.log", sortieClaude: "/tmp/sorties/verif/claude-design.json", modeleCodex: m.CODEX_MODELE, duree_s: 0 })
     try {
       design = extraireJson(String((await lireFichier(serveur, jeton, "/tmp/sorties/verif/design.txt")) ?? ""))
     } catch {

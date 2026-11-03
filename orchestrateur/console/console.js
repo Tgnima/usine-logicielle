@@ -1575,6 +1575,7 @@ function vueIntegrations() {
       <strong>${x.nom}</strong><span class="aide" style="flex:1">${x.texte}</span>
       <div><button type="button" class="btn ${x.branche === true || x.facultatif ? "btn-s" : "btn-p"} btn-petit" data-action="fenetre" data-quoi="integration-${x.id}" aria-label="${x.branche === true ? "Gérer" : "Connecter"} ${x.nom}">${x.branche === true ? "Gérer" : x.facultatif ? "Voir" : "Connecter"}</button></div>
     </div>`)}</div>
+    ${carteRelais(f)}
     <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Réglages avancés : passerelle de secours et modèles</summary>
       <div class="pile" style="gap:16px;margin-top:12px">
         <div class="pile" style="gap:10px">
@@ -1589,6 +1590,25 @@ function vueIntegrations() {
         </form>
       </div>
     </details>`
+}
+
+// Qui prend le relais : pour chaque rôle, les IA dans l'ordre. Quand la première est à sa limite
+// ou sans crédit, la suivante fait le même travail, sans pause ni tentative perdue.
+const NOMS_IA = { codex: "ChatGPT (Codex)", "claude-code": "Claude" }
+function carteRelais(f) {
+  if (!f.relais?.length) return ""
+  return html`<div class="carte carte-p pile" style="gap:12px">
+    <div><strong>Qui prend le relais</strong><div class="aide">Quand une IA atteint sa limite ou n'a plus de crédit, la suivante fait le même travail. L'usine ne se met en pause que si toutes sont indisponibles. Mieux vaut qu'une autre IA que celle qui a construit vérifie en premier : elle voit d'autres défauts.</div></div>
+    <div class="tableau"><table><tbody>${f.relais.map((r) => {
+      const absents = ["codex", "claude-code"].filter((m) => !r.moteurs.includes(m))
+      return html`<tr><td><strong>${r.libelle}</strong></td>
+        <td>${r.moteurs.map((m, i) => html`${i ? html`<span class="aide"> puis </span>` : ""}<span class="badge${i ? "" : " vert"}">${NOMS_IA[m] ?? m}</span>${i ? petitBouton("relais-monter", `data-role="${r.role}" data-moteur="${m}"`, "↑", `Passer ${NOMS_IA[m] ?? m} en premier`) : ""}`)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${absents.map((m) => html`<button type="button" class="btn btn-s btn-petit" data-action="relais-basculer" data-role="${r.role}" data-moteur="${m}">Ajouter ${NOMS_IA[m] ?? m}</button>`)}
+          ${r.moteurs.length > 1 ? html`<button type="button" class="btn btn-s btn-petit" data-action="relais-basculer" data-role="${r.role}" data-moteur="${r.moteurs.at(-1)}">Retirer ${NOMS_IA[r.moteurs.at(-1)] ?? r.moteurs.at(-1)}</button>` : ""}
+        </td></tr>`
+    })}</tbody></table></div>
+  </div>`
 }
 
 // Chaque intégration s'ouvre dans sa propre fenêtre (Gumloop).
@@ -2115,6 +2135,13 @@ function changerModes(moteur, modifier) {
   return agir(() => api("PUT", `fournisseurs/modes/${moteur}`, { modes }))
 }
 
+// Le relais d'un rôle : changé tout de suite côté usine.
+function changerRelais(role, modifier) {
+  const r = etat.fournisseurs?.relais?.find((x) => x.role === role)
+  if (!r) return
+  return agir(() => api("PUT", `fournisseurs/relais/${role}`, { moteurs: modifier([...r.moteurs]) }))
+}
+
 // La connexion ChatGPT : le lien et le code arrivent du vérificateur, puis le résultat.
 let suiviChatGPT = null
 function suivreChatGPT() {
@@ -2158,6 +2185,8 @@ const ACTIONS = {
     return agir(() => api("DELETE", `fournisseurs/identifiants/${el.dataset.nom}`, {}))
   },
   "mode-monter": (el) => changerModes(el.dataset.moteur, (l) => { const i = l.indexOf(el.dataset.mode); if (i > 0) [l[i - 1], l[i]] = [l[i], l[i - 1]]; return l }),
+  "relais-monter": (el) => changerRelais(el.dataset.role, (l) => { const i = l.indexOf(el.dataset.moteur); if (i > 0) [l[i - 1], l[i]] = [l[i], l[i - 1]]; return l }),
+  "relais-basculer": (el) => changerRelais(el.dataset.role, (l) => (l.includes(el.dataset.moteur) ? l.filter((x) => x !== el.dataset.moteur) : [...l, el.dataset.moteur])),
   "mode-basculer": (el) => changerModes(el.dataset.moteur, (l) => (l.includes(el.dataset.mode) ? l.filter((x) => x !== el.dataset.mode) : [...l, el.dataset.mode])),
   "connecter-chatgpt": async () => {
     const r = await agir(() => api("POST", "fournisseurs/chatgpt", {}))

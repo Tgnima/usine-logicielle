@@ -277,11 +277,12 @@ async function fabriquer(ctx, projet, tache) {
   // 6. Le vérificateur indépendant, puis la porte.
   const v = await verifier(ctx, obtenir(db, "projets", projet.id), obtenir(db, "taches", tache.id), sha)
   if (v.limite) {
-    // Codex à sa limite partout : la tâche repassera (sans tentative consommée) à la reprise.
+    // Tous les moteurs du relais du vérificateur à leur limite : la tâche repassera (sans
+    // tentative consommée) à la reprise.
     maj(db, "taches", tache.id, { statut: "prete" })
     ecrireReglage(db, "pause_limite", (v.reprise ?? new Date(Date.now() + 30 * 60_000)).toISOString())
-    noter(db, { projet: projet.id, tache: tache.id, type: "pause", message: `${tache.cle} : Codex (vérificateur) à sa limite d'usage, abonnement et secours compris. Reprise automatique, sans tentative consommée.` })
-    return ctx.notifier.alerte(`:pause_button: *Le vérificateur (Codex) est à sa limite d'usage*, abonnement et secours compris. La fabrication reprend toute seule à la réinitialisation, sans consommer de tentative.`).catch(() => {})
+    noter(db, { projet: projet.id, tache: tache.id, type: "pause", message: `${tache.cle} : vérificateur indisponible (${v.raisons[0]}). Reprise automatique, sans tentative consommée.` })
+    return ctx.notifier.alerte(`:pause_button: *Le vérificateur est indisponible* : ${v.raisons[0]}. La fabrication reprend toute seule à la réinitialisation, sans consommer de tentative. Pour l'éviter : ajoute un moteur au relais du vérificateur, ou du crédit à l'un d'eux (console, Réglages, fournisseurs d'IA).`).catch(() => {})
   }
   if (v.infra) {
     // Une panne du vérificateur n'est pas une faute de l'agent : on escalade sans consommer de tentative.

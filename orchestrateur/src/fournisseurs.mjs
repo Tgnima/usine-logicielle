@@ -16,7 +16,7 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { noter } from "./db.mjs"
-import { MODES, PASSERELLE } from "./moteurs.mjs"
+import { MODES, MOTEURS_RELAIS, PASSERELLE, ROLES_RELAIS, relais } from "./moteurs.mjs"
 import { etatTravail, executer, lancerTravail } from "./travaux.mjs"
 
 // Les identifiants que la console sait poser : nom de la variable dans les travaux, et le reste.
@@ -165,6 +165,16 @@ export function reglerModes(ctx, moteur, modes, par) {
   return { ok: true, message: "Ordre enregistré." }
 }
 
+// Le relais d'un rôle : les moteurs à essayer, dans l'ordre, quand le précédent est épuisé.
+export function reglerRelais(ctx, role, moteurs, par) {
+  if (!ROLES_RELAIS[role]) throw erreur(400, "Rôle inconnu.")
+  const liste = [...new Set((Array.isArray(moteurs) ? moteurs : []).map(String))].filter((m) => MOTEURS_RELAIS.includes(m))
+  if (!liste.length) throw erreur(400, "Garde au moins une IA pour ce rôle.")
+  ecrireReglage(ctx.db, `relais_${role}`, JSON.stringify(liste))
+  noter(ctx.db, { projet: null, type: "reglage", message: `${ROLES_RELAIS[role]} : ${liste.map((m) => MOTEURS[m]?.split(" ")[0] ?? m).join(" puis ")} (par ${par})` })
+  return { ok: true, message: "Relais enregistré : il sert dès le prochain travail." }
+}
+
 // Les modèles choisis dans la console remplacent ceux du contrat (en mémoire, pour tout le code).
 const NOM_MODELE = /^[a-z0-9][a-z0-9./:_-]{2,80}$/i
 export function appliquerModeles(ctx) {
@@ -205,6 +215,7 @@ export function etatFournisseurs(ctx) {
     verrouille: verrouille(ctx),
     identifiants,
     moteurs: Object.entries(MOTEURS).map(([id, libelle]) => ({ id, libelle, modes: ordreModes(ctx, id) })),
+    relais: Object.entries(ROLES_RELAIS).map(([role, libelle]) => ({ role, libelle, moteurs: relais(ctx, role) })),
     tests: { le: tests.le ?? null, resultats: tests.resultats ?? {} },
     chatgpt: connexionChatGPT ? { en_cours: true } : null,
     modeles: ROLES_MODELES.map((role) => ({ role, modele: ctx.config.modeles?.[role]?.modele ?? ctx.config.modeles?.atelier?.modele ?? "", contrat: ctx.config.modelesContrat?.[role]?.modele ?? null })),

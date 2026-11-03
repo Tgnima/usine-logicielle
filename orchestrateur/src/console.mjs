@@ -46,7 +46,7 @@ import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
 import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recevoirManifeste } from "./forge-github.mjs"
 import { adresseTableau } from "./slack-couts.mjs"
-import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, testerFournisseurs } from "./fournisseurs.mjs"
+import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" }
@@ -530,6 +530,7 @@ const ROUTES = [
   ["PUT", /^\/api\/fournisseurs\/identifiants\/([A-Z_]+)$/, (ctx, [nom], c, qui) => poserIdentifiant(ctx, nom, c.valeur, qui.email)],
   ["DELETE", /^\/api\/fournisseurs\/identifiants\/([A-Z_]+)$/, (ctx, [nom], _c, qui) => effacerIdentifiant(ctx, nom, qui.email)],
   ["PUT", /^\/api\/fournisseurs\/modes\/(claude-code|codex)$/, (ctx, [moteur], c, qui) => reglerModes(ctx, moteur, c.modes, qui.email)],
+  ["PUT", /^\/api\/fournisseurs\/relais\/([a-z]+)$/, (ctx, [role], c, qui) => reglerRelais(ctx, role, c.moteurs, qui.email)],
   ["PUT", /^\/api\/fournisseurs\/modeles$/, (ctx, _p, c, qui) => reglerModeles(ctx, c, qui.email)],
   ["POST", /^\/api\/fournisseurs\/tester$/, (ctx) => testerFournisseurs(ctx)],
   ["POST", /^\/api\/fournisseurs\/chatgpt$/, (ctx, _p, _c, qui) => connecterChatGPT(ctx, qui.email)],

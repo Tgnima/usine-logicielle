@@ -38,7 +38,8 @@ migrerCoffre(ctx)
 // GitHub : l'application de l'usine, si elle est connectée (sinon le jeton du serveur).
 await brancherForge(ctx).catch((e) => console.error("GitHub (application) :", e.message))
 brancherJetons(config)
-brancherEnvCommun((serveur) => ({ ...envFournisseurs(ctx, serveur === config.verificateur.url ? "codex" : "claude-code"), ...envConnecteurs(ctx) }))
+// Le vérificateur reçoit aussi les identifiants de Claude : il juge à sa place quand Codex est épuisé.
+brancherEnvCommun((serveur) => ({ ...envFournisseurs(ctx, serveur === config.verificateur.url ? null : "claude-code"), ...envConnecteurs(ctx) }))
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
 if (config.secrets.slackBot && config.secrets.slackApp) {

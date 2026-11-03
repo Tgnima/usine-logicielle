@@ -11,8 +11,8 @@
 // rôle de l'utilisateur cible du plan et ne note que la pyramide.
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { extraireJson } from "./analyste.mjs"
-import { enregistrer, usagesCodex } from "./couts.mjs"
-import { noterLimites, scriptCodex } from "./moteurs.mjs"
+import { bilanJuge, relais, nomMoteur, scriptJuge } from "./moteurs.mjs"
+import { enregistrerJuge } from "./verification.mjs"
 import { libererPort, lireProfil } from "./profil.mjs"
 import { lirePersona, obtenirPersona } from "./personas.mjs"
 import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
@@ -89,15 +89,16 @@ export async function jouerRecette(ctx, projetId, sha) {
       `(setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/recette/app.log 2>&1 &)`,
       "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
       "if curl -sf http://localhost:4100/api/health > /dev/null; then",
-      scriptCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message /tmp/sorties/recette/verdict.txt -`, entree: "/tmp/sorties/recette/consigne.md", journal: "/tmp/sorties/recette/codex.log", marqueur: "RECETTE_CODE", role: "verification" }),
+      "rm -f /tmp/sorties/recette/verdict.txt /tmp/sorties/recette/claude.json",
+      scriptJuge(ctx, "recette", { texte: "/tmp/sorties/recette/verdict.txt", entree: "/tmp/sorties/recette/consigne.md", journal: "/tmp/sorties/recette/codex.log", sortieClaude: "/tmp/sorties/recette/claude.json", marqueur: "RECETTE_CODE", connecteurs: "verification" }),
       "fi",
       "echo \"@@ CAPTURES $(cd /tmp/sorties/recette/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
       libererPort(4100),
     ].join("\n"), { minutes: 40 })
-    const acces = noterLimites(ctx, "codex", r.marqueurs)
-    if (acces.epuise) throw new Error("Codex est à sa limite d'usage")
+    const juge = await bilanJuge(ctx, "recette", r.marqueurs, "RECETTE_CODE")
+    if (juge.epuise) throw new Error(`${relais(ctx, "recette").map(nomMoteur).join(" et ")} à leur limite d'usage`)
     if (!("APP_STARTED" in r.marqueurs)) throw new Error("le produit ne démarre pas pour la recette")
-    if ("RECETTE_CODE" in r.marqueurs) enregistrer(db, { projet: projetId, role: "recette", moteur: "codex", usages: usagesCodex(await lireFichier(serveur, jeton, "/tmp/sorties/recette/codex.log"), null, config), duree_s: r.duree_s ?? 0 })
+    if ("RECETTE_CODE" in r.marqueurs) await enregistrerJuge(ctx, { serveur, jeton, projet: { id: projetId }, role: "recette", moteur: juge.moteur, journal: "/tmp/sorties/recette/codex.log", sortieClaude: "/tmp/sorties/recette/claude.json", duree_s: r.duree_s ?? 0 })
     const v = extraireJson(String((await lireFichier(serveur, jeton, "/tmp/sorties/recette/verdict.txt")) ?? ""))
     const scenarios = persona.scenarios.map((s, i) => {
       const x = (v.scenarios ?? [])[i] ?? {}

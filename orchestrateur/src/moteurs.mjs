@@ -27,6 +27,7 @@ const NOMS = { abonnement: "abonnement", cle: "clé API", passerelle: "passerell
 export const nomMode = (m) => NOMS[m] ?? m
 
 const cleLimite = (moteur, mode) => `limite_${moteur}_${mode}`
+const prefixe = (moteur) => (moteur === "codex" ? "CODEX_" : "CLAUDE_")
 const cleFacturation = (moteur, mode) => `facturation_${moteur}_${mode}`
 
 // L'heure de reprise annoncée (« resets 12:40pm (UTC) », « try again at 3pm », « in 2 hours »…).
@@ -83,10 +84,14 @@ export function facturationsEnCours(db) {
 export function noterLimites(ctx, moteur, marqueurs = {}) {
   const facturation = []
   const enCours = new Set(facturationsEnCours(ctx.db).filter((f) => f.moteur === moteur).map((f) => f.mode))
+  // Dans un relais, les marqueurs portent le nom du moteur (LIMITE_CODEX_PASSERELLE) : deux
+  // moteurs essayés dans le même travail ne se mélangent pas.
+  const p = prefixe(moteur)
   for (const mode of MODES) {
-    const texte = marqueurs[`LIMITE_${mode.toUpperCase()}`]
+    const M = mode.toUpperCase()
+    const texte = marqueurs[`LIMITE_${p}${M}`] ?? marqueurs[`LIMITE_${M}`]
     if (texte !== undefined) ecrireReglage(ctx.db, cleLimite(moteur, mode), heureDeReprise(texte).toISOString())
-    const refus = marqueurs[`FACTURATION_${mode.toUpperCase()}`]
+    const refus = marqueurs[`FACTURATION_${p}${M}`] ?? marqueurs[`FACTURATION_${M}`]
     if (refus !== undefined) {
       const jusqua = new Date(Date.now() + FACTURATION_PAUSE).toISOString()
       ecrireReglage(ctx.db, cleLimite(moteur, mode), jusqua)
@@ -131,7 +136,20 @@ const PREALABLE = { abonnement: "true", cle: null, passerelle: '[ -n "$AI_GATEWA
 //   entree : le fichier de la consigne, lu sur l'entrée standard. Jamais en argument : Linux refuse
 //   un argument de plus de 128 Ko (« Argument list too long »), ce qu'atteint un gros projet.
 //   role : plan, construction ou verification ; les connecteurs actifs de ce rôle sont ajoutés.
-export function scriptClaude(ctx, { args: options, modele, sortie, erreurs = "/dev/null", entree = "/dev/null", role = null }) {
+export function scriptClaude(ctx, options) {
+  const { prelude, essais } = essaisClaude(ctx, options)
+  return [
+    ...(prelude ? [prelude] : []),
+    "FAIT=",
+    ...essais,
+    `[ -n "$FAIT" ] || echo "@@ EPUISE_CLAUDE"`,
+    `echo "@@ AGENT_CODE \${CODE:-1}"`,
+  ].join("\n")
+}
+
+// Les essais de Claude Code, un bloc par façon disponible, gardés par $FAIT (le premier qui
+// répond l'emporte). p : le préfixe des marqueurs de limite ("" seul, "CLAUDE_" dans un relais).
+function essaisClaude(ctx, { args: options, modele, sortie, erreurs = "/dev/null", entree = "/dev/null", role = null, p = "" }) {
   const mcp = optionsClaude(ctx, role)
   const args = mcp.args ? `${options} ${mcp.args}` : options
   const modes = modesDisponibles(ctx, "claude-code")
@@ -150,29 +168,28 @@ export function scriptClaude(ctx, { args: options, modele, sortie, erreurs = "/d
   if ${lancer} < ${q(entree)} > ${q(sortie)} 2> ${q(erreurs)}; then CODE=0; else CODE=$?; fi
   # Seul le résultat final compte (le travail de l'agent peut parler de « rate limit »).
   R=$(grep '"type":"result"' ${q(sortie)} 2>/dev/null | tail -1)
-  if echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '${FACTURATION_CLAUDE}'; then echo "@@ FACTURATION_${mode.toUpperCase()} $(echo "$R" | grep -oE '"result":"[^"]{0,200}' | cut -c11-)"
-  elif echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '"api_error_status":429|(session|usage|rate) limit|limite d.usage'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$R" | grep -oiE 'resets? [^"\\\\]{0,30}|try again [^"\\\\]{0,30}' | head -1)"
+  if echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '${FACTURATION_CLAUDE}'; then echo "@@ FACTURATION_${p}${mode.toUpperCase()} $(echo "$R" | grep -oE '"result":"[^"]{0,200}' | cut -c11-)"
+  elif echo "$R" | grep -q '"is_error":true' && echo "$R" | grep -qiE '"api_error_status":429|(session|usage|rate) limit|limite d.usage'; then echo "@@ LIMITE_${p}${mode.toUpperCase()} $(echo "$R" | grep -oiE 'resets? [^"\\\\]{0,30}|try again [^"\\\\]{0,30}' | head -1)"
   elif [ -s ${q(sortie)} ]; then FAIT=1; echo "@@ MODE_CLAUDE ${mode}"; fi
 fi`
   })
-  return [
-    ...(mcp.script ? [mcp.script] : []),
-    "FAIT=",
-    ...essais,
-    `[ -n "$FAIT" ] || echo "@@ EPUISE_CLAUDE"`,
-    `echo "@@ AGENT_CODE \${CODE:-1}"`,
-  ].join("\n")
+  return { prelude: mcp.script ?? "", essais }
 }
 
 // La même chose pour Codex (le vérificateur et le relecteur design).
 //   args : les options après « codex exec » (« - » : la consigne est lue dans entree, comme pour Claude).
 //   journal : le fichier où va la sortie --json.
-export function scriptCodex(ctx, { args: options, journal, marqueur = "CODEX_CODE", entree = "/dev/null", role = null }) {
+export function scriptCodex(ctx, options) {
+  const { marqueur = "CODEX_CODE" } = options
+  return ["FAIT=", ...essaisCodex(ctx, options), `[ -n "$FAIT" ] || echo "@@ EPUISE_CODEX"`, `echo "@@ ${marqueur} \${CODE:-1}"`].join("\n")
+}
+
+function essaisCodex(ctx, { args: options, journal, entree = "/dev/null", role = null, p = "" }) {
   // Les options -c des connecteurs vont avant celles du travail (dont « - », la consigne).
   const mcp = optionsCodex(ctx, role)
   const args = mcp ? `${mcp} ${options}` : options
   const modes = modesDisponibles(ctx, "codex")
-  const essais = modes.map((mode) => {
+  return modes.map((mode) => {
     const prealable = { ...PREALABLE, cle: '[ -n "$OPENAI_API_KEY" ]' }[mode]
     const lancer = {
       abonnement: `env -u OPENAI_API_KEY codex exec ${args}`,
@@ -184,10 +201,75 @@ export function scriptCodex(ctx, { args: options, journal, marqueur = "CODEX_COD
   if ${lancer} < ${q(entree)} > ${q(journal)} 2>&1; then CODE=0; else CODE=$?; fi
   # Seules les erreurs du moteur comptent (le vérificateur peut tester une limite de requêtes).
   E=$(grep -E '"type":"(error|turn.failed)"' ${q(journal)} 2>/dev/null | tail -3)
-  if [ -n "$E" ] && echo "$E" | grep -qiE '${FACTURATION_CODEX}'; then echo "@@ FACTURATION_${mode.toUpperCase()} $(echo "$E" | grep -oE '"message":"[^"]{0,200}' | head -1 | cut -c12-)"
-  elif [ -n "$E" ] && echo "$E" | grep -qiE '(usage|rate) limit|429|quota'; then echo "@@ LIMITE_${mode.toUpperCase()} $(echo "$E" | grep -oiE '(try again|resets?) [^"\\\\]{0,30}' | head -1)"
+  if [ -n "$E" ] && echo "$E" | grep -qiE '${FACTURATION_CODEX}'; then echo "@@ FACTURATION_${p}${mode.toUpperCase()} $(echo "$E" | grep -oE '"message":"[^"]{0,200}' | head -1 | cut -c12-)"
+  elif [ -n "$E" ] && echo "$E" | grep -qiE '(usage|rate) limit|429|quota'; then echo "@@ LIMITE_${p}${mode.toUpperCase()} $(echo "$E" | grep -oiE '(try again|resets?) [^"\\\\]{0,30}' | head -1)"
   elif [ -s ${q(journal)} ]; then FAIT=1; echo "@@ MODE_CODEX ${mode}"; fi
 fi`
   })
-  return ["FAIT=", ...essais, `[ -n "$FAIT" ] || echo "@@ EPUISE_CODEX"`, `echo "@@ ${marqueur} \${CODE:-1}"`].join("\n")
 }
+
+// --- Le relais entre moteurs --------------------------------------------------------------
+// Chaque rôle a sa liste de moteurs, dans l'ordre. Quand toutes les façons d'un moteur sont
+// épuisées (limite d'usage, crédit), le MÊME travail passe aussitôt au moteur suivant, sans
+// consommer de tentative. La pause n'arrive que si tous les moteurs du rôle sont épuisés.
+// L'ordre se règle dans la console (Réglages, fournisseurs d'IA), sinon dans le contrat (relais).
+// Par défaut, Codex juge d'abord : une autre famille de modèles que l'atelier, plus indépendante.
+export const ROLES_RELAIS = { verification: "Vérificateur", design: "Relecteur design", recette: "Recette du persona" }
+export const MOTEURS_RELAIS = ["codex", "claude-code"]
+const RELAIS_DEFAUT = { verification: ["codex", "claude-code"], design: ["codex", "claude-code"], recette: ["codex", "claude-code"] }
+
+export function relais(ctx, role) {
+  const valide = (o) => (Array.isArray(o) ? [...new Set(o.map(String))].filter((m) => MOTEURS_RELAIS.includes(m)) : [])
+  let o = []
+  try {
+    o = valide(JSON.parse(lireReglage(ctx.db, `relais_${role}`, "null")))
+  } catch {}
+  if (!o.length) o = valide(ctx.config.relais?.[role])
+  return o.length ? o : RELAIS_DEFAUT[role] ?? ["claude-code"]
+}
+
+// Le modèle de Claude quand il juge à la place de Codex : le renfort (le plus exigeant).
+export const modeleJuge = (config) => config.modeles?.renfort?.modele ?? config.modeles?.atelier?.modele ?? "claude-opus-5-5"
+
+// Le script d'un travail de jugement (vérification, design, recette) confié au relais du rôle.
+//   texte : le fichier où le moteur qui a servi laisse son dernier message (le verdict, en JSON) ;
+//   entree : la consigne ; images : pour Codex, des options --image=… (variable bash permise) ;
+//   dossier : où ranger les journaux (codex.log, claude.json) ; marqueur : le code de sortie.
+// Marqueurs : @@ <marqueur> code, @@ <marqueur>_MOTEUR codex|claude-code, @@ <marqueur>_EPUISE.
+export function scriptJuge(ctx, role, { texte, entree, journal, sortieClaude, images = "", marqueur, connecteurs = null }) {
+  const blocs = []
+  for (const moteur of relais(ctx, role)) {
+    if (moteur === "codex") {
+      blocs.push(...essaisCodex(ctx, { args: `--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox ${images} --output-last-message ${q(texte)} -`, journal, entree, role: connecteurs, p: "CODEX_" }))
+      blocs.push(`if [ -n "$FAIT" ] && [ -z "$MOTEUR" ]; then MOTEUR=codex; fi`)
+    } else {
+      // Claude ouvre lui-même les captures (outil Read) : leurs chemins sont dans la consigne.
+      const { prelude, essais } = essaisClaude(ctx, { args: "-p --output-format json --dangerously-skip-permissions --max-turns 80", modele: modeleJuge(ctx.config), sortie: sortieClaude, entree, role: connecteurs, p: "CLAUDE_" })
+      if (prelude) blocs.push(`if [ -z "$FAIT" ]; then\n${prelude}\nfi`)
+      blocs.push(...essais)
+      // Son dernier message va au même endroit que celui de Codex : la suite ne voit pas la différence.
+      blocs.push(`if [ -n "$FAIT" ] && [ -z "$MOTEUR" ]; then MOTEUR=claude-code; node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).result??""))}catch{}' < ${q(sortieClaude)} > ${q(texte)}; fi`)
+    }
+  }
+  return [
+    "FAIT=; MOTEUR=",
+    ...blocs,
+    `if [ -n "$MOTEUR" ]; then echo "@@ ${marqueur}_MOTEUR $MOTEUR"; else echo "@@ ${marqueur}_EPUISE"; fi`,
+    `echo "@@ ${marqueur} \${CODE:-1}"`,
+  ].join("\n")
+}
+
+// Après un travail de jugement : les limites de chaque moteur du relais sont notées, les refus de
+// facturation signalés. Renvoie { moteur : celui qui a servi (ou null), epuise, reprise }.
+export async function bilanJuge(ctx, role, marqueurs, marqueur) {
+  let reprise = null
+  for (const moteur of relais(ctx, role)) {
+    const acces = noterLimites(ctx, moteur, marqueurs)
+    await signalerFacturation(ctx, moteur, { ...acces, epuise: `${marqueur}_EPUISE` in marqueurs })
+    if (acces.reprise && (!reprise || acces.reprise < reprise)) reprise = acces.reprise
+  }
+  const moteur = marqueurs[`${marqueur}_MOTEUR`] ?? null
+  return { moteur, epuise: `${marqueur}_EPUISE` in marqueurs, reprise }
+}
+
+export const nomMoteur = (m) => (m === "codex" ? "Codex" : "Claude")
