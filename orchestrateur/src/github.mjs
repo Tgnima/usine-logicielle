@@ -178,9 +178,17 @@ export async function ecrireEtat(config, chemin, objet, { message, viaPR = false
   const nom = config.github.depot_etat
   const contenu = Buffer.from(`${JSON.stringify(objet, null, 2)}\n`).toString("base64")
   if (!viaPR) {
-    const actuel = await lireEtat(config, chemin)
-    await gh(config, `${depot(config, nom)}/contents/${chemin}`, { method: "PUT", corps: { message, content: contenu, ...(actuel ? { sha: actuel.sha } : {}) } })
-    return null
+    // Un 409 : le fichier a changé entre la lecture et l'écriture (ou la lecture était en retard). On relit et on réécrit.
+    for (let essai = 1; ; essai++) {
+      const actuel = await lireEtat(config, chemin)
+      try {
+        await gh(config, `${depot(config, nom)}/contents/${chemin}`, { method: "PUT", corps: { message, content: contenu, ...(actuel ? { sha: actuel.sha } : {}) } })
+        return null
+      } catch (error) {
+        if (error.statut !== 409 || essai >= 4) throw error
+        await new Promise((r) => setTimeout(r, 1_000 * essai))
+      }
+    }
   }
   const base = (await gh(config, `${depot(config, nom)}/git/ref/heads/main`)).json.object.sha
   const branche = `mise-en-production/${chemin.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`

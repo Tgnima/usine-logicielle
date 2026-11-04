@@ -45,6 +45,29 @@ const enPauseLimite = (db) => {
 let occupe = false
 let dernierServi = 0
 
+// Un lot fini mais pas livré (la publication a échoué après la fusion) : on réessaie la livraison, au plus toutes
+// les 5 minutes, sans jamais refaire une tâche déjà fusionnée. Renvoie true si une livraison a été tentée.
+const essaisLivraison = new Map()
+export const lotARattraper = (db, projet) => {
+  const lot = projet.lot_livre + 1
+  const r = db.prepare("SELECT COUNT(*) AS total, SUM(statut NOT IN ('fusionnee', 'abandonnee')) AS reste FROM taches WHERE projet_id = ? AND lot = ?").get(projet.id, lot)
+  return r.total > 0 && !r.reste ? lot : null
+}
+async function rattraperLivraison(ctx, projet) {
+  const lot = lotARattraper(ctx.db, projet)
+  if (!lot || Date.now() - (essaisLivraison.get(projet.id) ?? 0) < 5 * 60_000) return false
+  essaisLivraison.set(projet.id, Date.now())
+  occupe = true
+  try {
+    await apresFusion(ctx, projet.id, lot)
+  } catch (error) {
+    noter(ctx.db, { projet: projet.id, type: "erreur", message: `Livraison du lot ${lot} à réessayer : ${error.message}` })
+  } finally {
+    occupe = false
+  }
+  return true
+}
+
 // À tour de rôle : on part du projet qui suit le dernier servi, pour qu'un projet
 // aux nombreuses tâches ne fasse pas attendre tous les autres.
 export const aTourDeRole = (projets, dernier) => [...projets.filter((p) => p.id > dernier), ...projets.filter((p) => p.id <= dernier)]
@@ -64,7 +87,10 @@ export function demarrerFabrique(ctx) {
       }
       liberer(ctx.db, projet.id)
       const t = ctx.db.prepare("SELECT * FROM taches WHERE projet_id = ? AND statut = 'prete' ORDER BY lot, id LIMIT 1").get(projet.id)
-      if (!t) continue
+      if (!t) {
+        if (await rattraperLivraison(ctx, projet)) return
+        continue
+      }
       occupe = true
       dernierServi = projet.id
       try {
@@ -333,7 +359,8 @@ async function fabriquer(ctx, projet, tache) {
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:fusionnee"]).catch(() => {})
   noter(db, { projet: projet.id, tache: tache.id, type: "fusion", message: `${tache.cle} fusionnée (PR #${pr.number}, ${v.tests} tests)` })
   await ctx.notifier.progres(projet, `✅ ${tache.cle} · ${tache.titre} : fusionnée (<https://github.com/${projet.depot}/pull/${pr.number}|#${pr.number}>, ${v.tests} tests${v.design?.note !== undefined && v.design?.note !== null ? `, design ${v.design.note}/10` : ""})`)
-  await apresFusion(ctx, projet.id, tache.lot)
+  // La tâche est fusionnée quoi qu'il arrive ensuite : une livraison qui échoue se réessaie (rattraperLivraison), sans refaire la tâche.
+  await apresFusion(ctx, projet.id, tache.lot).catch((e) => noter(db, { projet: projet.id, tache: tache.id, type: "erreur", message: `Livraison du lot ${tache.lot} à réessayer : ${e.message}` }))
 }
 
 // Un refus : on corrige, puis on change d'approche, puis on appelle l'humain.

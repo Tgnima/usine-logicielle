@@ -191,3 +191,35 @@ test("un critère contesté est retenu seulement avec sa raison, et il ne valide
   const raisons = porte({ marqueurs, verdict: { decision: "refuse", criteres: [{ critere: "1. Délai en minutes", ok: false }], criteres_contestes: [{ critere: "1. Délai en minutes", raison: "impossible" }] } })
   assert.match(raisons.join(), /critère non validé : 1\. Délai en minutes/)
 })
+
+test("un lot fini mais pas livré est rattrapé, un lot encore en cours ne l'est pas", async () => {
+  const { DatabaseSync } = await import("node:sqlite")
+  const { lotARattraper } = await import("../src/fabrique.mjs")
+  const db = new DatabaseSync(":memory:")
+  db.exec("CREATE TABLE taches (projet_id INTEGER, lot INTEGER, statut TEXT)")
+  const ajouter = (lot, statut) => db.prepare("INSERT INTO taches VALUES (8, ?, ?)").run(lot, statut)
+  ajouter(25, "fusionnee")
+  ajouter(25, "abandonnee")
+  assert.equal(lotARattraper(db, { id: 8, lot_livre: 24 }), 25)
+  assert.equal(lotARattraper(db, { id: 8, lot_livre: 25 }), null)
+  ajouter(25, "bloquee")
+  assert.equal(lotARattraper(db, { id: 8, lot_livre: 24 }), null)
+})
+
+test("l'écriture d'un état relit et réessaie après un conflit 409", async () => {
+  const { ecrireEtat } = await import("../src/github.mjs")
+  const config = { github: { depot_etat: "usine-etat", proprietaire: "o" }, secrets: { github: "jeton" } }
+  const reel = globalThis.fetch
+  let puts = 0
+  globalThis.fetch = async (_url, o = {}) => {
+    if ((o.method ?? "GET") === "GET") return new Response(JSON.stringify({ sha: `s${puts}` }), { status: 200 })
+    puts++
+    return puts === 1 ? new Response(JSON.stringify({ message: "does not match" }), { status: 409 }) : new Response("{}", { status: 200 })
+  }
+  try {
+    await ecrireEtat(config, "apercus/x.json", { a: 1 }, { message: "m" })
+    assert.equal(puts, 2)
+  } finally {
+    globalThis.fetch = reel
+  }
+})

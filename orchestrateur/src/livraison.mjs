@@ -123,9 +123,10 @@ async function livrerApercu(ctx, projetId, lot) {
   const plan = lirePlan(projet)
   const sha = await shaPrincipal(config, projet.depot, brancheDeBase(projet))
   const a = adresses(config, projet.slug)
-  maj(db, "projets", projetId, { lot_livre: lot })
   await ctx.notifier.progres(projet, `📦 Lot ${lot} terminé (${plan.lots[lot - 1]?.nom ?? ""}) : déploiement de l'aperçu`)
   await ecrireEtat(config, `apercus/${projet.slug}.json`, etatSouhaite(config, projet, "apercu", sha, lot), { message: `Aperçu ${projet.slug} : lot ${lot} (${sha.slice(0, 7)})` })
+  // Noté seulement une fois l'état écrit : sinon, un échec ici laisserait croire le lot livré, et rien ne le rattraperait.
+  maj(db, "projets", projetId, { lot_livre: lot })
   const s = await attendreDeploiement(config, `apercu/${projet.slug}`, sha)
   const enLigne = s.etat === "ok" && (await santePublique(a.apercu))
   if (!enLigne) {
