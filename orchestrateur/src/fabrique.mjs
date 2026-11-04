@@ -289,6 +289,11 @@ async function fabriquer(ctx, projet, tache) {
     maj(db, "taches", tache.id, { statut: "bloquee" })
     return escalader(ctx, { projetId: projet.id, tacheId: tache.id, raison: "verificateur", details: v.raisons.join("\n") })
   }
+  // Un critère contesté (impossible ou contradictoire) : refaire la tâche n'y changerait rien. Une personne tranche, sans tentative consommée.
+  if (v.contestes?.length) {
+    maj(db, "taches", tache.id, { statut: "bloquee", verdict: JSON.stringify(v.verdict ?? null) })
+    return escalader(ctx, { projetId: projet.id, tacheId: tache.id, raison: "criteres", details: `Le vérificateur conteste ${v.contestes.length} critère(s) :\n${v.contestes.map((c) => `- ${c.critere} : ${c.raison}`).join("\n")}\n\nAutres motifs de refus :\n${v.raisons.map((r) => `- ${r}`).join("\n") || "aucun"}` })
+  }
   maj(db, "taches", tache.id, { verdict: JSON.stringify(v.verdict ?? null), tests: v.tests, design: v.design ? JSON.stringify({ note: v.design.note ?? null, mineurs: v.design.mineurs ?? [], resume: v.design.resume ?? "" }) : null })
   if (!v.ok) {
     await commentairePR(config, nomDepot, pr.number, `### :x: Refusée par le vérificateur\n\n${v.raisons.map((r) => `- ${r}`).join("\n")}`).catch(() => {})

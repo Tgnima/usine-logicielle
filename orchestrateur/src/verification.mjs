@@ -77,6 +77,8 @@ Méthode :
 - Note aussi un défaut grave hors critères (page blanche, erreur 500, donnée incohérente).
 - Ne modifie pas les données de démonstration existantes : pour tester une action (diffuser, clore, corriger, supprimer), crée tes propres données, avec un nom unique. Sinon les captures et le relecteur design jugeraient un état que tu as fabriqué.
 - "problemes" ne contient que des défauts BLOQUANTS du produit : chacun refuse la tâche. Ce que tu as fait pour vérifier, et une remarque non bloquante, vont dans "resume".
+- Cohérence entre écrans : pour chaque donnée que cette tâche crée ou affiche (un nombre, une date, un délai, un état, un nom), compare sa valeur partout où elle apparaît : liste, carte, fiche, réglages, registre et API. Une même donnée qui diffère d'un écran à l'autre, à la même taille ou entre ordinateur et téléphone, est un problème bloquant : nomme les deux écrans et les deux valeurs. Ne parcours pas tout le produit : seulement les écrans où figure une donnée touchée par la tâche.
+- Un critère impossible à tenir tel qu'il est écrit, ou qui contredit un autre critère, une décision ou le brief, se conteste au lieu de se refuser sans fin : mets-le aussi dans "criteres_contestes" avec la raison précise, et laisse-le à ok: false. Tu ne contestes pas un critère parce qu'il est difficile ou que le produit ne le tient pas encore : seulement si aucune version correcte du produit ne pourrait le tenir. Une personne tranchera.
 
 Non-régression :
 - Lis /tmp/sorties/verif/e2e-echecs.txt : ce sont des tests de critères DÉJÀ validés par le passé (dossier .usine/e2e/) qui échouent maintenant. Pour chacun, décide : régression (ce qui marchait est cassé) → mets-le dans "regressions" ; changement voulu par CETTE tâche (l'écran ou la route a légitimement changé) → réécris ce test sous le même nom dans /tmp/sorties/verif/e2e/.
@@ -86,8 +88,14 @@ Captures d'écran (pour le relecteur design) :
 - Si le produit a une interface web, enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…). Les étapes d'un même parcours (la saisie, puis son résultat) viennent du MÊME essai, et le nom dit le scénario (appel-rattacher-saisie-bureau.png, appel-rattacher-resultat-bureau.png, appel-nouvelle-resultat-bureau.png) : sinon le relecteur design comparerait deux essais différents. Une API sans interface : pas de capture, mais vérifie que chaque route de la tâche est décrite dans docs/API.md.
 
 Réponds UNIQUEMENT par ce JSON, sans rien autour :
-{"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "regressions": ["test : ce qui est cassé"], "problemes": ["…"], "resume": "une phrase"}`
+{"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "regressions": ["test : ce qui est cassé"], "problemes": ["…"], "criteres_contestes": [{"critere": "…", "raison": "pourquoi il est impossible ou contradictoire"}], "resume": "une phrase"}`
 }
+
+// Les critères que le vérificateur juge impossibles ou contradictoires. Ils ne valident rien : la tâche s'arrête
+// sans consommer de tentative et une personne tranche, au lieu de refuser en boucle (T84 de Vigie Copro).
+export const criteresContestes = (verdict) => (Array.isArray(verdict?.criteres_contestes) ? verdict.criteres_contestes : [])
+  .filter((c) => c && String(c.critere ?? "").trim() && String(c.raison ?? "").trim())
+  .map((c) => ({ critere: String(c.critere).slice(0, 500), raison: String(c.raison).slice(0, 800) }))
 
 function consigneDesign(projet, tache) {
   return `Tu es directeur artistique et designer produit senior. Tu juges des captures d'écran d'une application, AVANT qu'elle soit livrée. Exigeant et concret, pas de compliments.
@@ -286,7 +294,7 @@ export async function verifier(ctx, projet, tache, sha) {
   const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal })
   const codexEnPanne = "APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0"
   const nouveauxTests = String(m.E2E_NOUVEAUX ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.cjs$/.test(f))
-  return { ok: raisons.length === 0, infra: codexEnPanne, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
+  return { ok: raisons.length === 0, infra: codexEnPanne, contestes: criteresContestes(verdict), raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
 }
 
 // La porte de fusion : des faits vérifiables, pas un avis. Chaque raison

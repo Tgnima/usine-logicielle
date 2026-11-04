@@ -179,3 +179,15 @@ test("suivi : un seul message, avec l'avancement et les 6 dernières étapes", a
   assert.doesNotMatch(t, /étape 2\b/)
   assert.match(t, /étape 8/)
 })
+
+test("un critère contesté est retenu seulement avec sa raison, et il ne valide rien", async () => {
+  const { criteresContestes } = await import("../src/verification.mjs")
+  assert.deepEqual(criteresContestes(null), [])
+  assert.deepEqual(criteresContestes({ criteres_contestes: "non" }), [])
+  assert.deepEqual(criteresContestes({ criteres_contestes: [{ critere: "1. Délai en minutes" }, { raison: "sans critère" }] }), [])
+  assert.deepEqual(criteresContestes({ criteres_contestes: [{ critere: "1. Délai en minutes", raison: "le premier message date de vendredi" }] }), [{ critere: "1. Délai en minutes", raison: "le premier message date de vendredi" }])
+  // La porte refuse quand même : contester n'approuve pas.
+  const marqueurs = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "12", TESTS_ECHECS: "0", APP_STARTED: "" }
+  const raisons = porte({ marqueurs, verdict: { decision: "refuse", criteres: [{ critere: "1. Délai en minutes", ok: false }], criteres_contestes: [{ critere: "1. Délai en minutes", raison: "impossible" }] } })
+  assert.match(raisons.join(), /critère non validé : 1\. Délai en minutes/)
+})
