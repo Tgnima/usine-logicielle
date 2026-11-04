@@ -38,7 +38,18 @@ export function options(raison, aUnePR) {
   ]
 }
 
-export async function escalader(ctx, { projetId, tacheId = null, raison, details = "" }) {
+// Une seule escalade à la fois pour un même sujet : la création de l'issue prend du temps, et le tour suivant de
+// la fabrique (15 s) ne voit l'escalade qu'une fois enregistrée. Sans cela, elle était créée deux fois (Acte Clair).
+const escaladesEnCours = new Map()
+export function escalader(ctx, demande) {
+  const cle = `${demande.projetId}:${demande.tacheId ?? ""}:${demande.raison}`
+  if (escaladesEnCours.has(cle)) return escaladesEnCours.get(cle)
+  const promesse = creerEscalade(ctx, demande).finally(() => escaladesEnCours.delete(cle))
+  escaladesEnCours.set(cle, promesse)
+  return promesse
+}
+
+async function creerEscalade(ctx, { projetId, tacheId = null, raison, details = "" }) {
   const { config, db } = ctx
   const projet = obtenir(db, "projets", projetId)
   const tache = tacheId ? obtenir(db, "taches", tacheId) : null
