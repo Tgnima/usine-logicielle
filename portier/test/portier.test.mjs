@@ -99,6 +99,18 @@ test("un formulaire envoyé depuis un autre site est refusé", async () => {
   assert.equal(c.status, 403)
 })
 
+test("nos pages laissent le navigateur annoncer leur origine, et seule celle-ci est acceptée", async () => {
+  // Avec no-referrer, le navigateur enverrait Origin: null et tout envoi serait refusé.
+  const page = await appel("/_portier/connexion")
+  assert.equal(page.headers.get("referrer-policy"), "same-origin")
+  const r = await api("utilisateurs", "POST", { email: "bob@exemple.fr", role: "membre", applis: ["prospecta"] })
+  const jeton = new URL((await r.json()).lien).searchParams.get("jeton")
+  const envoi = (origin) => appel("/_portier/invitation", { methode: "POST", corps: form({ jeton, mot_de_passe: "un mot de passe solide", confirmation: "un mot de passe solide" }), entetes: { ...formEntetes, origin } })
+  assert.equal((await envoi("null")).status, 403)
+  assert.equal((await envoi("https://evil.example")).status, 403)
+  assert.equal((await envoi(`https://prospecta.${BASE}`)).status, 302)
+})
+
 test("une clé d'API ouvre ses applications, et elles seules, jusqu'à sa révocation", async () => {
   const r = await api("cles", "POST", { nom: "intégration CRM", applis: ["prospecta"], par: "test" })
   assert.equal(r.status, 201)

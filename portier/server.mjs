@@ -171,8 +171,11 @@ ul { list-style: none; padding: 0; margin: 0 } li a { display: block; padding: 1
 a { color: inherit }
 </style></head><body><main><div class="carte"><div class="marque">Usine logicielle${appli ? ` · ${echapper(appli)}` : ""}</div>${contenu}</div></main></body></html>`
 }
+// « same-origin » et non « no-referrer » : avec no-referrer, le navigateur envoie
+// Origin: null sur nos propres formulaires, et le contrôle d'origine les refuse.
+// Le jeton d'invitation reste protégé : rien ne part vers un autre site.
 const envoyerHtml = (res, statut, html, entetes = {}) => {
-  res.writeHead(statut, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'", ...entetes })
+  res.writeHead(statut, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "same-origin", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'", ...entetes })
   res.end(html)
 }
 const envoyerJson = (res, statut, corps) => {
