@@ -1,6 +1,6 @@
 {
   "nom": "webapp",
   "description": "Application web : écrans React, API Express, base SQLite. Pour un outil métier, un tableau de bord, un back-office, un SaaS.",
-  "dependances": ["express", "nodemailer", "react", "react-dom"],
+  "dependances": ["express", "nodemailer", "react", "react-dom", "radix-ui", "class-variance-authority", "clsx", "tailwind-merge", "lucide-react", "sonner"],
   "dev": ["vite", "@vitejs/plugin-react", "tailwindcss", "@tailwindcss/vite"]
 }

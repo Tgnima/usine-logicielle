@@ -22,6 +22,7 @@ import { garderCaptures } from "./suivi.mjs"
 import { decrireDefaut, relireSecurite } from "./relectures.mjs"
 import { facturationsEnCours, nomMode, noterLimites, scriptClaude, signalerFacturation } from "./moteurs.mjs"
 import { REGLE_PYRAMIDE } from "./pyramide.mjs"
+import { SCRIPT_CONTROLE_UI, decrireDefautUi, lireDefautsUi } from "./controle-ui.mjs"
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -252,6 +253,9 @@ async function fabriquer(ctx, projet, tache) {
     "echo \"@@ RESTAURES $RESTAURES\"",
     `echo "@@ FICHIERS $(git diff --cached --name-only ${q(B)} | wc -l)"`,
     `echo "@@ LIGNES $(git diff --cached --numstat ${q(B)} -- . ${VERROUS} | awk '{s+=$1+$2} END{print s+0}')"`,
+    // Le design system d'un produit issu d'une brique, vérifié par du code (controle-ui.mjs). Seulement
+    // pour un produit né avec le kit shadcn (components.json) : les produits plus anciens n'ont pas ces règles.
+    ...(estRepris(projet) ? [] : [ecrireFichier("/tmp/sorties/tache/controle-ui.cjs", SCRIPT_CONTROLE_UI), `if [ -f components.json ]; then git diff --cached -U0 ${q(B)} -- client/src | node /tmp/sorties/tache/controle-ui.cjs || true; fi`]),
     // Le contrôle du profil : construire puis tester (npm run verify pour une brique).
     `{ bash -c ${q(profil.construire)} && bash -c ${q(profil.tester)}; } 2>&1 | tee /tmp/sorties/tache/verify.log | tail -25; echo "@@ VERIFY_CODE \${PIPESTATUS[0]}"; ${COMPTER_TESTS} /tmp/sorties/tache/verify.log`,
   ].join("\n"), { minutes: 10 })
@@ -259,6 +263,7 @@ async function fabriquer(ctx, projet, tache) {
   const refus = []
   if (Number(m.FICHIERS ?? 0) === 0) refus.push("aucune modification : la tâche n'a pas été réalisée")
   if (m.VERIFY_CODE !== "0") refus.push(`\`${profil.construire}\` puis \`${profil.tester}\` échouent dans l'atelier :\n${ctl.journal.split("\n").slice(-25).join("\n")}`)
+  refus.push(...lireDefautsUi(m.UI_DEFAUTS).map(decrireDefautUi))
   if (refus.length) return refuser(ctx, projet, tache, refus, { resume })
 
   // 4. Commit et push de la branche, puis la pull request.

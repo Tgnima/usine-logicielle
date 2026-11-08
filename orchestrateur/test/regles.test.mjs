@@ -162,6 +162,33 @@ test("design : brief vérifié, jetons et document produits", async () => {
   assert.match(designEnMarkdown({ nom: "Essai", design }), /## Grille/)
 })
 
+test("design : contraste vérifié, texte lisible sur les couleurs, arrondi et thème sombre", async () => {
+  const { verifierDesign, jetonsCss, designEnMarkdown, texteSur, contraste } = await import("../src/design.mjs")
+  const palette = { primaire: "#0f766e", accent: "#2563eb", fond: "#f8fafc", surface: "#ffffff", texte: "#0f172a", doux: "#64748b", succes: "#15803d", alerte: "#b45309", danger: "#b91c1c" }
+  assert.equal(Math.round(contraste("#ffffff", "#000000")), 21)
+  assert.equal(texteSur("#0f766e"), "#ffffff")
+  assert.equal(texteSur("#fde047"), "#111827")
+  // Un gris clair sur blanc, un primaire gris moyen : illisibles, le brief est renvoyé.
+  const pale = verifierDesign({ intention: "x", palette: { ...palette, doux: "#c0c0c0", primaire: "#808080" } }).join("\n")
+  assert.match(pale, /« doux » sur « surface » n'est pas lisible/)
+  assert.match(pale, /palette\.primaire : aucun texte n'y est lisible/)
+  assert.match(verifierDesign({ intention: "x", palette, arrondi: 40 }).join(), /arrondi/)
+  assert.deepEqual(verifierDesign({ intention: "x", palette, arrondi: 6, palette_sombre: null }), [])
+  // Le thème sombre : vérifié comme le clair, puis suivi selon le réglage de l'appareil.
+  const sombre = { primaire: "#2dd4bf", accent: "#60a5fa", fond: "#0b1120", surface: "#111827", texte: "#e5e7eb", doux: "#9ca3af", succes: "#4ade80", alerte: "#fbbf24", danger: "#f87171" }
+  assert.match(verifierDesign({ intention: "x", palette, palette_sombre: { ...sombre, texte: "#1f2937" } }).join(), /palette_sombre : « texte » sur « fond »/)
+  const css = jetonsCss({ intention: "x", palette, arrondi: 6, palette_sombre: sombre })
+  assert.match(css, /--radius: 6px;/)
+  assert.match(css, /--color-sur-primaire: #ffffff;/)
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\n  :root \{\n    color-scheme: dark;\n    --color-primaire: #2dd4bf;/)
+  assert.match(css, /--color-sur-danger: #111827;\n  \}\n\}$/)
+  assert.doesNotMatch(jetonsCss({ intention: "x", palette }), /prefers-color-scheme/)
+  assert.match(jetonsCss({ intention: "x", palette }), /--radius: 8px;/)
+  const md = designEnMarkdown({ nom: "Essai", design: { intention: "x", palette, palette_sombre: sombre } })
+  assert.match(md, /## Thème sombre/)
+  assert.match(md, /La page `\/kit` les montre tous/)
+})
+
 test("suivi : un seul message, avec l'avancement et les 6 dernières étapes", async () => {
   const { ajouterEtape, texteSuivi } = await import("../src/suivi.mjs")
   const { ouvrirCouts } = await import("../src/couts.mjs")

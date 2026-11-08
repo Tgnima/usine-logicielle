@@ -86,7 +86,7 @@ Règles du plan :
    que tu conseilles, ou null. Une question vraiment ouverte (un nom, une liste à fournir) a "options": [].
 ${repris
     ? "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 répare ce que l'inventaire dit cassé et donne au persona une première valeur visible. On part du code existant : chaque tâche dit ce qu'elle garde, change ou ajoute."
-    : "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 pose le socle et un premier écran visible."}
+    : "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 pose le socle et un premier écran visible. Si la brique a des écrans (toutes sauf « api »), la tâche T1 est le kit d'interface : adapter la page /kit et les composants de client/src/ui au brief (couleurs, arrondi, typographie, textes du métier à la place des exemples), sans écran métier ; ses critères s'observent sur /kit (« la page /kit montre les boutons, le formulaire, le tableau et les états vide, chargement et erreur aux couleurs du brief, lisibles à 390 px »). Les écrans des tâches suivantes réutilisent ce kit."}
 3. 2 à 4 tâches par lot ; une tâche = environ 300 lignes de code au plus, faisable en une séance d'agent.
 4. Chaque critère est observable sur l'application en marche (« la page /contacts liste 50 contacts fictifs », « POST /api/segments renvoie 201 ») : jamais « le code est propre ».
 5. "depend_de" ne cite que des clés de tâches précédentes. Les clés sont T1, T2, … uniques et dans l'ordre.

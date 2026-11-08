@@ -1,9 +1,12 @@
 @import "tailwindcss";
 
-/* Les jetons par défaut ; ceux du brief de design (docs/DESIGN.md) les remplacent juste après. */
+/* Les jetons par défaut ; ceux du brief de design (docs/DESIGN.md) les remplacent juste après.
+   Ce sont les SEULES couleurs du produit : aucune couleur n'est écrite ailleurs. */
 @theme {
   --color-primaire: #1f2937;
+  --color-sur-primaire: #ffffff;
   --color-accent: #2563eb;
+  --color-sur-accent: #ffffff;
   --color-fond: #f6f7f9;
   --color-surface: #ffffff;
   --color-texte: #111827;
@@ -11,11 +14,43 @@
   --color-succes: #15803d;
   --color-alerte: #b45309;
   --color-danger: #b91c1c;
+  --color-sur-danger: #ffffff;
+  --color-discret: color-mix(in oklab, var(--color-texte) 5%, var(--color-surface));
+  --color-bordure: color-mix(in oklab, var(--color-texte) 12%, var(--color-surface));
+  --radius: 8px;
   --font-titres: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-texte: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 /* JETONS */
+
+/* Les noms de shadcn/ui (bg-background, text-muted-foreground, border-border…), branchés sur
+   les jetons du brief : un composant shadcn ajouté plus tard prend les couleurs du produit.
+   Attention : « accent » reste la couleur d'accent du brief (pas le survol de shadcn, qui
+   passe ici par bg-muted). */
+@theme inline {
+  --color-background: var(--color-fond);
+  --color-foreground: var(--color-texte);
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-texte);
+  --color-popover: var(--color-surface);
+  --color-popover-foreground: var(--color-texte);
+  --color-primary: var(--color-primaire);
+  --color-primary-foreground: var(--color-sur-primaire);
+  --color-secondary: var(--color-discret);
+  --color-secondary-foreground: var(--color-texte);
+  --color-muted: var(--color-discret);
+  --color-muted-foreground: var(--color-doux);
+  --color-accent-foreground: var(--color-sur-accent);
+  --color-destructive: var(--color-danger);
+  --color-border: var(--color-bordure);
+  --color-input: var(--color-bordure);
+  --color-ring: var(--color-accent);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
 
 @layer base {
   html {
@@ -28,8 +63,17 @@
     font-family: var(--font-titres);
     letter-spacing: -0.01em;
   }
+  *, ::before, ::after {
+    border-color: var(--color-bordure);
+  }
   :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
   }
 }
