@@ -158,18 +158,21 @@ function lireRoute() {
 }
 
 // --- Vues ----------------------------------------------------------------------------
+// Ce qui compte dans les soucis : pas le résumé des applications (chaque produit a sa ligne, sa
+// panne serait comptée deux fois), ni un produit « inconnu » le temps d'un déploiement.
+const compteDansLesSoucis = (c) => c.etat !== "ok" && !c.resume && !(c.produit && c.etat === "inconnu")
 // L'état de l'usine tient dans une pastille ; un bandeau n'apparaît qu'en cas de panne (Mintlify).
 function pastilleEtat() {
   const s = etat.sante
   if (!s) return ""
-  const soucis = s.composants.filter((c) => c.etat !== "ok")
+  const soucis = s.composants.filter(compteDansLesSoucis)
   const niveau = soucis.some((c) => c.etat === "panne") ? "panne" : soucis.length ? "alerte" : ""
   return html`<a class="pastille-etat ${niveau}" href="#/reglages/etat"><span class="point ${niveau}" aria-hidden="true"></span>${niveau === "panne" ? "Panne" : niveau ? "À surveiller" : "Tout fonctionne"}</a>`
 }
 function bandeauPanne() {
-  const pannes = (etat.sante?.composants ?? []).filter((c) => c.etat === "panne")
+  const pannes = (etat.sante?.composants ?? []).filter((c) => c.etat === "panne" && compteDansLesSoucis(c))
   if (!pannes.length || etat.route.section === "etat") return ""
-  return html`<div class="message erreur"><span style="flex:1"><strong>${pannes.length === 1 ? "Un service est en panne" : `${pannes.length} services sont en panne`}</strong> : ${pannes.map((c) => nomService(c.nom)).join(", ")}.</span><a class="btn btn-s btn-petit" href="#/reglages/etat">Voir</a></div>`
+  return html`<div class="message erreur"><span style="flex:1"><strong>${pannes.length === 1 ? "Un service est en panne" : `${pannes.length} services sont en panne`}</strong> : ${pannes.map((c) => nomLigne(c)).join(", ")}.</span><a class="btn btn-s btn-petit" href="#/reglages/etat">Voir</a></div>`
 }
 
 function barreHaut() {
@@ -1263,6 +1266,8 @@ const NOMS_SERVICES = {
   "Claude (agents)": "Claude, qui construit", "Codex (vérificateur)": "ChatGPT, qui contrôle",
 }
 const nomService = (n) => NOMS_SERVICES[n] ?? n.replace(/^Codex/, "ChatGPT")
+// Une ligne de produit garde le nom du produit tel quel (« Codex Juridique · aperçu » n'est pas ChatGPT).
+const nomLigne = (c) => (c.produit ? c.nom : nomService(c.nom))
 
 // L'utilisation, comme une page de crédits (Base44, Gumloop) : où en est le mois, quand il
 // repart à zéro, ce que chaque projet a consommé.
@@ -1327,19 +1332,19 @@ function vueEtatUsine() {
   const s = etat.sante
   if (!s) return html`<div class="chargement">Vérification de l'usine…</div>`
   const mj = s.serveur?.mise_a_jour
-  const soucis = s.composants.filter((c) => c.etat !== "ok")
+  const soucis = s.composants.filter(compteDansLesSoucis)
   const pannes = soucis.filter((c) => c.etat === "panne")
   return html`
     <div><h1>État de l'usine</h1><p class="chapeau">L'usine se vérifie elle-même chaque minute. La pastille en haut de chaque page résume ce bilan.</p></div>
     ${mj?.disponible ? html`<section class="carte carte-p barre" style="gap:12px;flex-wrap:wrap;border-color:var(--accent)"><span><strong>Une nouvelle version est disponible</strong><br><span class="aide">L'usine finit ce qu'elle fait, se met à jour et redémarre (quelques minutes).</span></span><button type="button" class="btn btn-p" data-action="usine" data-quoi="mettre-a-jour">Mettre à jour l'usine</button></section>` : ""}
     <section class="carte carte-p pile etat-general ${pannes.length ? "panne" : soucis.length ? "alerte" : "ok"}" aria-labelledby="etat-general">
       <h2 id="etat-general">${pannes.length ? (pannes.length === 1 ? "Un service est en panne" : `${pannes.length} services sont en panne`) : soucis.length ? (soucis.length === 1 ? "Un point demande ton attention" : `${soucis.length} points demandent ton attention`) : "Tout fonctionne"}</h2>
-      ${soucis.length ? html`<ul class="soucis">${soucis.map((c) => html`<li><span class="point ${c.etat}" aria-hidden="true"></span><span><strong>${nomService(c.nom)}</strong> : ${c.detail}</span></li>`)}</ul>
+      ${soucis.length ? html`<ul class="soucis">${soucis.map((c) => html`<li><span class="point ${c.etat}" aria-hidden="true"></span><span><strong>${nomLigne(c)}</strong> : ${c.detail}</span></li>`)}</ul>
         <div class="aide">Si une panne dure, préviens la personne qui s'occupe du serveur.</div>`
       : html`<div class="aide">${s.composants.length} services vérifiés.</div>`}
     </section>
     <section class="carte" aria-labelledby="services"><h2 id="services" style="padding:14px 16px 0">Tous les services</h2>
-      <ul class="liste-services">${s.composants.map((c) => html`<li title="${c.nom}"><span class="point ${c.etat === "ok" ? "" : c.etat}" aria-hidden="true"></span><span style="flex:1;min-width:0"><strong>${nomService(c.nom)}</strong><br><span class="aide">${c.detail}</span></span><span class="cache">${c.etat === "ok" ? "fonctionne" : c.etat}</span></li>`)}</ul>
+      <ul class="liste-services">${s.composants.map((c) => html`<li title="${c.nom}"><span class="point ${c.etat === "ok" ? "" : c.etat}" aria-hidden="true"></span><span style="flex:1;min-width:0"><strong>${nomLigne(c)}</strong><br><span class="aide">${c.detail}</span></span><span class="cache">${c.etat === "ok" ? "fonctionne" : c.etat}</span></li>`)}</ul>
     </section>
     <section class="carte carte-p pile"><h2>Mettre l'usine en pause</h2>
       <div class="aide">L'usine termine ce qu'elle est en train de faire, puis s'arrête. Rien n'est perdu : elle reprend où elle en était.</div>

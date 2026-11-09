@@ -21,6 +21,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
+import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
 
 const env = process.env
 // Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
@@ -526,6 +527,7 @@ async function ecrireSante() {
     entretien: dernierEntretien,
     mise_a_jour: miseAJour,
     boucle_le: boucleLe, // la fin du dernier tour de déploiement : un tour bloqué se voit
+    applications: etatApplications, // la sonde des produits (sonderProduits), produit par produit
   }
   writeFileSync(`${FICHIER_SANTE}.tmp`, JSON.stringify(sante, null, 2))
   renameSync(`${FICHIER_SANTE}.tmp`, FICHIER_SANTE)
@@ -545,6 +547,90 @@ async function bilanSante() {
   } finally {
     santeEnCours = false
   }
+}
+
+// --- La sonde des produits (chaque minute) ------------------------------------------------
+// L'état réel de chaque application, aperçus et productions : état Docker, santé, redémarrages
+// (un produit qui plante en boucle paraît « running » entre deux redémarrages), réponse de
+// /api/health et version qui tourne. Le jugement est dans sonde.mjs ; l'orchestrateur en fait
+// une ligne de santé par produit, et une alerte quand l'état change. Lecture seule : la sonde
+// ne redémarre rien, et elle a son propre rythme, hors de la boucle des déploiements.
+let etatApplications = null
+const redemarrages = new Map()
+const enBoucle = new Set()
+let sondeEnCours = false
+
+// /api/health, sans suivre de redirection (une réponse 3xx d'un produit ne doit pas faire
+// appeler par le déployeur une autre adresse de ses réseaux). Une absence de réponse est
+// revérifiée une fois, 2 s plus tard, avant d'être retenue.
+async function sonderSante(conteneur) {
+  for (let essai = 0; ; essai++) {
+    const debut = Date.now()
+    try {
+      const res = await fetch(`http://${conteneur}:3000/api/health`, { signal: AbortSignal.timeout(10_000), redirect: "manual" })
+      await res.body?.cancel().catch(() => {})
+      return { code: res.status, ms: Date.now() - debut }
+    } catch {
+      if (essai >= 1) return { code: null, ms: Date.now() - debut }
+      await pause(2_000)
+    }
+  }
+}
+
+async function sonderProduits() {
+  if (sondeEnCours) return
+  sondeEnCours = true
+  try {
+    // statut.json d'abord : un déploiement qui se termine pendant la sonde est vu comme « en cours », pas comme une panne.
+    const statut = lireStatut()
+    const inconnu = () => (etatApplications = { le: horodatage(), produits: null })
+    const ps = await lancer("docker", ["ps", "-a", "--format", "{{.Names}}"], { minutes: 1 })
+    // Docker injoignable : l'état des produits est inconnu, pas « tous absents ».
+    if (ps.code !== 0) return inconnu()
+    const noms = ps.sortie.split("\n").map((n) => n.trim()).filter((n) => cleDuConteneur(n))
+    const inspect = noms.length ? await lancer("docker", ["inspect", "--format", FORMAT_INSPECT, ...noms], { minutes: 1 }) : { code: 0, sortie: "" }
+    const conteneurs = lireInspect(inspect.sortie)
+    // Un conteneur parti entre les deux commandes est nommé dans l'erreur d'inspect ; un inspect coupé ou sans démon ne dit rien : relevé sans valeur.
+    if (inspect.code !== 0 && inspectIncomplet(noms, conteneurs, inspect.sortie)) return inconnu()
+    const http = Object.fromEntries(await Promise.all(conteneurs.filter((c) => c.etat === "running").map(async (c) => [c.nom, await sonderSante(c.nom)])))
+    const t = Date.now()
+    const age = (s) => (s.le ? t - new Date(s.le).getTime() : 0)
+    // Le serveur construit : un déploiement en cours, ou la reconstruction de l'usine elle-même.
+    const construction = Boolean(miseAJour.en_cours) || Object.values(statut).some((s) => s.etat === "en_cours" && age(s) <= DEPLOIEMENT_BLOQUE_MS)
+    const produits = {}
+    for (const cle of new Set([...conteneurs.map((c) => cleDuConteneur(c.nom)), ...Object.keys(statut)])) {
+      const s = statut[cle] ?? {}
+      const environnement = cle.split("/")[0]
+      const choisi = conteneurActif(conteneurs.filter((x) => cleDuConteneur(x.nom) === cle), s.conteneur)
+      // Pendant un déploiement : le conteneur qu'il démarre (premier déploiement, ou aperçu recréé sous le même nom après le début du déploiement).
+      const demarre = choisi ? new Date(choisi.demarre_le).getTime() : NaN
+      const nouveau = Boolean(choisi) && s.etat === "en_cours" && (!s.conteneur || (environnement === "apercu" && demarre > new Date(s.le).getTime()))
+      const c = choisi ? { ...choisi, nouveau, demarre_apres_demande: Boolean(s.demande_le) && demarre > new Date(s.demande_le).getTime() } : null
+      const recents = c ? noterRedemarrages(redemarrages, c.nom, c.redemarrages, t) : 0
+      const jugement = jugerProduit({ environnement, attendu: Boolean(s.conteneur), deploiement: s.etat ?? null, depuis_ms: age(s), conteneur: c, http: c ? http[c.nom] ?? null : null, recents, en_boucle: enBoucle.has(cle), construction })
+      if (jugement?.boucle) enBoucle.add(cle)
+      else enBoucle.delete(cle)
+      if (!jugement) continue
+      const { boucle, ...j } = jugement
+      produits[cle] = {
+        ...j,
+        conteneur: c?.nom ?? s.conteneur ?? null,
+        version: versionDeLImage(c?.image) ?? (s.sha ? s.sha.slice(0, 12) : null),
+        deploiement: s.etat ?? null,
+        docker: c ? { etat: c.etat, sante: c.sante, redemarrages: c.redemarrages, redemarrages_30_min: recents, demarre_le: c.demarre_le, code_sortie: c.code_sortie, oom: c.oom } : null,
+        http: c ? http[c.nom] ?? null : null,
+      }
+    }
+    for (const nom of redemarrages.keys()) if (!conteneurs.some((c) => c.nom === nom)) redemarrages.delete(nom)
+    for (const cle of enBoucle) if (!produits[cle]) enBoucle.delete(cle)
+    etatApplications = { le: horodatage(), produits }
+  } catch (e) {
+    log(`Sonde des produits : ${e.message}`)
+  } finally {
+    sondeEnCours = false
+  }
+  // Publié tout de suite : l'orchestrateur ne lit pas deux fois la même mesure comme deux constats.
+  await bilanSante()
 }
 
 // --- L'entretien (toutes les 6 heures) --------------------------------------------------
@@ -685,6 +771,10 @@ mkdirSync(join(SRV, "produits"), { recursive: true })
 await bilanSante()
 setInterval(bilanSante, 30_000)
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
+// Après l'isolement : le déployeur est branché sur le réseau de chaque produit, il peut les joindre.
+// Sans attendre : la première sonde ne retarde pas le premier tour de déploiement (elle ne rejette jamais).
+sonderProduits()
+setInterval(sonderProduits, 60_000)
 log(`Déployeur prêt : tire ${depotEtat() || "(dépôt d'état pas encore connu : GitHub à connecter dans la console)"} toutes les 20 s.`)
 // Une mise à jour vient d'être appliquée : on note sa fin (l'orchestrateur l'annonce).
 let derniereDemande = null

@@ -17,6 +17,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
 | `orchestrateur/src/console.mjs`, `orchestrateur/console/` | La console web (API JSON + interface sans build), servie sur le port 8091 derrière le portier (administrateurs) |
 | `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |
+| `deployeur/sonde.mjs` | La sonde des produits (chaque minute) : état Docker, santé, redémarrages, `/api/health`, version ; jugée produit par produit, publiée dans `sante.json` (`applications`), une ligne de santé et une alerte par produit dans `orchestrateur/src/sante.mjs` |
 | `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes |
 | `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |
 | `orchestrateur/src/relectures.mjs` | Les relectures entre agents (sécurité) avant le vérificateur |

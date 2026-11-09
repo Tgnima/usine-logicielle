@@ -166,7 +166,9 @@ function blocsHistorique(config, evo, avecTableaux) {
 export async function blocsSante(ctx, { avecTableaux = true, complet = false } = {}) {
   const { composants, serveur } = await etatUsine(ctx)
   const etat = resumeEtat(composants)
-  const affiches = complet ? composants : composants.filter((x) => x.etat !== "ok" || ["disque", "mémoire", "applications"].includes(x.nom))
+  let affiches = complet ? composants : composants.filter((x) => x.etat !== "ok" || ["disque", "mémoire", "applications"].includes(x.nom))
+  // En grille (20 lignes au plus), les produits en bonne santé cèdent leur place : les lignes de l'usine et les produits en souci restent visibles.
+  if (!avecTableaux && affiches.length > 20) affiches = affiches.filter((x) => !(x.produit && x.etat === "ok"))
   const blocs = [
     titre(`🩺 Santé de l'usine · ${etat === "ok" ? "tout va bien" : etat === "alerte" ? "à surveiller" : "panne"}`),
     ...rendre(avecTableaux, ["État", "Composant", "Détail"], affiches.map((x) => [PICTO[x.etat], x.nom, x.detail]), []),
