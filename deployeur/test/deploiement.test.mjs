@@ -23,7 +23,7 @@ function verifierSecrets({ presents, attendus = ["github_token", "sentry_dsn", "
   writeFileSync(join(d, "docker"), `#!/usr/bin/env bash\n${dockerEnPanne ? "exit 1" : ""}\nwhile [ "$1" != "-c" ]; do shift; done\nshift; script="$1"; shift\nscript="\${script//\\/s\\//${posix(secrets)}/}"\nexec sh -c "$script" "$@"\n`)
   chmodSync(join(d, "git"), 0o755)
   chmodSync(join(d, "docker"), 0o755)
-  writeFileSync(join(d, "script.sh"), `set -eo pipefail\nexport PATH="${posix(d)}:$PATH"\n${scriptVerifierSecrets("/home/ubuntu/usine-logicielle", "usine-logicielle-deployeur").join("\n")}\necho "@@ SUITE"\n`)
+  writeFileSync(join(d, "script.sh"), `set -eo pipefail\nexport PATH="${posix(d)}:$PATH"\n${scriptVerifierSecrets("/srv/usine-logicielle", "usine-logicielle-deployeur").join("\n")}\necho "@@ SUITE"\n`)
   const r = spawnSync("bash", [posix(join(d, "script.sh"))], { encoding: "utf8" })
   return { code: r.status, sortie: `${r.stdout}${r.stderr}` }
 }
