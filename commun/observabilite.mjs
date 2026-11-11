@@ -36,7 +36,12 @@ const MASQUES = [
   [/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, "[ip]"],
   [/\b(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b/gi, "[ip]"],
   [/(?<![\w:])(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])/gi, (m) => (m.length > 2 ? "[ip]" : m)],
+  // Un jeton aléatoire (lien public d'un produit, identifiant de session, UUID) : 24 caractères
+  // ou plus, lettres ET chiffres. Un nom de conteneur ou de fichier (sans chiffre) reste lisible.
+  [/[A-Za-z0-9_-]{24,}/g, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) ? "[jeton]" : m)],
 ]
+// Les motifs, pour vérifier que la copie des produits (briques/webapp/server/observabilite.js) masque pareil.
+export const MOTIFS_MASQUES = MASQUES.map(([motif]) => `${motif.source}/${motif.flags}`)
 
 // Un texte qui peut sortir : masqué, sans caractères de contrôle, limité à max caractères.
 export function nettoyer(texte, max = 1000) {

@@ -29,6 +29,7 @@ server/actions/        la logique métier, sans Express, testée dans test/
 server/horloge.js      maintenant() : l'heure du produit (accélérée en démo)
 server/llm.js          generer() : appeler un modèle (secours sans clé)
 server/email.js        envoyer() : un email (vers Mailpit en démo)
+server/observabilite.js les erreurs vers Sentry, le pouls vers PostHog (ne pas modifier)
 client/src/            l'interface React
 client/src/ui/         le kit : composants de base (index.jsx) et shadcn/ui (shadcn/)
 client/src/Kit.jsx     la page /kit : tous les composants aux couleurs du produit
@@ -57,6 +58,11 @@ test/                  les tests
 9. **Le démarrage se branche dans `server/demarrage.js`** (`auDemarrage()`) : le remplissage démo et les tâches de fond (minuteurs) y sont appelés. Jamais dans `server/index.js`, qui est protégé.
 10. **Jamais d'authentification dans le produit.** L'usine protège déjà toute l'application par sa page de connexion (le portier) : ne code ni mot de passe, ni comptes, ni session, ni « mode public ».
 11. **Les pages ouvertes SANS connexion** (lien dans un email envoyé à un prospect, formulaire public, pixel de suivi) : place-les sous `/public/…` ou `/api/public/…`, ou déclare leur chemin précis dans `usine.json` (`"chemins_publics": ["/api/t/*", "/merci"]`). Un chemin trop large (`/`, `/api/*`) est refusé par l'usine. Ces pages n'exposent jamais les données d'autres personnes : elles s'appuient sur un jeton aléatoire non devinable.
+12. **Les journaux et les erreurs sortent du serveur.** Les journaux du conteneur partent vers PostHog, et `console.error` comme les exceptions non attrapées partent vers Sentry (`server/observabilite.js`, branché dans `auDemarrage()`).
+    - **N'écris jamais une donnée personnelle** dans `console.log` ou `console.error` : un nom, un email, un contenu saisi par quelqu'un. Le module masque les adresses email, les téléphones, les IBAN, les adresses IP et les jetons, mais pas les noms.
+    - Le **pouls** (toutes les 5 min) porte des compteurs métier : ajoute-les dans `server/demarrage.js` avec `ajouterPouls(() => ({ en_attente: n }))`, des nombres seulement. Une erreur attrapée qui mérite d'être vue se signale avec `signalerErreur(error)`.
+    - **Aucun SDK Sentry ou PostHog dans le navigateur** : la CSP le bloque.
+    - Ne modifie pas `server/observabilite.js`.
 
 ## Variables d'environnement
 
@@ -68,6 +74,8 @@ test/                  les tests
 | `EMAIL_DESTINATAIRES_AUTORISES` | Liste des destinataires permis (contacts de test) ; `envoyer()` bloque les autres |
 | `AI_GATEWAY_API_KEY`, `LLM_MODELE` | Modèles via Vercel AI Gateway |
 | `PUBLIC_URL` | L'adresse publique du produit |
+| `SENTRY_DSN`, `POSTHOG_TOKEN`, `POSTHOG_HOTE` | Les erreurs et le pouls du produit, lus par `server/observabilite.js` seulement |
+| `USINE_PRODUIT`, `USINE_ENVIRONNEMENT`, `USINE_VERSION` | Le nom du produit, `apercu` ou `production`, la version : l'étiquette de chaque envoi |
 
 ## Fichiers protégés
 
