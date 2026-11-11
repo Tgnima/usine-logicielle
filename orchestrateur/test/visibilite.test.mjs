@@ -77,6 +77,17 @@ before(async () => {
   t.run(3, "T10", "Rappel des retards", "en_cours", 1, "2026-11-11 15:28:00")
   t.run(1, "T5", "Export des charges", "verification", 0, "2026-11-11 15:10:00")
   t.run(1, "T6", "Plus tard", "prete", 0, "2026-11-11 15:00:00")
+  // Qui fait quoi : les modèles du contrat, et des travaux sans coût (les totaux de la semaine ne bougent pas).
+  fixe.config.modeles = { analyste: { modele: "claude-opus-5-5" }, atelier: { modele: "claude-sonnet-5-5" }, renfort: { modele: "claude-opus-5-5" } }
+  const m = fixe.db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, cout_api_usd, duree_s, le) VALUES (?, ?, ?, ?, ?, ?, 0, ?)")
+  m.run(1, 3, "relecteur-securite", "claude-code", "claude-sonnet-5-5", 0, "2026-11-09 08:00:00") // T6
+  m.run(1, 2, "agent", "claude-code", "claude-sonnet-5-5", 0, "2026-11-10 12:00:00") // T5
+  m.run(1, 2, "agent", "claude-code", "inconnu", 0, "2026-11-10 12:01:00")
+  m.run(1, 2, "verificateur", "codex", "gpt-6.1-sol", null, "2026-11-10 12:10:00")
+  m.run(1, 2, "verificateur", "claude-code", "claude-opus-5-5", 0, "2026-11-10 12:20:00") // le relais
+  m.run(1, 2, "designer", "codex", "gpt-6.1-sol", null, "2026-11-10 12:30:00")
+  m.run(3, 1, "agent", "passerelle", "claude-opus-5-5", 0, "2026-11-11 09:00:00") // T10, payé à l'usage
+  fixe.db.prepare("INSERT INTO reglages (cle, valeur) VALUES ('modele_codex', 'gpt-6.1-sol'), ('limite_claude-code_abonnement', '2099-01-01T00:00:00.000Z')").run()
   ecrireJson(fixe.dossier, "sante.json", {
     le: "2026-11-11T15:39:30Z",
     disque: { total_go: 50.9, utilise_go: 33.5, libre_go: 15.3, pct: 66 },
@@ -246,6 +257,54 @@ test("l'usine maintenant : tâches en cours, mises en ligne, serveur", () => {
   assert.equal(s.memoire.pct, 49)
   assert.deepEqual([s.charge.pct, s.charge.processeurs, s.charge.etat], [98, 1, "ok"])
   assert.equal(calcul({ processeurs: 0.4 }).usine.serveur.charge.etat, "alerte")
+})
+
+test("le nom d'un modèle, pour tout le monde", () => {
+  assert.equal(mod.nomModele("claude-code", "claude-sonnet-5-5"), "Claude Sonnet 5.5")
+  assert.equal(mod.nomModele("claude-code", "claude-sonnet-5"), "Claude Sonnet 5")
+  assert.equal(mod.nomModele("passerelle", "anthropic/claude-haiku-4.5"), "Claude Haiku 4.5")
+  assert.equal(mod.nomModele("codex", "gpt-6.1-sol"), "ChatGPT (gpt-6.1-sol)")
+  assert.equal(mod.nomModele("codex", "openai/gpt-5.5"), "ChatGPT (gpt-5.5)")
+  assert.equal(mod.nomModele("codex", "codex"), "ChatGPT, modèle non noté")
+  assert.equal(mod.nomModele("claude-code", "inconnu"), "Claude, modèle non noté")
+})
+
+test("qui fait quoi : le modèle de chaque travail, le relais, les limites d'usage", () => {
+  const u = calcul().usine
+  const roles = Object.fromEntries(u.qui_fait_quoi.roles.map((r) => [r.role, r.modeles.map((x) => x.nom)]))
+  assert.deepEqual(roles, {
+    plan: ["Claude Opus 5.5"], construction: ["Claude Sonnet 5.5"], renfort: ["Claude Opus 5.5"], securite: ["Claude Sonnet 5.5"],
+    // Par défaut, ChatGPT juge d'abord ; Claude (le modèle du renfort) prend le relais.
+    verification: ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], design: ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], recette: ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"],
+  })
+  assert.deepEqual(u.qui_fait_quoi.limites, [{ moteur: "claude-code", nom: "Claude", mode: "abonnement", jusqua: "2099-01-01T00:00:00.000Z" }])
+  // Chaque fonction en cours dit quel modèle y travaille, et qui l'a construite.
+  const [t5, t10] = u.taches
+  assert.deepEqual([t5.cle, t5.modeles, t5.construite_par], ["T5", ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], "Claude Sonnet 5.5"])
+  assert.deepEqual([t10.cle, t10.modeles, t10.construite_par], ["T10", ["Claude Sonnet 5.5"], "Claude Opus 5.5"])
+  // L'ordre du relais réglé dans la console change ce qui est montré.
+  fixe.db.prepare("INSERT INTO reglages (cle, valeur) VALUES ('relais_verification', '[\"claude-code\"]')").run()
+  try {
+    assert.deepEqual(calcul().usine.qui_fait_quoi.roles.find((r) => r.role === "verification").modeles.map((x) => x.nom), ["Claude Opus 5.5"])
+  } finally {
+    fixe.db.prepare("DELETE FROM reglages WHERE cle = 'relais_verification'").run()
+  }
+})
+
+test("7 derniers jours : quel modèle a fait quel travail, et les dernières fonctions", () => {
+  const w = calcul().semaine
+  assert.deepEqual([...new Set(w.modeles.map((m) => m.travail))], ["Construire", "Relire la sécurité", "Contrôler", "Relire le design"])
+  const trouve = (role, moteur, modele) => w.modeles.find((m) => m.role === role && m.moteur === moteur && m.modele === modele)
+  const codex = trouve("verificateur", "codex", "gpt-6.1-sol")
+  assert.deepEqual([codex.nom, codex.fonctions, codex.utilisations, codex.cout_api_texte, codex.prix_inconnu], ["ChatGPT (gpt-6.1-sol)", 1, 1, null, true])
+  assert.equal(trouve("verificateur", "claude-code", "claude-opus-5-5").nom, "Claude Opus 5.5")
+  const passerelle = trouve("agent", "passerelle", "claude-opus-5-5")
+  assert.deepEqual([passerelle.nom, passerelle.paye_a_l_usage, passerelle.fonctions], ["Claude Opus 5.5", true, 1])
+  // La plus récente d'abord ; un modèle « non noté » s'efface derrière le modèle connu.
+  assert.deepEqual(w.fonctions.map((f) => [f.cle, f.statut]), [["T10", "en_cours"], ["T5", "verification"], ["T6", "prete"]])
+  const t5 = w.fonctions[1]
+  assert.deepEqual([t5.projet, t5.construite, t5.controlee, t5.design, t5.securite], ["Vigie Copro", ["Claude Sonnet 5.5"], ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], ["ChatGPT (gpt-6.1-sol)"], []])
+  assert.deepEqual(w.fonctions[2].securite, ["Claude Sonnet 5.5"])
 })
 
 test("rien des fichiers du déployeur au-delà de ce que la page montre", () => {

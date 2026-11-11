@@ -5,13 +5,15 @@
 //   - la base : escalades, tâches, journal (fusion, refus, escalade), consommations ;
 //   - /app/etat/sante.json, écrit par le déployeur : serveur et sonde des produits (champ
 //     « applications », deployeur/sonde.mjs) ;
-//   - /app/etat/statut.json, écrit par le déployeur : le dernier déploiement de chaque produit.
+//   - /app/etat/statut.json, écrit par le déployeur : le dernier déploiement de chaque produit ;
+//   - le contrat et les réglages : quel modèle fait quel travail (modeles, relais, limites d'usage).
 // Rien ici n'écrit dans la base, ne touche à Docker ou n'appelle un service extérieur.
 import { readFileSync } from "node:fs"
 import { availableParallelism } from "node:os"
 import { join } from "node:path"
 import { adresses } from "./config.mjs"
-import { montant, reglagesCouts, versDevise } from "./couts.mjs"
+import { lireReglage, montant, reglagesCouts, versDevise } from "./couts.mjs"
+import { limitesEnCours, modeleJuge, nomMode, relais } from "./moteurs.mjs"
 import { lireSanteServeur, SONDE_PERIMEE_S } from "./sante.mjs"
 
 // Les jours du bilan se comptent à l'heure de Paris : un refus à 00 h 30 le 9 novembre (heure
@@ -29,6 +31,8 @@ const CAUSE_MAX = 60
 const TEXTE_MAX = 300
 // Une version se montre par les 7 premiers caractères de son sha.
 const SHA_COURT = 7
+// Les dernières fonctions montrées avec leurs modèles.
+const FONCTIONS_MAX = 8
 const ETATS = ["ok", "alerte", "panne", "inconnu"]
 
 // Une mesure lue dans un fichier écrit par un autre conteneur : un nombre, ou null.
@@ -196,6 +200,52 @@ function ceQuiAttend(aTraiter, parc) {
   return liste.map((x, i) => [x, i]).sort(([a, i], [b, j]) => (ORDRE_ATTENTE[a.type] ?? 9) - (ORDRE_ATTENTE[b.type] ?? 9) || i - j).map(([x]) => x)
 }
 
+// --- Les modèles : qui fait quoi ---------------------------------------------------------
+// Le nom d'un modèle, pour tout le monde : « claude-sonnet-5-5 » devient « Claude Sonnet 5.5 », un
+// modèle de Codex devient « ChatGPT (gpt-6.1-sol) ». Un modèle que l'usine n'a pas noté le dit.
+export function nomModele(moteur, modele) {
+  const m = String(modele ?? "").replace(/^(anthropic|openai)\//, "").slice(0, 60)
+  const claude = /^claude-([a-z]+)-(\d+)(?:[.-](\d+))?/.exec(m)
+  if (claude) return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ""}`
+  const inconnu = !m || m === "inconnu" || m === "codex"
+  if (moteur === "codex" || /^(gpt|o\d)/.test(m)) return inconnu ? "ChatGPT, modèle non noté" : `ChatGPT (${m})`
+  return inconnu ? "Claude, modèle non noté" : m
+}
+
+// Les travaux notés dans les consommations (le rôle de enregistrer(), couts.mjs), dans l'ordre d'une fonction.
+const TRAVAUX = {
+  analyste: "Faire le plan", agent: "Construire", "relecteur-securite": "Relire la sécurité", verificateur: "Contrôler",
+  designer: "Relire le design", recette: "Jouer la recette", chercheur: "Étudier un public", inventaire: "Inventorier un code repris",
+  aiguillage: "Aiguiller les demandes",
+}
+const ORDRE_TRAVAUX = Object.keys(TRAVAUX)
+const travail = (role) => TRAVAUX[role] ?? String(role ?? "autre").slice(0, 40)
+
+// Qui fait quoi aujourd'hui, d'après le contrat et les réglages : le modèle de chaque travail, et
+// l'ordre des relais pour les jugements (le premier disponible sert, le suivant prend le relais).
+function quiFaitQuoi(ctx) {
+  const { config, db } = ctx
+  const m = config.modeles ?? {}
+  const claude = (modele) => ({ moteur: "claude-code", modele: modele ?? null, nom: modele ? nomModele("claude-code", modele) : "Claude, modèle par défaut" })
+  // Le modèle de Codex n'est pas choisi par l'usine : c'est le dernier qu'il a annoncé (verification.mjs).
+  const codex = lireReglage(db, "modele_codex", null)
+  const juges = (role) => relais(ctx, role).map((moteur) => (moteur === "codex" ? { moteur, modele: codex, nom: nomModele("codex", codex) } : claude(modeleJuge(config))))
+  return {
+    roles: [
+      { role: "plan", travail: "Faire le plan", modeles: [claude(m.analyste?.modele)] },
+      { role: "construction", travail: "Construire chaque fonction", modeles: [claude(m.atelier?.modele)] },
+      // Le modèle de fabrique.mjs après un changement d'approche.
+      { role: "renfort", travail: "Construire après un changement d'approche", modeles: [claude(m.renfort?.modele ?? "claude-opus-5-5")] },
+      { role: "securite", travail: "Relire la sécurité", modeles: [claude(m.relecteur?.modele ?? m.atelier?.modele)] },
+      { role: "verification", travail: "Contrôler chaque fonction", modeles: juges("verification") },
+      { role: "design", travail: "Relire le design", modeles: juges("design") },
+      { role: "recette", travail: "Jouer la recette", modeles: juges("recette") },
+    ],
+    // Une façon d'accéder à un modèle (abonnement, clé, passerelle) à sa limite : l'usine passe à la suivante.
+    limites: limitesEnCours(db).map((l) => ({ moteur: l.moteur, nom: l.moteur === "codex" ? "ChatGPT" : "Claude", mode: nomMode(l.mode), jusqua: iso(l.jusqua) })).filter((l) => l.jusqua),
+  }
+}
+
 // --- L'usine maintenant ----------------------------------------------------------------
 function deploiements(statut, produits, maintenant) {
   const entrees = Object.entries(statut).flatMap(([cle, s]) => {
@@ -246,10 +296,24 @@ function serveur(s, maintenant, processeurs) {
 }
 
 function usineMaintenant(ctx, sante, statut, produits, maintenant, processeurs) {
-  const taches = ctx.db.prepare(`SELECT t.cle, t.titre, t.statut, t.tentative, t.approche, t.maj_le, t.projet_id, p.nom
+  const taches = ctx.db.prepare(`SELECT t.id, t.cle, t.titre, t.statut, t.tentative, t.approche, t.maj_le, t.projet_id, p.nom
       FROM taches t JOIN projets p ON p.id = t.projet_id WHERE t.statut IN ('en_cours', 'verification') ORDER BY t.maj_le, t.id`).all()
+  const qui = quiFaitQuoi(ctx)
+  const role = (r) => qui.roles.find((x) => x.role === r)
+  // Le dernier modèle qui a construit la tâche (noté à la fin de chaque essai de l'agent).
+  const constructeur = ctx.db.prepare("SELECT moteur, modele FROM consommations WHERE tache_id = ? AND role = 'agent' AND modele != 'inconnu' ORDER BY id DESC LIMIT 1")
   return {
-    taches: taches.map((t) => ({ projet_id: t.projet_id, projet: t.nom ?? `Projet ${t.projet_id}`, cle: t.cle, titre: t.titre, statut: t.statut, tentative: t.tentative, approche: t.approche, depuis: iso(t.maj_le) })),
+    taches: taches.map((t) => {
+      // En construction : le modèle de l'atelier, ou le renfort après un changement d'approche ; au contrôle : les juges, dans l'ordre du relais.
+      const r = t.statut === "verification" ? role("verification") : role(t.approche > 0 ? "renfort" : "construction")
+      const c = constructeur.get(t.id)
+      return {
+        projet_id: t.projet_id, projet: t.nom ?? `Projet ${t.projet_id}`, cle: t.cle, titre: t.titre, statut: t.statut, tentative: t.tentative, approche: t.approche, depuis: iso(t.maj_le),
+        modeles: r.modeles.map((x) => x.nom),
+        construite_par: c ? nomModele(c.moteur, c.modele) : null,
+      }
+    }),
+    qui_fait_quoi: qui,
     deploiements: deploiements(statut, produits, maintenant),
     serveur: serveur(sante, maintenant, processeurs),
   }
@@ -294,7 +358,11 @@ function septJours(ctx, produits, maintenant) {
   let usd = 0
   let duree = 0
   let inconnu = false
-  for (const c of db.prepare("SELECT projet_id, cout_api_usd, duree_s, le FROM consommations WHERE le >= ?").all(depuis)) {
+  // Les modèles au travail : un compte par travail et par modèle (moteur compris : la passerelle se paie à l'usage).
+  const parModele = new Map()
+  // Les fonctions travaillées, la plus récente en dernier : quels modèles pour chaque travail.
+  const parTache = new Map()
+  for (const c of db.prepare("SELECT projet_id, tache_id, role, moteur, modele, cout_api_usd, duree_s, le, id FROM consommations WHERE le >= ? ORDER BY id").all(depuis)) {
     if (!dansLaFenetre(c.le)) continue
     if (c.cout_api_usd === null) inconnu = true
     const l = ligne(c.projet_id)
@@ -302,10 +370,39 @@ function septJours(ctx, produits, maintenant) {
     l.duree_s += c.duree_s ?? 0
     usd += c.cout_api_usd ?? 0
     duree += c.duree_s ?? 0
+    const cle = `${c.role}|${c.moteur}|${c.modele}`
+    if (!parModele.has(cle)) parModele.set(cle, { role: c.role, moteur: c.moteur, modele: c.modele, taches: new Set(), utilisations: 0, usd: 0, duree_s: 0, prix_inconnu: false })
+    const m = parModele.get(cle)
+    m.utilisations += 1
+    m.usd += c.cout_api_usd ?? 0
+    m.duree_s += c.duree_s ?? 0
+    if (c.cout_api_usd === null) m.prix_inconnu = true
+    if (c.tache_id) {
+      m.taches.add(c.tache_id)
+      const t = parTache.get(c.tache_id) ?? new Map()
+      parTache.delete(c.tache_id)
+      parTache.set(c.tache_id, t)
+      if (!t.has(c.role)) t.set(c.role, new Set())
+      t.get(c.role).add(nomModele(c.moteur, c.modele))
+    }
   }
   const heures = (s) => Math.round(s / 360) / 10
   const cout = (u) => montant(rc, versDevise(rc, u), { decimales: versDevise(rc, u) >= 100 ? 0 : 2 })
   const verifications = totaux.fusions + totaux.refus
+  // Un modèle « non noté » ne s'affiche que s'il est seul pour ce travail.
+  const nomsDe = (t, role) => {
+    const n = [...(t.get(role) ?? [])]
+    const connus = n.filter((x) => !x.endsWith("modèle non noté"))
+    return connus.length ? connus : n
+  }
+  const ids = [...parTache.keys()].slice(-FONCTIONS_MAX).reverse()
+  const infos = ids.length ? db.prepare(`SELECT t.id, t.cle, t.titre, t.statut, t.projet_id, p.nom FROM taches t JOIN projets p ON p.id = t.projet_id WHERE t.id IN (${ids.map(() => "?").join(",")})`).all(...ids) : []
+  const fonctions = ids.flatMap((id) => {
+    const t = infos.find((x) => x.id === id)
+    if (!t) return []
+    const roles = parTache.get(id)
+    return [{ projet_id: t.projet_id, projet: t.nom ?? `Projet ${t.projet_id}`, cle: t.cle, titre: texte(t.titre, 120), statut: t.statut, construite: nomsDe(roles, "agent"), controlee: nomsDe(roles, "verificateur"), design: nomsDe(roles, "designer"), securite: nomsDe(roles, "relecteur-securite") }]
+  })
   return {
     du: jours[0],
     au: jours.at(-1),
@@ -322,8 +419,20 @@ function septJours(ctx, produits, maintenant) {
       .filter((l) => l.fusions || l.refus || l.escalades || l.usd || l.duree_s)
       .map(({ usd: u, duree_s, ...l }) => ({ ...l, cout_api: versDevise(rc, u), cout_api_texte: cout(u), heures: heures(duree_s) }))
       .sort((a, b) => b.cout_api - a.cout_api || b.fusions + b.refus - (a.fusions + a.refus) || a.nom.localeCompare(b.nom, "fr")),
+    // Qui a fait quoi : par travail, chaque modèle, avec le nombre de fonctions et ce qu'il a coûté.
+    modeles: [...parModele.values()]
+      .map((m) => ({
+        role: texte(m.role, 40), travail: travail(m.role), moteur: texte(m.moteur, 20), modele: texte(m.modele, 60), nom: nomModele(m.moteur, m.modele),
+        // Hors abonnement, Claude passe par la passerelle : payé à l'usage.
+        paye_a_l_usage: m.moteur === "passerelle",
+        fonctions: m.taches.size, utilisations: m.utilisations,
+        cout_api: versDevise(rc, m.usd), cout_api_texte: m.prix_inconnu && !m.usd ? null : cout(m.usd), prix_inconnu: m.prix_inconnu, heures: heures(m.duree_s),
+      }))
+      .sort((a, b) => ordreTravail(a.role) - ordreTravail(b.role) || b.utilisations - a.utilisations || a.nom.localeCompare(b.nom, "fr")),
+    fonctions,
   }
 }
+const ordreTravail = (role) => (ORDRE_TRAVAUX.includes(role) ? ORDRE_TRAVAUX.indexOf(role) : ORDRE_TRAVAUX.length)
 
 // --- La page entière ---------------------------------------------------------------------
 // aTraiter : les décisions, plans, questions et livraisons en attente (console.mjs).

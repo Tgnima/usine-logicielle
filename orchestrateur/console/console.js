@@ -1941,6 +1941,19 @@ function jaugeServeur(titre, m, pct, detail) {
   </div>`
 }
 
+// Une liste de juges dans l'ordre du relais : « ChatGPT (gpt-6.1-sol), puis Claude Opus 5.5 en relais ».
+const relaisEnClair = (noms) => (noms.length > 1 ? `${noms[0]}, puis ${noms.slice(1).join(", puis ")} en relais` : noms[0] ?? "—")
+
+// Qui fait quoi aujourd'hui : le modèle de chaque travail (contrat et réglages), et les limites d'usage en cours.
+function blocQuiFaitQuoi(v) {
+  const q = v.usine.qui_fait_quoi
+  if (!q) return ""
+  return html`<div class="carte carte-p pile"><div class="barre"><h3 class="surtitre">Qui fait quoi</h3><a class="aide" href="#/reglages/integrations" data-quoi="modeles-reglages">Changer les modèles</a></div>
+    <dl class="qui-fait-quoi">${q.roles.map((r) => html`<div><dt>${r.travail}</dt><dd>${relaisEnClair(r.modeles.map((m) => m.nom))}</dd></div>`)}</dl>
+    ${q.limites.length ? html`<ul class="soucis">${q.limites.map((l) => html`<li><span class="point alerte" aria-hidden="true"></span><span>${l.nom} · ${l.mode} : limite d'usage atteinte jusqu'à ${heureParis(l.jusqua)}. L'usine passe par la façon suivante.</span></li>`)}</ul>` : ""}
+  </div>`
+}
+
 function blocUsine(v) {
   const u = v.usine
   const d = u.deploiements
@@ -1956,6 +1969,7 @@ function blocUsine(v) {
           <div><a class="lien-projet" href="#/projets/${t.projet_id}" data-quoi="tache-${t.projet_id}-${t.cle}">${t.projet}</a> <span class="mono aide">${t.cle}</span></div>
           <div>${t.titre}</div>
           <div class="aide">${t.statut === "verification" ? "Au contrôle qualité" : "En construction"}${t.tentative ? ` · correction ${t.tentative}` : ""}${t.approche ? " · autre approche" : ""}${t.depuis ? ` · depuis ${duree(ecart(t.depuis, v.le))}` : ""}</div>
+          <div class="aide">${t.statut === "verification" ? `Contrôle : ${relaisEnClair(t.modeles)}${t.construite_par ? ` · construite par ${t.construite_par}` : ""}` : `Par ${t.modeles[0] ?? "Claude"}`}</div>
         </li>`)}</ul>` : html`<p class="aide" style="margin:0">Aucune fonction en construction : l'usine est au repos.</p>`}
       </div>
       <div class="carte carte-p pile"><h3 class="surtitre">Mises en ligne</h3>
@@ -1978,7 +1992,34 @@ function blocUsine(v) {
         : html`<p class="aide" style="margin:0">Le serveur n'a pas encore envoyé de bilan.</p>`}
       </div>
     </div>
+    ${blocQuiFaitQuoi(v)}
   </section>`
+}
+
+// Sur 7 jours : quel modèle a fait quel travail (par modèle), puis les dernières fonctions avec leurs modèles.
+const OU_EN_EST = { fusionnee: ["ajoutée", "vert"], en_cours: ["en construction", "bleu"], verification: ["au contrôle", "bleu"], prete: ["à refaire", "orange"], attente: ["en attente", ""], bloquee: ["bloquée", "rouge"], abandonnee: ["abandonnée", ""] }
+// Un modèle par ligne : un nom ne se coupe pas en deux.
+const listeModeles = (noms) => (noms.length ? noms.map((n, i) => html`${i ? html`<br>` : ""}${n}`) : html`<span class="aide">—</span>`)
+function blocModelesSemaine(w) {
+  if (!w.modeles?.length) return ""
+  return html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Les modèles au travail</h3>
+      <div class="tableau" tabindex="0" role="region" aria-label="Les modèles au travail, sur 7 jours"><table style="min-width:620px">
+        <thead><tr><th>Travail</th><th>Modèle</th><th>Fonctions</th><th title="Chaque appel d'un modèle pour ce travail">Utilisations</th><th>Coût au prix public</th><th>Calcul</th></tr></thead>
+        <tbody>${w.modeles.map((m, i) => html`<tr>
+          <td>${i && w.modeles[i - 1].travail === m.travail ? "" : html`<strong>${m.travail}</strong>`}</td>
+          <td title="${m.moteur} · ${m.modele}">${m.nom}${m.paye_a_l_usage ? html`<div class="sous">payé à l'usage</div>` : ""}</td>
+          <td class="mono">${m.fonctions || "—"}</td><td class="mono">${m.utilisations}</td>
+          ${m.cout_api_texte ? html`<td class="mono">${m.cout_api_texte}</td>` : html`<td class="aide">prix inconnu</td>`}
+          <td class="mono" title="${m.heures ? "" : "compté avec un autre travail"}">${m.heures ? `${nombre(m.heures, 1)} h` : "—"}</td></tr>`)}</tbody></table></div>
+    </div>
+    ${w.fonctions?.length ? html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Qui a fait les dernières fonctions</h3>
+      <div class="tableau" tabindex="0" role="region" aria-label="Les dernières fonctions et leurs modèles"><table style="min-width:720px">
+        <thead><tr><th>Fonction</th><th>Construite par</th><th>Contrôlée par</th><th>Design relu par</th><th>Où elle en est</th></tr></thead>
+        <tbody>${w.fonctions.map((f) => html`<tr>
+          <td style="min-width:220px"><a class="lien-projet" href="#/projets/${f.projet_id}" data-quoi="fonction-${f.projet_id}-${f.cle}">${f.projet}</a> <span class="mono aide">${f.cle}</span><div class="sous">${f.titre}</div></td>
+          <td class="modeles-fonction">${listeModeles(f.construite)}</td><td class="modeles-fonction">${listeModeles(f.controlee)}</td><td class="modeles-fonction">${listeModeles(f.design)}</td>
+          <td>${html`<span class="badge ${(OU_EN_EST[f.statut] ?? ["", ""])[1]}">${(OU_EN_EST[f.statut] ?? [f.statut])[0]}</span>`}</td></tr>`)}</tbody></table></div>
+    </div>` : ""}`
 }
 
 function blocSemaine(v) {
@@ -2010,6 +2051,7 @@ function blocSemaine(v) {
         : html`<p class="aide" style="margin:0">Aucun refus sur ces 7 jours.</p>`}
       </div>
     </div>
+    ${blocModelesSemaine(w)}
     <div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Par produit</h3>
       ${w.produits.length ? html`<div class="tableau" tabindex="0" role="region" aria-label="Par produit, sur 7 jours"><table style="min-width:620px">
         <thead><tr><th>Produit</th><th>Fonctions ajoutées</th><th>Refus</th><th>Décisions</th><th title="Ce qu'aurait coûté le calcul au tarif public">Coût au prix public</th><th>Calcul</th></tr></thead>
