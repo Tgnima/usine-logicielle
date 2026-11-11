@@ -267,6 +267,53 @@ test("le nom d'un modèle, pour tout le monde", () => {
   assert.equal(mod.nomModele("codex", "openai/gpt-5.5"), "ChatGPT (gpt-5.5)")
   assert.equal(mod.nomModele("codex", "codex"), "ChatGPT, modèle non noté")
   assert.equal(mod.nomModele("claude-code", "inconnu"), "Claude, modèle non noté")
+  // Un identifiant daté : la date n'est pas un numéro de version.
+  assert.equal(mod.nomModele("claude-code", "claude-sonnet-4-20250514"), "Claude Sonnet 4")
+  assert.equal(mod.nomModele("claude-code", "claude-haiku-4-5-20251001"), "Claude Haiku 4.5")
+})
+
+test("les modèles : bornes, secrets, limites, projets supprimés, coût inconnu", async () => {
+  const b = await ouvrir("modeles")
+  // Le contrat pourrait contenir autre chose qu'un nom : rien d'autre ne sort.
+  b.config.modeles = { atelier: { modele: "claude-sonnet-5-5", cle: "sk-essai-contrat" }, analyste: { modele: { secret: "sk-objet" } }, renfort: { modele: "x".repeat(5000) } }
+  b.config.relais = { verification: ["codex", "sk-relais"] }
+  b.db.prepare("INSERT INTO projets (id, prompt, statut, nom, slug) VALUES (1, 'p', 'fabrication', 'Actif', 'actif'), (2, 'p', 'supprime', 'Supprimé', 'supprime')").run()
+  const t = b.db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, statut) VALUES (?, ?, 1, ?, 'd', '[]', 'fusionnee')")
+  for (let i = 1; i <= 10; i++) t.run(1, `T${i}`, `Fonction ${i}`)
+  t.run(2, "T99", "D'un projet supprimé")
+  const c = b.db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, cout_api_usd, duree_s, le) VALUES (?, ?, ?, ?, ?, ?, 0, ?)")
+  for (let i = 1; i <= 10; i++) c.run(1, i, "agent", "claude-code", "claude-sonnet-5-5", 1, `2026-11-10 10:${String(i).padStart(2, "0")}:00`)
+  c.run(2, 11, "agent", "claude-code", "claude-sonnet-5-5", 1, "2026-11-10 11:00:00") // la plus récente, mais supprimée
+  c.run(1, 1, "verificateur", "codex", "gpt-6.1-sol", null, "2026-11-10 12:00:00") // prix inconnu
+  c.run(1, 2, "designer", "codex", "gpt-6.1-sol", null, "2026-11-10 12:00:00")
+  c.run(1, 2, "designer", "codex", "gpt-6.1-sol", 2, "2026-11-10 12:01:00") // une partie au prix connu : incomplet
+  c.run(1, null, "r".repeat(500), "m".repeat(500), "z".repeat(500), 0, "2026-11-10 12:00:00")
+  b.db.prepare("INSERT INTO reglages (cle, valeur) VALUES (?, ?), (?, ?), (?, ?), (?, ?)").run(
+    "modele_codex", "g".repeat(5000),
+    "limite_claude-code_abonnement", "2000-01-01T00:00:00.000Z", // passée : pas montrée
+    "limite_codex_cle", "2099-01-01T00:00:00.000Z",
+    "limite_inconnu_xx", "2099-01-01T00:00:00.000Z", // un moteur inconnu : pas montré
+  )
+  const avant = ["journal", "reglages", "consommations"].map((x) => b.db.prepare(`SELECT COUNT(*) AS n FROM ${x}`).get().n)
+  const v = mod.visibilite(b, { maintenant: MAINTENANT, processeurs: 1 })
+  assert.deepEqual(["journal", "reglages", "consommations"].map((x) => b.db.prepare(`SELECT COUNT(*) AS n FROM ${x}`).get().n), avant, "rien n'est écrit")
+  const texte = JSON.stringify(v)
+  assert.ok(!texte.includes("sk-"), "rien du contrat au-delà des noms de modèles")
+  const q = v.usine.qui_fait_quoi
+  for (const r of q.roles) for (const x of r.modeles) assert.ok((x.modele ?? "").length <= 60 && x.nom.length <= 80, `${r.role} : nom borné`)
+  assert.deepEqual(q.roles.find((r) => r.role === "plan").modeles.map((x) => [x.modele, x.nom]), [[null, "Claude, modèle par défaut"]])
+  assert.deepEqual(q.roles.find((r) => r.role === "verification").modeles.map((x) => x.moteur), ["codex"])
+  assert.deepEqual(q.limites.map((l) => [l.nom, l.mode]), [["ChatGPT", "clé API"]])
+  // Les 8 fonctions travaillées le plus récemment (T2 et T1 ont été contrôlées et relues après T10), la
+  // plus récente d'abord ; celle du projet supprimé n'y est pas, et ne prend la place d'aucune autre.
+  assert.deepEqual(v.semaine.fonctions.map((f) => f.cle), ["T2", "T1", "T10", "T9", "T8", "T7", "T6", "T5"])
+  const m = v.semaine.modeles
+  const codex = m.find((x) => x.role === "verificateur")
+  assert.deepEqual([codex.cout_api, codex.cout_api_texte, codex.prix_inconnu], [null, null, true])
+  const design = m.find((x) => x.role === "designer")
+  assert.deepEqual([design.cout_api, design.prix_inconnu], [2, true])
+  const long = m.find((x) => x.role.startsWith("r"))
+  assert.ok(long.role.length <= 40 && long.moteur.length <= 20 && long.modele.length <= 60 && long.travail.length <= 40 && long.nom.length <= 60)
 })
 
 test("qui fait quoi : le modèle de chaque travail, le relais, les limites d'usage", () => {
@@ -277,7 +324,9 @@ test("qui fait quoi : le modèle de chaque travail, le relais, les limites d'usa
     // Par défaut, ChatGPT juge d'abord ; Claude (le modèle du renfort) prend le relais.
     verification: ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], design: ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], recette: ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"],
   })
-  assert.deepEqual(u.qui_fait_quoi.limites, [{ moteur: "claude-code", nom: "Claude", mode: "abonnement", jusqua: "2099-01-01T00:00:00.000Z" }])
+  assert.deepEqual(u.qui_fait_quoi.limites, [{ moteur: "claude-code", nom: "Claude", acces: "abonnement", mode: "abonnement", jusqua: "2099-01-01T00:00:00.000Z" }])
+  // Les mêmes mots que le bilan de la semaine.
+  assert.deepEqual(u.qui_fait_quoi.roles.map((r) => r.travail), ["Faire le plan", "Construire", "Construire après un changement d'approche", "Relire la sécurité", "Contrôler", "Relire le design", "Jouer la recette"])
   // Chaque fonction en cours dit quel modèle y travaille, et qui l'a construite.
   const [t5, t10] = u.taches
   assert.deepEqual([t5.cle, t5.modeles, t5.construite_par], ["T5", ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], "Claude Sonnet 5.5"])

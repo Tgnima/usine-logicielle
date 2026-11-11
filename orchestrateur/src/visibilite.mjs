@@ -13,7 +13,7 @@ import { availableParallelism } from "node:os"
 import { join } from "node:path"
 import { adresses } from "./config.mjs"
 import { lireReglage, montant, reglagesCouts, versDevise } from "./couts.mjs"
-import { limitesEnCours, modeleJuge, nomMode, relais } from "./moteurs.mjs"
+import { limitesEnCours, MODES, modeleJuge, MOTEURS_RELAIS, nomMode, relais } from "./moteurs.mjs"
 import { lireSanteServeur, SONDE_PERIMEE_S } from "./sante.mjs"
 
 // Les jours du bilan se comptent à l'heure de Paris : un refus à 00 h 30 le 9 novembre (heure
@@ -33,6 +33,14 @@ const TEXTE_MAX = 300
 const SHA_COURT = 7
 // Les dernières fonctions montrées avec leurs modèles.
 const FONCTIONS_MAX = 8
+// Les longueurs des noms venus de la base ou du contrat.
+const MODELE_MAX = 60
+const ROLE_MAX = 40
+const MOTEUR_MAX = 20
+const TITRE_MAX = 120
+const CLE_MAX = 20
+// Le modèle du renfort quand le contrat n'en donne pas (le même défaut que fabrique.mjs, construction).
+const MODELE_RENFORT_DEFAUT = "claude-opus-5-5"
 const ETATS = ["ok", "alerte", "panne", "inconnu"]
 
 // Une mesure lue dans un fichier écrit par un autre conteneur : un nombre, ou null.
@@ -204,8 +212,9 @@ function ceQuiAttend(aTraiter, parc) {
 // Le nom d'un modèle, pour tout le monde : « claude-sonnet-5-5 » devient « Claude Sonnet 5.5 », un
 // modèle de Codex devient « ChatGPT (gpt-6.1-sol) ». Un modèle que l'usine n'a pas noté le dit.
 export function nomModele(moteur, modele) {
-  const m = String(modele ?? "").replace(/^(anthropic|openai)\//, "").slice(0, 60)
-  const claude = /^claude-([a-z]+)-(\d+)(?:[.-](\d+))?/.exec(m)
+  const m = String(modele ?? "").replace(/^(anthropic|openai)\//, "").slice(0, MODELE_MAX)
+  // Le chiffre mineur a un ou deux chiffres : « claude-sonnet-4-20250514 » est Claude Sonnet 4 (daté), pas « 4.20250514 ».
+  const claude = /^claude-([a-z]+)-(\d+)(?:[.-](\d{1,2})(?!\d))?/.exec(m)
   if (claude) return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ""}`
   const inconnu = !m || m === "inconnu" || m === "codex"
   if (moteur === "codex" || /^(gpt|o\d)/.test(m)) return inconnu ? "ChatGPT, modèle non noté" : `ChatGPT (${m})`
@@ -219,30 +228,37 @@ const TRAVAUX = {
   aiguillage: "Aiguiller les demandes",
 }
 const ORDRE_TRAVAUX = Object.keys(TRAVAUX)
-const travail = (role) => TRAVAUX[role] ?? String(role ?? "autre").slice(0, 40)
+const travail = (role) => TRAVAUX[role] ?? String(role ?? "autre").slice(0, ROLE_MAX)
 
 // Qui fait quoi aujourd'hui, d'après le contrat et les réglages : le modèle de chaque travail, et
 // l'ordre des relais pour les jugements (le premier disponible sert, le suivant prend le relais).
 function quiFaitQuoi(ctx) {
   const { config, db } = ctx
   const m = config.modeles ?? {}
-  const claude = (modele) => ({ moteur: "claude-code", modele: modele ?? null, nom: modele ? nomModele("claude-code", modele) : "Claude, modèle par défaut" })
+  // Un nom de modèle vient du contrat ou d'un réglage : seul un texte court est gardé, jamais un objet.
+  const nom = (x) => (typeof x === "string" && x ? x.slice(0, MODELE_MAX) : null)
+  const claude = (modele) => ({ moteur: "claude-code", modele: nom(modele), nom: nom(modele) ? nomModele("claude-code", nom(modele)) : "Claude, modèle par défaut" })
   // Le modèle de Codex n'est pas choisi par l'usine : c'est le dernier qu'il a annoncé (verification.mjs).
-  const codex = lireReglage(db, "modele_codex", null)
+  const codex = nom(lireReglage(db, "modele_codex", null))
   const juges = (role) => relais(ctx, role).map((moteur) => (moteur === "codex" ? { moteur, modele: codex, nom: nomModele("codex", codex) } : claude(modeleJuge(config))))
   return {
     roles: [
-      { role: "plan", travail: "Faire le plan", modeles: [claude(m.analyste?.modele)] },
-      { role: "construction", travail: "Construire chaque fonction", modeles: [claude(m.atelier?.modele)] },
+      // Les mêmes mots que le bilan de la semaine (TRAVAUX).
+      { role: "plan", travail: TRAVAUX.analyste, modeles: [claude(m.analyste?.modele)] },
+      { role: "construction", travail: TRAVAUX.agent, modeles: [claude(m.atelier?.modele)] },
       // Le modèle de fabrique.mjs après un changement d'approche.
-      { role: "renfort", travail: "Construire après un changement d'approche", modeles: [claude(m.renfort?.modele ?? "claude-opus-5-5")] },
-      { role: "securite", travail: "Relire la sécurité", modeles: [claude(m.relecteur?.modele ?? m.atelier?.modele)] },
-      { role: "verification", travail: "Contrôler chaque fonction", modeles: juges("verification") },
-      { role: "design", travail: "Relire le design", modeles: juges("design") },
-      { role: "recette", travail: "Jouer la recette", modeles: juges("recette") },
+      { role: "renfort", travail: `${TRAVAUX.agent} après un changement d'approche`, modeles: [claude(m.renfort?.modele ?? MODELE_RENFORT_DEFAUT)] },
+      { role: "securite", travail: TRAVAUX["relecteur-securite"], modeles: [claude(m.relecteur?.modele ?? m.atelier?.modele)] },
+      { role: "verification", travail: TRAVAUX.verificateur, modeles: juges("verification") },
+      { role: "design", travail: TRAVAUX.designer, modeles: juges("design") },
+      { role: "recette", travail: TRAVAUX.recette, modeles: juges("recette") },
     ],
-    // Une façon d'accéder à un modèle (abonnement, clé, passerelle) à sa limite : l'usine passe à la suivante.
-    limites: limitesEnCours(db).map((l) => ({ moteur: l.moteur, nom: l.moteur === "codex" ? "ChatGPT" : "Claude", mode: nomMode(l.mode), jusqua: iso(l.jusqua) })).filter((l) => l.jusqua),
+    // Un accès à un modèle (abonnement, clé, passerelle) à sa limite : l'usine passe au suivant, ou se met en pause.
+    // Seuls les moteurs et les accès connus (la clé du réglage est découpée, cf. limitesEnCours).
+    limites: limitesEnCours(db)
+      .filter((l) => MOTEURS_RELAIS.includes(l.moteur) && MODES.includes(l.mode))
+      .map((l) => ({ moteur: l.moteur, nom: l.moteur === "codex" ? "ChatGPT" : "Claude", acces: l.mode, mode: nomMode(l.mode), jusqua: iso(l.jusqua) }))
+      .filter((l) => l.jusqua),
   }
 }
 
@@ -395,14 +411,16 @@ function septJours(ctx, produits, maintenant) {
     const connus = n.filter((x) => !x.endsWith("modèle non noté"))
     return connus.length ? connus : n
   }
-  const ids = [...parTache.keys()].slice(-FONCTIONS_MAX).reverse()
-  const infos = ids.length ? db.prepare(`SELECT t.id, t.cle, t.titre, t.statut, t.projet_id, p.nom FROM taches t JOIN projets p ON p.id = t.projet_id WHERE t.id IN (${ids.map(() => "?").join(",")})`).all(...ids) : []
+  // Le double des fonctions montrées est lu : celles d'un projet supprimé sont écartées avant de couper.
+  const ids = [...parTache.keys()].slice(-FONCTIONS_MAX * 2).reverse()
+  const infos = ids.length ? db.prepare(`SELECT t.id, t.cle, t.titre, t.statut, t.projet_id, p.nom FROM taches t JOIN projets p ON p.id = t.projet_id
+      WHERE p.statut != 'supprime' AND t.id IN (${ids.map(() => "?").join(",")})`).all(...ids) : []
   const fonctions = ids.flatMap((id) => {
     const t = infos.find((x) => x.id === id)
     if (!t) return []
     const roles = parTache.get(id)
-    return [{ projet_id: t.projet_id, projet: t.nom ?? `Projet ${t.projet_id}`, cle: t.cle, titre: texte(t.titre, 120), statut: t.statut, construite: nomsDe(roles, "agent"), controlee: nomsDe(roles, "verificateur"), design: nomsDe(roles, "designer"), securite: nomsDe(roles, "relecteur-securite") }]
-  })
+    return [{ projet_id: t.projet_id, projet: texte(t.nom ?? `Projet ${t.projet_id}`), cle: texte(t.cle, CLE_MAX), titre: texte(t.titre, TITRE_MAX), statut: texte(t.statut, CLE_MAX), construite: nomsDe(roles, "agent"), controlee: nomsDe(roles, "verificateur"), design: nomsDe(roles, "designer"), securite: nomsDe(roles, "relecteur-securite") }]
+  }).slice(0, FONCTIONS_MAX)
   return {
     du: jours[0],
     au: jours.at(-1),
@@ -422,11 +440,12 @@ function septJours(ctx, produits, maintenant) {
     // Qui a fait quoi : par travail, chaque modèle, avec le nombre de fonctions et ce qu'il a coûté.
     modeles: [...parModele.values()]
       .map((m) => ({
-        role: texte(m.role, 40), travail: travail(m.role), moteur: texte(m.moteur, 20), modele: texte(m.modele, 60), nom: nomModele(m.moteur, m.modele),
-        // Hors abonnement, Claude passe par la passerelle : payé à l'usage.
+        role: texte(m.role, ROLE_MAX), travail: travail(m.role), moteur: texte(m.moteur, MOTEUR_MAX), modele: texte(m.modele, MODELE_MAX), nom: nomModele(m.moteur, m.modele),
+        // Hors abonnement, Claude passe par la passerelle : payé à l'usage (seul l'agent le note aujourd'hui).
         paye_a_l_usage: m.moteur === "passerelle",
         fonctions: m.taches.size, utilisations: m.utilisations,
-        cout_api: versDevise(rc, m.usd), cout_api_texte: m.prix_inconnu && !m.usd ? null : cout(m.usd), prix_inconnu: m.prix_inconnu, heures: heures(m.duree_s),
+        // Sans aucun prix connu, le coût est inconnu (null), pas nul ; avec une partie connue, il est incomplet (prix_inconnu).
+        cout_api: m.prix_inconnu && !m.usd ? null : versDevise(rc, m.usd), cout_api_texte: m.prix_inconnu && !m.usd ? null : cout(m.usd), prix_inconnu: m.prix_inconnu, heures: heures(m.duree_s),
       }))
       .sort((a, b) => ordreTravail(a.role) - ordreTravail(b.role) || b.utilisations - a.utilisations || a.nom.localeCompare(b.nom, "fr")),
     fonctions,

@@ -42,6 +42,8 @@ const STATUTS = {
 const REORIENTABLES = ["fabrication", "bloque", "livre", "en_production"]
 const BRIQUES = { webapp: "Application web", site: "Site vitrine", api: "Connecteur (API)", pwa: "Application mobile" }
 const badgeStatut = (s) => html`<span class="badge ${(STATUTS[s] ?? ["", ""])[1]}">${(STATUTS[s] ?? [s])[0]}</span>`
+// Les mots d'une tâche, les mêmes partout (page projet, page Visibilité) : [libellé, ton].
+const STATUTS_TACHE = { fusionnee: ["ajoutée", "ok"], en_cours: ["en cours", "actif"], verification: ["essayée", "actif"], prete: ["à faire", ""], attente: ["à faire", ""], bloquee: ["à décider", "actif"], abandonnee: ["retirée", ""] }
 
 // La ligne de vie d'un projet : cinq phases (la phase et son état viennent du serveur).
 const PHASES = ["Comprendre", "Planifier", "Fabriquer", "Recette", "En ligne"]
@@ -937,7 +939,7 @@ function ongletAvancement(p) {
   const tachesLot = p.taches.filter((t) => t.lot === lotCourant)
   const comptees = p.taches.filter((t) => t.statut !== "abandonnee")
   const faites = comptees.filter((t) => t.statut === "fusionnee").length
-  const STT = { fusionnee: ["ajoutée", "ok"], en_cours: ["en cours", "actif"], verification: ["essayée", "actif"], prete: ["à faire", ""], attente: ["à faire", ""], bloquee: ["à décider", "actif"], abandonnee: ["retirée", ""] }
+  const STT = STATUTS_TACHE
   const essai = enCours && (enCours.approche || enCours.tentative)
   return html`<section class="carte carte-p pile" style="gap:14px" aria-labelledby="en-ce-moment">
       ${enCours ? html`<div class="surtitre" id="en-ce-moment">En ce moment · lot ${lotCourant} sur ${plan.lots.length}</div>
@@ -1941,16 +1943,20 @@ function jaugeServeur(titre, m, pct, detail) {
   </div>`
 }
 
+// Un nom de modèle ne se coupe pas entre le nom et la version (« Claude Opus 5.5 », « ChatGPT (gpt-6.1-sol) »).
+const insecable = (nom) => String(nom ?? "").replace(/ (?=[\d(])/g, " ")
 // Une liste de juges dans l'ordre du relais : « ChatGPT (gpt-6.1-sol), puis Claude Opus 5.5 en relais ».
-const relaisEnClair = (noms) => (noms.length > 1 ? `${noms[0]}, puis ${noms.slice(1).join(", puis ")} en relais` : noms[0] ?? "—")
+const relaisEnClair = (noms) => (noms.length > 1 ? `${insecable(noms[0])}, puis ${noms.slice(1).map(insecable).join(", puis ")} en relais` : insecable(noms[0] ?? "—"))
+// Les accès à un modèle, dits simplement (MODES de moteurs.mjs).
+const ACCES = { abonnement: "l'abonnement", cle: "la clé payée à l'usage", passerelle: "la passerelle payée à l'usage" }
 
 // Qui fait quoi aujourd'hui : le modèle de chaque travail (contrat et réglages), et les limites d'usage en cours.
 function blocQuiFaitQuoi(v) {
   const q = v.usine.qui_fait_quoi
   if (!q) return ""
-  return html`<div class="carte carte-p pile"><div class="barre"><h3 class="surtitre">Qui fait quoi</h3><a class="aide" href="#/reglages/integrations" data-quoi="modeles-reglages">Changer les modèles</a></div>
+  return html`<div class="carte carte-p pile"><div class="barre"><h3 class="surtitre">Qui fait quoi</h3><a class="aide" href="#/reglages/integrations" data-quoi="modeles-reglages">Régler les modèles</a></div>
     <dl class="qui-fait-quoi">${q.roles.map((r) => html`<div><dt>${r.travail}</dt><dd>${relaisEnClair(r.modeles.map((m) => m.nom))}</dd></div>`)}</dl>
-    ${q.limites.length ? html`<ul class="soucis">${q.limites.map((l) => html`<li><span class="point alerte" aria-hidden="true"></span><span>${l.nom} · ${l.mode} : limite d'usage atteinte jusqu'à ${heureParis(l.jusqua)}. L'usine passe par la façon suivante.</span></li>`)}</ul>` : ""}
+    ${q.limites.length ? html`<ul class="soucis">${q.limites.map((l) => html`<li><span class="point alerte" aria-hidden="true"></span><span>${l.nom} : ${ACCES[l.acces] ?? l.mode} a atteint sa limite jusqu'au ${momentParis(l.jusqua)}. En attendant, l'usine passe par un autre accès, ou se met en pause si aucun n'est libre.</span></li>`)}</ul>` : ""}
   </div>`
 }
 
@@ -1969,7 +1975,7 @@ function blocUsine(v) {
           <div><a class="lien-projet" href="#/projets/${t.projet_id}" data-quoi="tache-${t.projet_id}-${t.cle}">${t.projet}</a> <span class="mono aide">${t.cle}</span></div>
           <div>${t.titre}</div>
           <div class="aide">${t.statut === "verification" ? "Au contrôle qualité" : "En construction"}${t.tentative ? ` · correction ${t.tentative}` : ""}${t.approche ? " · autre approche" : ""}${t.depuis ? ` · depuis ${duree(ecart(t.depuis, v.le))}` : ""}</div>
-          <div class="aide">${t.statut === "verification" ? `Contrôle : ${relaisEnClair(t.modeles)}${t.construite_par ? ` · construite par ${t.construite_par}` : ""}` : `Par ${t.modeles[0] ?? "Claude"}`}</div>
+          <div class="aide">par ${relaisEnClair(t.modeles.length ? t.modeles : ["Claude"])}${t.statut === "verification" && t.construite_par ? ` · construite par ${insecable(t.construite_par)}` : ""}</div>
         </li>`)}</ul>` : html`<p class="aide" style="margin:0">Aucune fonction en construction : l'usine est au repos.</p>`}
       </div>
       <div class="carte carte-p pile"><h3 class="surtitre">Mises en ligne</h3>
@@ -1997,28 +2003,32 @@ function blocUsine(v) {
 }
 
 // Sur 7 jours : quel modèle a fait quel travail (par modèle), puis les dernières fonctions avec leurs modèles.
-const OU_EN_EST = { fusionnee: ["ajoutée", "vert"], en_cours: ["en construction", "bleu"], verification: ["au contrôle", "bleu"], prete: ["à refaire", "orange"], attente: ["en attente", ""], bloquee: ["bloquée", "rouge"], abandonnee: ["abandonnée", ""] }
+// Les mots d'une tâche sont ceux de la page projet (STATUTS_TACHE) ; la couleur suit leur ton.
+const TONS_TACHE = { ok: "vert", actif: "bleu" }
 // Un modèle par ligne : un nom ne se coupe pas en deux.
-const listeModeles = (noms) => (noms.length ? noms.map((n, i) => html`${i ? html`<br>` : ""}${n}`) : html`<span class="aide">—</span>`)
+const listeModeles = (noms) => (noms.length ? noms.map((n, i) => html`${i ? html`<br>` : ""}${insecable(n)}`) : html`<span class="aide">—</span>`)
 function blocModelesSemaine(w) {
   if (!w.modeles?.length) return ""
+  // Le travail s'écrit une fois pour toutes ses lignes (rowspan) : le groupe se voit, sans cellule vide.
+  const groupe = (i) => w.modeles.filter((m) => m.travail === w.modeles[i].travail).length
   return html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Les modèles au travail</h3>
-      <div class="tableau" tabindex="0" role="region" aria-label="Les modèles au travail, sur 7 jours"><table style="min-width:620px">
-        <thead><tr><th>Travail</th><th>Modèle</th><th>Fonctions</th><th title="Chaque appel d'un modèle pour ce travail">Utilisations</th><th>Coût au prix public</th><th>Calcul</th></tr></thead>
+      <div class="tableau" tabindex="0" role="region" aria-label="Les modèles au travail, sur 7 jours" data-quoi="tableau-modeles"><table style="min-width:620px">
+        <thead><tr><th scope="col">Travail</th><th scope="col">Modèle</th><th scope="col">Fonctions</th><th scope="col">Utilisations</th><th scope="col">Coût au prix public</th><th scope="col">Calcul</th></tr></thead>
         <tbody>${w.modeles.map((m, i) => html`<tr>
-          <td>${i && w.modeles[i - 1].travail === m.travail ? "" : html`<strong>${m.travail}</strong>`}</td>
-          <td title="${m.moteur} · ${m.modele}">${m.nom}${m.paye_a_l_usage ? html`<div class="sous">payé à l'usage</div>` : ""}</td>
+          ${i && w.modeles[i - 1].travail === m.travail ? "" : html`<th scope="rowgroup" rowspan="${groupe(i)}" style="vertical-align:top">${m.travail}</th>`}
+          <td class="modeles-fonction">${insecable(m.nom)}${m.paye_a_l_usage ? html`<div class="sous">payé à l'usage</div>` : ""}</td>
           <td class="mono">${m.fonctions || "—"}</td><td class="mono">${m.utilisations}</td>
-          ${m.cout_api_texte ? html`<td class="mono">${m.cout_api_texte}</td>` : html`<td class="aide">prix inconnu</td>`}
-          <td class="mono" title="${m.heures ? "" : "compté avec un autre travail"}">${m.heures ? `${nombre(m.heures, 1)} h` : "—"}</td></tr>`)}</tbody></table></div>
+          ${m.cout_api_texte ? html`<td><span class="mono">${m.cout_api_texte}</span>${m.prix_inconnu ? html`<div class="sous">incomplet : une partie sans prix connu</div>` : ""}</td>` : html`<td class="aide">prix inconnu</td>`}
+          <td class="mono">${m.heures ? `${nombre(m.heures, 1)} h` : "—"}</td></tr>`)}</tbody></table></div>
+      <p class="aide" style="margin:0;padding:10px 16px 14px">Une utilisation est un appel du modèle pour ce travail. « — » en calcul : le temps est compté avec un autre modèle du même passage.</p>
     </div>
     ${w.fonctions?.length ? html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Qui a fait les dernières fonctions</h3>
-      <div class="tableau" tabindex="0" role="region" aria-label="Les dernières fonctions et leurs modèles"><table style="min-width:720px">
-        <thead><tr><th>Fonction</th><th>Construite par</th><th>Contrôlée par</th><th>Design relu par</th><th>Où elle en est</th></tr></thead>
+      <div class="tableau" tabindex="0" role="region" aria-label="Les dernières fonctions et leurs modèles" data-quoi="tableau-fonctions"><table style="min-width:720px">
+        <thead><tr><th scope="col">Fonction</th><th scope="col">Construite par</th><th scope="col">Contrôlée par</th><th scope="col">Design relu par</th><th scope="col">Où elle en est</th></tr></thead>
         <tbody>${w.fonctions.map((f) => html`<tr>
-          <td style="min-width:220px"><a class="lien-projet" href="#/projets/${f.projet_id}" data-quoi="fonction-${f.projet_id}-${f.cle}">${f.projet}</a> <span class="mono aide">${f.cle}</span><div class="sous">${f.titre}</div></td>
+          <td style="min-width:220px"><div class="sous">${f.projet} · <span class="mono">${f.cle}</span></div><a class="lien-projet" href="#/projets/${f.projet_id}" data-quoi="fonction-${f.projet_id}-${f.cle}" aria-label="${f.projet}, fonction ${f.cle} : ${f.titre}">${f.titre}</a></td>
           <td class="modeles-fonction">${listeModeles(f.construite)}</td><td class="modeles-fonction">${listeModeles(f.controlee)}</td><td class="modeles-fonction">${listeModeles(f.design)}</td>
-          <td>${html`<span class="badge ${(OU_EN_EST[f.statut] ?? ["", ""])[1]}">${(OU_EN_EST[f.statut] ?? [f.statut])[0]}</span>`}</td></tr>`)}</tbody></table></div>
+          <td><span class="badge ${TONS_TACHE[(STATUTS_TACHE[f.statut] ?? ["", ""])[1]] ?? (f.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[f.statut] ?? [f.statut])[0]}</span></td></tr>`)}</tbody></table></div>
     </div>` : ""}`
 }
 
@@ -2051,9 +2061,8 @@ function blocSemaine(v) {
         : html`<p class="aide" style="margin:0">Aucun refus sur ces 7 jours.</p>`}
       </div>
     </div>
-    ${blocModelesSemaine(w)}
     <div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Par produit</h3>
-      ${w.produits.length ? html`<div class="tableau" tabindex="0" role="region" aria-label="Par produit, sur 7 jours"><table style="min-width:620px">
+      ${w.produits.length ? html`<div class="tableau" tabindex="0" role="region" aria-label="Par produit, sur 7 jours" data-quoi="tableau-produits"><table style="min-width:620px">
         <thead><tr><th>Produit</th><th>Fonctions ajoutées</th><th>Refus</th><th>Décisions</th><th title="Ce qu'aurait coûté le calcul au tarif public">Coût au prix public</th><th>Calcul</th></tr></thead>
         <tbody>${w.produits.map((p) => html`<tr>
           <td>${p.projet_id ? html`<a class="lien-projet" href="#/projets/${p.projet_id}" data-quoi="ligne-${p.projet_id}">${p.nom}</a>` : html`<span class="aide">${p.nom}</span>`}</td>
@@ -2061,6 +2070,7 @@ function blocSemaine(v) {
           <td class="mono">${p.cout_api_texte}</td><td class="mono">${nombre(p.heures, 1)} h</td></tr>`)}</tbody></table></div>`
       : html`<div class="vide">Rien n'a été construit ces 7 derniers jours.</div>`}
     </div>
+    ${blocModelesSemaine(w)}
   </section>`
 }
 
@@ -2089,12 +2099,16 @@ function rendre() {
   const cleFocus = a && m.contains(a) && a !== m ? ["action", "id", "quoi", "choix", "hote"].map((k) => a.dataset?.[k] ?? "").join("|") + "|" + (a.id ?? "") : null
   // La taille donnée à la main à un champ (poignée en bas à droite) survit au rafraîchissement.
   const tailles = new Map([...document.querySelectorAll("#vue textarea[id]")].filter((t) => t.style.height).map((t) => [t.id, t.style.height]))
+  // Le défilement horizontal d'un tableau qui porte un data-quoi aussi.
+  const defilements = new Map([...document.querySelectorAll("#vue .tableau[data-quoi]")].filter((t) => t.scrollLeft).map((t) => [t.dataset.quoi, t.scrollLeft]))
   $("#vue").innerHTML = html`${vue()}${listeFlottante()}${dessinerFenetre()}`[BRUT]
   for (const [id, h] of tailles) { const t = document.getElementById(id); if (t) t.style.height = h }
+  for (const t of document.querySelectorAll("#vue .tableau[data-quoi]")) if (defilements.has(t.dataset.quoi)) t.scrollLeft = defilements.get(t.dataset.quoi)
   document.querySelector(".app").classList.toggle("plein-ecran", etat.route.vue === "demarrer")
   afficherMessages()
-  if (cleFocus) {
-    const cible = [...m.querySelectorAll("button, a, input, select, textarea")].find((x) => ["action", "id", "quoi", "choix", "hote"].map((k) => x.dataset?.[k] ?? "").join("|") + "|" + (x.id ?? "") === cleFocus)
+  // Un élément sans clé (ni data-*, ni id) ne se retrouve pas : on ne donne pas le focus au premier venu.
+  if (cleFocus && cleFocus !== "|||||") {
+    const cible = [...m.querySelectorAll("button, a, input, select, textarea, [tabindex]")].find((x) => ["action", "id", "quoi", "choix", "hote"].map((k) => x.dataset?.[k] ?? "").join("|") + "|" + (x.id ?? "") === cleFocus)
     cible?.focus({ preventScroll: true })
   }
   const j2 = $("#journal")
