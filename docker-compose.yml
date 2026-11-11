@@ -30,7 +30,8 @@ services:
     environment:
       USINE_CONFIG: /app/usine.config.yml
     # smtp_* : pour envoyer les invitations aux applications (le service d'envoi du serveur).
-    secrets: [github_token, worker_token, atelier_token, verificateur_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token, smtp_user, smtp_pass, coffre_maitre]
+    # sentry_dsn, posthog_token : l'observabilité (ses erreurs, son battement de cœur, son journal).
+    secrets: [github_token, worker_token, atelier_token, verificateur_token, slack_bot_token, slack_app_token, ai_gateway_api_key, portier_api_token, smtp_user, smtp_pass, coffre_maitre, sentry_dsn, posthog_token]
     volumes:
       - ./usine.config.yml:/app/usine.config.yml:ro
       - orchestrateur-data:/app/data
@@ -83,7 +84,11 @@ services:
       # La mise à jour de l'usine : son dossier, monté au même chemin, et son dépôt GitHub.
       USINE_DIR: ${USINE_DIR:-}
       DEPOT_USINE: ${DEPOT_USINE:-}
-    secrets: [github_token, deploy_token, ai_gateway_api_key, smtp_user, smtp_pass]
+      # L'hôte de PostHog (région européenne par défaut), pour le déployeur et les produits.
+      POSTHOG_HOTE: ${POSTHOG_HOTE:-}
+    # sentry_dsn, posthog_token : l'état, les déploiements et les journaux des produits ; transmis
+    # aussi aux produits (variables()), un seul DSN et un seul jeton, le produit en étiquette.
+    secrets: [github_token, deploy_token, ai_gateway_api_key, smtp_user, smtp_pass, sentry_dsn, posthog_token]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./caddy:/caddy
@@ -153,6 +158,10 @@ secrets:
   portier_api_token: { file: /run/usine-secrets/portier_api_token }
   # La clé maîtresse du coffre de la console : lue dans AXMARIL au démarrage (secrets.sh), jamais sur disque.
   coffre_maitre: { file: /run/usine-secrets/coffre_maitre }
+  # L'observabilité (facultative : vides, rien ne part). Le DSN d'un projet Sentry en région
+  # européenne, le jeton de projet PostHog (phc_…).
+  sentry_dsn: { file: /run/usine-secrets/sentry_dsn }
+  posthog_token: { file: /run/usine-secrets/posthog_token }
 
 volumes:
   orchestrateur-data:

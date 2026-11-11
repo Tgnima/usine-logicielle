@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
-import { attendreSante, decisionDeploiement, REPRISES_MAX } from "./deploiement.mjs"
+import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets } from "./deploiement.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
 import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
@@ -216,6 +216,12 @@ function variables(s) {
     if (secret("smtp_pass")) v.SMTP_PASS = secret("smtp_pass")
   }
   if (secret("ai_gateway_api_key")) v.AI_GATEWAY_API_KEY = secret("ai_gateway_api_key")
+  // L'observabilité du produit (server/observabilite.js de la brique) : le même DSN et le même jeton
+  // pour tous, des clés d'envoi seulement ; le produit et son environnement l'étiquettent.
+  Object.assign(v, { USINE_PRODUIT: s.produit, USINE_ENVIRONNEMENT: s.environnement, USINE_VERSION: s.sha.slice(0, 12) })
+  if (secret("sentry_dsn")) v.SENTRY_DSN = secret("sentry_dsn")
+  if (secret("posthog_token")) v.POSTHOG_TOKEN = secret("posthog_token")
+  if (env.POSTHOG_HOTE) v.POSTHOG_HOTE = env.POSTHOG_HOTE
   return v
 }
 // Un fichier d'environnement privé, effacé dès que le conteneur est créé : les secrets (SMTP, clé
@@ -743,6 +749,8 @@ async function appliquerMiseAJour(demande) {
   // version actuelle. La construction est réessayée (le réseau de l'hébergeur a des coupures).
   const script = [
     "set -eo pipefail",
+    // Les secrets que la nouvelle version attend existent sur le serveur, sinon rien ne change.
+    ...scriptVerifierSecrets(USINE_DIR, IMAGE_OUTILS),
     `git -c safe.directory=${USINE_DIR} reset -q --hard refs/remotes/github/main`,
     "for essai in 1 2 3; do if docker compose build --pull > /tmp/construction.log 2>&1; then break; fi; tail -3 /tmp/construction.log; [ $essai = 3 ] && exit 1; sleep 30; done",
     "grep -E 'Built|ERROR' /tmp/construction.log | tail -10 || true",

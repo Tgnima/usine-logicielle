@@ -308,6 +308,18 @@ docker compose exec orchestrateur node src/cli.mjs production 1
 - **La mise à jour** : quand une nouvelle version est sur GitHub, le bouton
   « Mettre à jour l'usine » apparaît dans l'onglet Accueil. L'usine termine sa tâche en
   cours, se reconstruit, redémarre et reprend seule (`cli.mjs mettre-a-jour` fait de même).
+  Si la nouvelle version attend un secret qui n'existe pas encore sur le serveur, la mise à
+  jour s'arrête avant tout changement et dit quoi lancer (`sudo bash secrets.sh dechiffrer`).
+- **Sentry et PostHog** (facultatifs, secrets `SENTRY_DSN` et `POSTHOG_TOKEN`, comptes en
+  région européenne) : un seul DSN et un seul jeton pour l'usine et tous ses produits, chaque
+  envoi porte le produit en étiquette.
+  - Vers Sentry partent les erreurs de l'orchestrateur et du déployeur, un battement de cœur
+    par minute (moniteur `usine-orchestrateur`) et un incident quand un produit tombe en panne.
+  - Vers PostHog partent un événement par ligne du journal de l'usine (sans son texte),
+    l'état de chaque produit toutes les 5 minutes, ses déploiements et les journaux de ses
+    conteneurs.
+  - Les produits reçoivent les mêmes clés. Rien de personnel ne sort : adresses email,
+    téléphones, IBAN, adresses IP et jetons sont masqués (`commun/observabilite.mjs`).
 
 ## Le proposer à d'autres
 
