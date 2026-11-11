@@ -1,6 +1,7 @@
 // L'orchestrateur : il tient l'état, applique le contrat, parle à GitHub et à
 // Slack. Il ne touche jamais Docker (c'est le déployeur) et ne code jamais
 // (ce sont les agents de l'atelier).
+import { demarrerObservabilite } from "./observabilite.mjs"
 import { envConnecteurs } from "./connecteurs.mjs"
 import { createServer } from "node:http"
 import { mkdirSync } from "node:fs"
@@ -24,6 +25,8 @@ import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
 import { demarrerDomaines, ouvrirDomaines } from "./domaines.mjs"
 
+// D'abord : une erreur de démarrage (contrat illisible, secret manquant) part aussi vers Sentry.
+demarrerObservabilite()
 const config = chargerConfig()
 mkdirSync(config.dataDir, { recursive: true })
 const db = ouvrirDb(join(config.dataDir, "usine.db"))
