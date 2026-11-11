@@ -24,8 +24,17 @@ const DEPLOIEMENT_BLOQUE_MS = 45 * 60_000
 const DISQUE = { alerte: 80, panne: 90 }
 const MEMOIRE_MO = { alerte: 400, panne: 200 }
 const CHARGE_ALERTE = 2
-// Une cause de refus tient sur une ligne.
+// Une cause de refus tient sur une ligne ; une raison ou un message, sur quelques lignes.
 const CAUSE_MAX = 60
+const TEXTE_MAX = 300
+// Une version se montre par les 7 premiers caractères de son sha.
+const SHA_COURT = 7
+const ETATS = ["ok", "alerte", "panne", "inconnu"]
+
+// Une mesure lue dans un fichier écrit par un autre conteneur : un nombre, ou null.
+const nb = (x) => (x !== null && x !== "" && Number.isFinite(Number(x)) ? Number(x) : null)
+const texte = (x, max = TEXTE_MAX) => (x === null || x === undefined ? "" : String(x).slice(0, max))
+const court = (sha) => (typeof sha === "string" && sha ? sha.slice(0, SHA_COURT) : null)
 
 const JOUR = new Intl.DateTimeFormat("en-CA", { timeZone: FUSEAU, year: "numeric", month: "2-digit", day: "2-digit" })
 
@@ -35,7 +44,8 @@ export function dateDe(le) {
   if (!t) return new Date(NaN)
   return new Date(t.replace(" ", "T") + (/[zZ]$|[+-]\d\d:?\d\d$/.test(t) ? "" : "Z"))
 }
-const iso = (le) => {
+// Une date en ISO (avec Z), ou null si elle est illisible.
+export const iso = (le) => {
   const d = dateDe(le)
   return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
@@ -50,17 +60,53 @@ export function joursFenetre(maintenant, n = JOURS) {
   return Array.from({ length: n }, (_, i) => new Date(Date.UTC(a, m - 1, j - (n - 1 - i))).toISOString().slice(0, 10))
 }
 
+// Les motifs techniques de verification.mjs, dits pour tout le monde. « design », « critère non
+// validé » et « problème » restent tels quels : ce sont les mots de la maquette.
+const CAUSES_EN_CLAIR = [
+  [/\bbuild\b|ne se construit/i, "le code ne se construit pas"],
+  [/test\(s\) échouent|tests? échoue/i, "des tests échouent"],
+  [/^aucun test/i, "aucun test ne passe"],
+  [/^le nombre de tests a baissé/i, "des tests ont disparu"],
+  [/^régression/i, "une fonction déjà validée ne marche plus"],
+  [/^l'application ne démarre pas/i, "l'application ne démarre pas"],
+  [/^au démarrage, l'application écrit/i, "l'application écrit dans son propre code"],
+  [/^un secret/i, "un secret écrit dans le code"],
+  [/faille/i, "une faille de sécurité dans un composant"],
+  [/^le vérificateur/i, "le contrôle n'a pas pu conclure"],
+]
+
 // La cause d'un refus : le premier segment du motif, après « motif(s)) : » (fabrique.mjs). Par
-// exemple « design », « critère non validé », « problème », « le build échoue ». Un nombre ne
-// sépare pas deux causes (« 2 test(s) échouent » et « 3 test(s) échouent » vont ensemble).
+// exemple « design », « critère non validé », « problème ». Un nombre ne sépare pas deux causes
+// (« 2 test(s) échouent » et « 3 test(s) échouent » vont ensemble).
 export function causeDuRefus(message) {
   const reste = String(message ?? "").split("motif(s)) : ")[1]
   if (!reste) return "autre"
   // Les accents graves viennent du texte pour Slack (« `npm test` échoue ») : sans eux, une même cause se regroupe.
   const segment = reste.split(/\s*:(?:\s|$)|\n/)[0].replace(/`/g, "").replace(/\s*\([^()]*\)\s*$/, "").replace(/\d+/g, "N").trim()
   if (!segment) return "autre"
+  const clair = CAUSES_EN_CLAIR.find(([motif]) => motif.test(segment))?.[1]
+  if (clair) return clair
   return segment.length > CAUSE_MAX ? `${segment.slice(0, CAUSE_MAX - 1).trimEnd()}…` : segment
 }
+
+// Les raisons de la sonde (deployeur/sonde.mjs) et les messages du déployeur, avec les mots de
+// l'usine : une « mise en ligne », une « application », pas un déploiement ni un conteneur.
+const RAISONS_EN_CLAIR = [
+  [/redémarre en boucle \((\d+) redémarrage\(s\) en 30 min, (\d+) au total\)/g, "redémarre sans arrêt ($1 fois en 30 min, $2 au total)"],
+  [/dernier déploiement en échec/g, "la dernière mise en ligne a échoué"],
+  [/déploiement bloqué/g, "mise en ligne bloquée"],
+  [/déploiement en cours/g, "mise en ligne en cours"],
+  [/aucun conteneur/g, "rien ne tourne"],
+  [/le conteneur tourne mais n'est pas servi/g, "l'application tourne mais n'est pas accessible"],
+  [/conteneur absent/g, "l'application n'est pas lancée"],
+  [/ne répond pas à \/api\/health/g, "ne répond pas"],
+  [/\/api\/health répond (\d+)/g, "répond par une erreur ($1)"],
+  [/\/api\/health redirige \((\d+)\)/g, "renvoie vers une autre adresse ($1)"],
+  [/\/api\/health en (\d+) ms/g, "répond en $1 ms"],
+  [/Docker le dit en mauvaise santé/g, "se signale en mauvaise santé"],
+  [/arrêté \([a-z]+, code de sortie (\d+)(, mémoire dépassée)?\)/g, (_, code, memoire) => `arrêté${memoire ? " : mémoire dépassée" : ""} (code ${code})`],
+]
+export const enClair = (t) => RAISONS_EN_CLAIR.reduce((s, [motif, par]) => s.replace(motif, par), String(t ?? ""))
 
 function lireStatut(config) {
   try {
@@ -71,9 +117,10 @@ function lireStatut(config) {
   }
 }
 
-// Les projets connus par leur slug (le nom des produits dans sante.json et statut.json).
+// Les projets connus par leur slug (le nom des produits dans sante.json et statut.json). Une Map :
+// un slug comme « constructor » ne doit rien trouver dans le prototype d'un objet.
 function projetsParSlug(db) {
-  return Object.fromEntries(db.prepare("SELECT id, nom, slug FROM projets WHERE slug IS NOT NULL AND statut != 'supprime'").all().map((p) => [p.slug, { id: p.id, nom: p.nom || p.slug }]))
+  return new Map(db.prepare("SELECT id, nom, slug FROM projets WHERE slug IS NOT NULL AND statut != 'supprime'").all().map((p) => [p.slug, { id: p.id, nom: p.nom || p.slug }]))
 }
 
 // Le plus grave d'abord ; avec une sonde trop ancienne (tout « inconnu »), la dernière mesure départage.
@@ -85,38 +132,41 @@ const parGravite = (a, b) => gravite(a.etat) - gravite(b.etat) || gravite(a.etat
 // Une carte par produit et par environnement. Une sonde trop ancienne ne dit plus rien de
 // l'état présent : chaque carte passe en « inconnu », la dernière mesure reste visible.
 function parcProduits(sante, produits, config, maintenant) {
-  const a = sante?.applications ?? null
-  const age = a?.le ? Math.round((maintenant - dateDe(a.le).getTime()) / 1000) : null
+  const a = sante?.applications && typeof sante.applications === "object" ? sante.applications : null
+  const age = a?.le ? Math.round((maintenant - dateDe(a.le).getTime()) / 1000) : NaN
+  const produitsSonde = a?.produits && typeof a.produits === "object" ? a.produits : null
   const sonde = {
     le: iso(a?.le),
-    age_s: age,
-    // absente : déployeur plus ancien, ou aucun bilan ; muette : Docker n'a pas répondu ; perimee : plus de mesure récente.
+    age_s: Number.isFinite(age) ? age : null,
+    // absente : déployeur plus ancien, ou aucun bilan ; muette : Docker n'a pas répondu ; perimee : plus de
+    // mesure récente, ou une date illisible (on ne présente jamais comme actuel ce qu'on ne peut pas dater).
     absente: !a,
-    muette: Boolean(a) && !a.produits,
-    perimee: Boolean(a?.produits) && (age === null || age > SONDE_PERIMEE_S),
+    muette: Boolean(a) && !produitsSonde,
+    perimee: Boolean(produitsSonde) && (!Number.isFinite(age) || age > SONDE_PERIMEE_S),
   }
-  const lignes = Object.entries(a?.produits ?? {}).flatMap(([cle, p]) => {
+  const lignes = Object.entries(produitsSonde ?? {}).flatMap(([cle, p]) => {
     const m = /^(apercu|production)\/([a-z0-9-]+)$/.exec(cle)
     if (!m || !p || typeof p !== "object") return []
     const [, environnement, slug] = m
-    const projet = produits[slug] ?? null
-    const d = p.docker ?? null
+    const projet = produits.get(slug) ?? null
+    const d = p.docker && typeof p.docker === "object" ? p.docker : null
     const demarre = d?.demarre_le ? dateDe(d.demarre_le).getTime() : NaN
+    const mesure = ETATS.includes(p.etat) ? p.etat : "inconnu"
     return [{
       cle,
       environnement,
       slug,
       projet_id: projet?.id ?? null,
       nom: projet?.nom ?? slug,
-      etat: sonde.perimee ? "inconnu" : ["ok", "alerte", "panne", "inconnu"].includes(p.etat) ? p.etat : "inconnu",
-      etat_mesure: p.etat ?? null,
-      raison: String(p.raison ?? "").slice(0, 300),
-      version: p.version ? String(p.version).slice(0, 7) : null,
+      etat: sonde.perimee ? "inconnu" : mesure,
+      etat_mesure: mesure,
+      raison: enClair(texte(p.raison)),
+      version: court(p.version),
       demarre_le: iso(d?.demarre_le),
       age_s: Number.isFinite(demarre) ? Math.max(0, Math.round((maintenant - demarre) / 1000)) : null,
-      redemarrages: Number.isFinite(d?.redemarrages) ? d.redemarrages : null,
-      redemarrages_30_min: Number.isFinite(d?.redemarrages_30_min) ? d.redemarrages_30_min : null,
-      reponse_ms: p.http?.code && Number.isFinite(p.http.ms) ? p.http.ms : null,
+      redemarrages: nb(d?.redemarrages),
+      redemarrages_30_min: nb(d?.redemarrages_30_min),
+      reponse_ms: nb(p.http?.code) ? nb(p.http?.ms) : null,
       adresse: projet ? adresses(config, slug)[environnement] : null,
     }]
   })
@@ -154,14 +204,15 @@ function deploiements(statut, produits, maintenant) {
     const enCours = s.etat === "en_cours"
     const sha = enCours ? s.sha_demande ?? s.sha : s.sha
     // Le message d'un échec : sa première ligne (la suite est une pile d'appels).
-    const message = s.message ? String(s.message).split("\n")[0].replace(/\s*:\s*$/, "").slice(0, 300) : null
+    const message = s.message ? enClair(texte(String(s.message).split("\n")[0].replace(/\s*:\s*$/, ""))) : null
+    const projet = produits.get(m[2]) ?? null
     return [{
       cle,
       environnement: m[1],
-      projet_id: produits[m[2]]?.id ?? null,
-      nom: produits[m[2]]?.nom ?? m[2],
+      projet_id: projet?.id ?? null,
+      nom: projet?.nom ?? m[2],
       etat: ["ok", "echec", "en_cours"].includes(s.etat) ? s.etat : "inconnu",
-      sha: sha ? String(sha).slice(0, 7) : null,
+      sha: court(sha),
       demande_le: iso(s.demande_le),
       le: iso(s.le),
       couleur: s.couleur === "blue" || s.couleur === "green" ? s.couleur : null,
@@ -173,20 +224,24 @@ function deploiements(statut, produits, maintenant) {
   return { en_cours: entrees.filter((x) => x.etat === "en_cours").sort(recent), dernier: entrees.filter((x) => x.etat !== "en_cours").sort(recent)[0] ?? null }
 }
 
+// Le serveur, d'après sante.json. Chaque mesure est un nombre ou null ; sans nombre, l'état est « inconnu ».
 function serveur(s, maintenant, processeurs) {
-  if (!s) return null
+  if (!s || typeof s !== "object") return null
   const age = Math.round((maintenant - dateDe(s.le).getTime()) / 1000)
-  const d = s.disque ?? null
-  const m = s.memoire ?? null
-  const c = Array.isArray(s.charge) ? s.charge.map(Number) : null
-  const memPct = m?.total_mo ? Math.round(100 - (m.dispo_mo / m.total_mo) * 100) : null
-  const chargePct = c && Number.isFinite(c[0]) && processeurs ? Math.round((c[0] / processeurs) * 100) : null
+  const objet = (x) => (x && typeof x === "object" ? x : null)
+  const d = objet(s.disque)
+  const m = objet(s.memoire)
+  const c = Array.isArray(s.charge) ? s.charge.slice(0, 3).map(nb) : null
+  const pct = nb(d?.pct)
+  const [dispo, total] = [nb(m?.dispo_mo), nb(m?.total_mo)]
+  const memPct = dispo !== null && total ? Math.round(100 - (dispo / total) * 100) : null
+  const chargePct = c?.[0] !== null && c?.[0] !== undefined && processeurs ? Math.round((c[0] / processeurs) * 100) : null
   return {
     le: iso(s.le),
     perime: !Number.isFinite(age) || age > SONDE_PERIMEE_S,
-    disque: d ? { pct: d.pct, libre_go: d.libre_go, total_go: d.total_go, etat: d.pct >= DISQUE.panne ? "panne" : d.pct >= DISQUE.alerte ? "alerte" : "ok" } : null,
-    memoire: m ? { pct: memPct, dispo_mo: m.dispo_mo, total_mo: m.total_mo, swap_utilise_mo: m.swap_utilise_mo ?? 0, etat: m.dispo_mo < MEMOIRE_MO.panne ? "panne" : m.dispo_mo < MEMOIRE_MO.alerte ? "alerte" : "ok" } : null,
-    charge: c ? { minute: c[0], cinq_minutes: c[1] ?? null, quinze_minutes: c[2] ?? null, processeurs, pct: chargePct, etat: chargePct !== null && chargePct >= CHARGE_ALERTE * 100 ? "alerte" : "ok" } : null,
+    disque: d ? { pct, libre_go: nb(d.libre_go), total_go: nb(d.total_go), etat: pct === null ? "inconnu" : pct >= DISQUE.panne ? "panne" : pct >= DISQUE.alerte ? "alerte" : "ok" } : null,
+    memoire: m ? { pct: memPct, dispo_mo: dispo, total_mo: total, swap_utilise_mo: nb(m.swap_utilise_mo) ?? 0, etat: dispo === null ? "inconnu" : dispo < MEMOIRE_MO.panne ? "panne" : dispo < MEMOIRE_MO.alerte ? "alerte" : "ok" } : null,
+    charge: c ? { minute: c[0], cinq_minutes: c[1] ?? null, quinze_minutes: c[2] ?? null, processeurs, pct: chargePct, etat: chargePct === null ? "inconnu" : chargePct >= CHARGE_ALERTE * 100 ? "alerte" : "ok" } : null,
   }
 }
 
@@ -213,7 +268,7 @@ function septJours(ctx, produits, maintenant) {
     const d = dateDe(le)
     return d.getTime() <= maintenant && fenetre.has(jourParis(d))
   }
-  const noms = Object.fromEntries(Object.values(produits).map((p) => [p.id, p.nom]))
+  const noms = Object.fromEntries([...produits.values()].map((p) => [p.id, p.nom]))
   for (const p of db.prepare("SELECT id, nom FROM projets").all()) noms[p.id] ??= p.nom ?? `Projet ${p.id}`
 
   const parJour = Object.fromEntries(jours.map((j) => [j, { jour: j, fusions: 0, refus: 0, escalades: 0 }]))

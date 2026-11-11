@@ -46,7 +46,7 @@ import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
 import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recevoirManifeste } from "./forge-github.mjs"
 import { adresseTableau } from "./slack-couts.mjs"
-import { visibilite } from "./visibilite.mjs"
+import { iso, visibilite } from "./visibilite.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -118,14 +118,14 @@ function aTraiter(ctx) {
   const liste = []
   for (const e of db.prepare("SELECT e.*, p.nom FROM escalades e JOIN projets p ON p.id = e.projet_id WHERE e.statut = 'ouverte' ORDER BY e.id").all()) {
     const t = e.tache_id ? obtenir(db, "taches", e.tache_id) : null
-    liste.push({ type: "decision", projet: e.projet_id, titre: `${e.nom} · décision attendue`, detail: `${t ? `${t.cle} : ` : ""}${RAISONS[e.raison] ?? e.raison}`, depuis: e.cree_le })
+    liste.push({ type: "decision", projet: e.projet_id, titre: `${e.nom} · décision attendue`, detail: `${t ? `${t.cle} : ` : ""}${RAISONS[e.raison] ?? e.raison}`, depuis: iso(e.cree_le) })
   }
-  // depuis : la dernière modification du projet, à peu près le moment où il s'est mis à attendre.
+  // depuis (ISO) : la dernière modification du projet, à peu près le moment où il s'est mis à attendre.
   for (const p of db.prepare("SELECT * FROM projets WHERE statut IN ('plan_a_valider', 'questions', 'livre') ORDER BY id DESC").all()) {
     const plan = lirePlan(p)
-    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches`, depuis: p.maj_le })
-    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "", depuis: p.maj_le })
-    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger", depuis: p.maj_le })
+    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches`, depuis: iso(p.maj_le) })
+    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "", depuis: iso(p.maj_le) })
+    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger", depuis: iso(p.maj_le) })
   }
   return liste
 }

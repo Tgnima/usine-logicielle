@@ -17,7 +17,7 @@ function configEssai(dossier) {
   return {
     domaine: { base: "exemple.test", https: true }, dataDir: dossier, etatDir: dossier,
     atelier: { url: "http://127.0.0.1:1" }, verificateur: { url: "http://127.0.0.1:1" },
-    secrets: { github: "jeton-de-test", worker: "x" }, github: { proprietaire: "essai", depot_etat: "etat" },
+    secrets: { github: "jeton-de-test", worker: "secret-worker-essai", slackBot: "xoxb-essai-secret" }, github: { proprietaire: "essai", depot_etat: "etat" },
     modeles: {}, slack: { canal: "", admins: [] }, perimetre_protege: [], couts: { devise: "USD" }, budget: {},
   }
 }
@@ -94,7 +94,7 @@ before(async () => {
     },
   })
   ecrireJson(fixe.dossier, "statut.json", {
-    "production/vigie-copro": { etat: "ok", sha: "b2ac2d85bd6bffff", demande_le: "2026-11-08T22:06:28Z", couleur: "blue", le: "2026-11-08T22:09:23Z", conteneur: "usine-prod-vigie-copro-blue" },
+    "production/vigie-copro": { etat: "ok", sha: "b2ac2d85bd6bffff", demande_le: "2026-11-08T22:06:28Z", couleur: "blue", le: "2026-11-08T22:09:23Z", conteneur: "usine-prod-vigie-copro-blue", hote: "vigie.hote-interne.test", hote_mails: "mails.hote-interne.test", acces: "protege", chemins_publics: ["/chemin-interne"] },
     "apercu/vingt-cinq": { etat: "echec", sha: "fca2fc044334aaaa", demande_le: "2026-10-06T16:26:23Z", le: "2026-10-06T16:28:13Z", message: "l'aperçu ne répond pas à /api/health :\n    at writeFileSync (node:fs:2482:20)" },
     "apercu/pret-asso": { etat: "en_cours", sha: "1111111aaaa", sha_demande: "3aa7555fec06bbbb", demande_le: "2026-11-11T14:40:00Z", le: "2026-11-11T14:40:05Z" },
     "production/acte-clair": { etat: "ok", sha: "1523e8dae9a9cccc", demande_le: "2026-11-09T02:58:02Z", couleur: "green", le: "2026-11-09T03:03:13Z" },
@@ -130,14 +130,26 @@ test("la cause d'un refus : le premier segment du motif", () => {
   assert.equal(mod.causeDuRefus("T9 refusée (2 motif(s)) : critère non validé : 7. Disparition (observé : x)"), "critère non validé")
   assert.equal(mod.causeDuRefus("T9 refusée (1 motif(s)) : design : Accueil — ordinateur : trop pâle"), "design")
   assert.equal(mod.causeDuRefus("T3 refusée (1 motif(s)) : problème : À 390 px, rien ne s'ouvre"), "problème")
-  assert.equal(mod.causeDuRefus("T1 refusée (1 motif(s)) : le build échoue :\nerreur TS2304"), "le build échoue")
-  assert.equal(mod.causeDuRefus("T1 refusée (1 motif(s)) : régression (un critère déjà validé ne tient plus) : la liste"), "régression")
+  assert.equal(mod.causeDuRefus("T1 refusée (1 motif(s)) : le build échoue :\nerreur TS2304"), "le code ne se construit pas")
+  assert.equal(mod.causeDuRefus("T1 refusée (1 motif(s)) : régression (un critère déjà validé ne tient plus) : la liste"), "une fonction déjà validée ne marche plus")
   assert.equal(mod.causeDuRefus("T4 refusée (1 motif(s)) : 2 test(s) échouent"), mod.causeDuRefus("T4 refusée (3 motif(s)) : 14 test(s) échouent"))
   assert.equal(mod.causeDuRefus("T1 refusée (1 motif(s)) : l'application ne démarre pas (le contrôle de santé /api/health ne répond pas)"), "l'application ne démarre pas")
-  assert.equal(mod.causeDuRefus("T2 refusée (1 motif(s)) : `npm test` échoue dans l'atelier : sortie 1"), "npm test échoue dans l'atelier")
+  assert.equal(mod.causeDuRefus("T2 refusée (1 motif(s)) : `npm test` échoue dans l'atelier : sortie 1"), "des tests échouent")
+  assert.equal(mod.causeDuRefus("T2 refusée (1 motif(s)) : `npm run build` puis `npm test` échouent dans l'atelier : sortie 1"), "le code ne se construit pas")
+  // Les mots de la maquette restent tels quels.
+  assert.equal(mod.causeDuRefus("T2 refusée (1 motif(s)) : sécurité : une clé"), "sécurité")
   assert.equal(mod.causeDuRefus("un message sans motif"), "autre")
   assert.equal(mod.causeDuRefus(null), "autre")
   assert.ok(mod.causeDuRefus(`T1 refusée (1 motif(s)) : ${"x".repeat(200)}`).length <= 60)
+})
+
+test("les raisons de la sonde, en clair", () => {
+  assert.equal(mod.enClair("pas en ligne : dernier déploiement en échec, aucun conteneur"), "pas en ligne : la dernière mise en ligne a échoué, rien ne tourne")
+  assert.equal(mod.enClair("conteneur absent · déploiement bloqué depuis 50 min"), "l'application n'est pas lancée · mise en ligne bloquée depuis 50 min")
+  assert.equal(mod.enClair("arrêté (exited, code de sortie 137, mémoire dépassée)"), "arrêté : mémoire dépassée (code 137)")
+  assert.equal(mod.enClair("lent : /api/health en 4200 ms"), "lent : répond en 4200 ms")
+  assert.equal(mod.enClair("/api/health répond 502 · déploiement en cours"), "répond par une erreur (502) · mise en ligne en cours")
+  assert.equal(mod.enClair("répond en 41 ms"), "répond en 41 ms")
 })
 
 test("les 7 jours se comptent sur le calendrier de Paris, passage à l'heure d'été compris", () => {
@@ -160,7 +172,7 @@ test("7 derniers jours : fusions, refus, escalades, causes et coûts, au jour de
   assert.equal(jour["2026-11-09"].fusions, 2, "la fusion de 23 h 30 (temps universel) compte le 9, à Paris")
   assert.deepEqual([jour["2026-11-09"].refus, jour["2026-11-10"].refus, jour["2026-11-11"].refus], [2, 2, 1])
   assert.equal(jour["2026-11-06"].escalades, 1)
-  assert.deepEqual(w.causes.map((c) => [c.cause, c.n]), [["design", 2], ["critère non validé", 1], ["N test(s) échouent", 1], ["problème", 1]])
+  assert.deepEqual(w.causes.map((c) => [c.cause, c.n]), [["design", 2], ["critère non validé", 1], ["des tests échouent", 1], ["problème", 1]])
   assert.equal(w.causes[0].pct, 40)
   assert.equal(Math.round(w.cout_api * 100), 801)
   assert.match(w.cout_api_texte, /8,01/)
@@ -204,7 +216,8 @@ test("ce qui t'attend : la décision d'abord, puis la panne, l'alerte, et ce qui
   assert.equal(a[0].depuis, "2026-10-23T18:27:18.000Z")
   assert.equal(a[0].lien, "#/projets/2")
   assert.equal(a[1].titre, "Vingt-Cinq · aperçu en panne")
-  assert.match(a[1].detail, /redémarre en boucle/)
+  // Les raisons de la sonde, avec les mots de l'usine (ni « déploiement » ni « conteneur »).
+  assert.equal(a[1].detail, "redémarre sans arrêt (29 fois en 30 min, 13931 au total) · la dernière mise en ligne a échoué")
   assert.equal(a[2].titre, "Prêt'Asso · aperçu à surveiller")
 })
 
@@ -235,10 +248,51 @@ test("l'usine maintenant : tâches en cours, mises en ligne, serveur", () => {
   assert.equal(calcul({ processeurs: 0.4 }).usine.serveur.charge.etat, "alerte")
 })
 
+test("rien des fichiers du déployeur au-delà de ce que la page montre", () => {
+  const texte = JSON.stringify(calcul())
+  for (const interne of ["usine-prod-vigie-copro-blue", "hote-interne", "/chemin-interne", "usine-apercu-"]) assert.ok(!texte.includes(interne), `${interne} ne doit pas sortir`)
+  const d = calcul().usine.deploiements.en_cours[0]
+  assert.deepEqual(Object.keys(d).sort(), ["bloque", "cle", "couleur", "demande_le", "environnement", "etat", "le", "message", "nom", "projet_id", "sha"])
+})
+
+test("des fichiers d'état mal formés : rien n'est présenté comme sûr", async () => {
+  const mal = await ouvrir("mal")
+  const ecrire = (applications) => ecrireJson(mal.dossier, "sante.json", {
+    le: "pas une date",
+    disque: { pct: "abc", libre_go: { x: 1 }, total_go: 50 },
+    memoire: { total_mo: "4102", dispo_mo: null },
+    charge: ["x", 1, 2],
+    applications,
+  })
+  // Une date de sonde illisible : la mesure n'est pas datée, donc pas récente.
+  ecrire({ le: "pas une date", produits: { "production/constructor": { etat: "bizarre", raison: { objet: true }, version: 1234567890, docker: { redemarrages: "beaucoup" } } } })
+  let v = mod.visibilite(mal, { maintenant: MAINTENANT, processeurs: 1 })
+  assert.equal(v.sonde.perimee, true)
+  assert.equal(v.sonde.age_s, null)
+  assert.deepEqual(v.attend.map((x) => [x.type, x.lien]), [["sonde", "#/reglages/etat"]])
+  const p = v.productions[0]
+  // « constructor » n'est pas un projet (pas de recherche dans le prototype d'un objet) : ni lien, ni adresse.
+  assert.deepEqual([p.nom, p.projet_id, p.adresse], ["constructor", null, null])
+  assert.deepEqual([p.etat, p.etat_mesure, p.version, p.redemarrages, typeof p.raison], ["inconnu", "inconnu", null, null, "string"])
+  const s = v.usine.serveur
+  assert.equal(s.perime, true)
+  assert.deepEqual([s.disque.pct, s.disque.libre_go, s.disque.etat], [null, null, "inconnu"])
+  assert.deepEqual([s.memoire.pct, s.memoire.etat], [null, "inconnu"])
+  assert.deepEqual([s.charge.minute, s.charge.pct, s.charge.etat], [null, null, "inconnu"])
+  // Une sonde muette (Docker n'a pas répondu) : une seule ligne, vers l'état de l'usine.
+  ecrire({ le: "2026-11-11T15:39:58Z", produits: null })
+  v = mod.visibilite(mal, { maintenant: MAINTENANT, processeurs: 1 })
+  assert.equal(v.sonde.muette, true)
+  assert.deepEqual(v.attend.map((x) => [x.type, x.titre, x.lien]), [["sonde", "L'état des produits est inconnu", "#/reglages/etat"]])
+  // Une mise en ligne en cours sans date : elle n'est pas déclarée bloquée.
+  ecrireJson(mal.dossier, "statut.json", { "apercu/x": { etat: "en_cours", sha_demande: "abcdef12345" } })
+  assert.deepEqual(mod.visibilite(mal, { maintenant: MAINTENANT }).usine.deploiements.en_cours.map((x) => [x.sha, x.bloque]), [["abcdef1", false]])
+})
+
 test("le message d'une mise en ligne échouée : sa première ligne", async () => {
   ecrireJson(fixe.dossier, "statut.json", { "apercu/vingt-cinq": { etat: "echec", sha: "fca2fc0", le: "2026-11-10T16:28:13Z", message: "l'aperçu ne répond pas à /api/health :\n    at writeFileSync (node:fs:2482:20)" } })
   const d = calcul().usine.deploiements
-  assert.equal(d.dernier.message, "l'aperçu ne répond pas à /api/health")
+  assert.equal(d.dernier.message, "l'aperçu ne répond pas")
   assert.equal(d.dernier.nom, "Vingt-Cinq")
   ecrireJson(fixe.dossier, "statut.json", "pas un objet")
   assert.deepEqual(calcul().usine.deploiements, { en_cours: [], dernier: null })
@@ -258,7 +312,7 @@ test("API : GET /api/visibilite, réservé aux administrateurs, sans secret, san
   const r = await fetch(`${base}/api/visibilite`, { headers: { cookie: "s=admin" } })
   assert.equal(r.status, 200)
   const texte = await r.text()
-  assert.ok(!texte.includes("jeton-de-test"), "aucun secret dans la réponse")
+  for (const secret of Object.values(api.config.secrets)) assert.ok(!texte.includes(secret), "aucun secret dans la réponse")
   const v = JSON.parse(texte)
   assert.deepEqual(Object.keys(v), ["le", "fuseau", "attend", "sonde", "productions", "apercus", "usine", "semaine"])
   assert.equal(v.fuseau, "Europe/Paris")
@@ -280,5 +334,5 @@ test("API : GET /api/visibilite, réservé aux administrateurs, sans secret, san
 test("API : l'accueil garde ses éléments à traiter, avec depuis quand", async () => {
   const r = await (await fetch(`${base}/api/resume`, { headers: { cookie: "s=admin" } })).json()
   assert.equal(r.a_traiter[0].type, "decision")
-  assert.ok(r.a_traiter[0].depuis)
+  assert.match(r.a_traiter[0].depuis, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000Z$/, "une date ISO, en temps universel")
 })
