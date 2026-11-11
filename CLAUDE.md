@@ -23,6 +23,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |
 | `orchestrateur/src/relectures.mjs` | Les relectures entre agents (sécurité) avant le vérificateur |
 | `commun/serveur-travaux.mjs` | Le serveur de travaux de l'atelier et du vérificateur |
+| `commun/observabilite.mjs` | L'envoi vers Sentry (erreurs, incidents, battement de cœur) et PostHog (événements, journaux OTLP), sans dépendance : par lots, jamais bloquant, rien de personnel (`nettoyer()`, `proprietesSures()`). Copié en `/commun` dans les images de l'orchestrateur et du déployeur ; testé par `orchestrateur/test/observabilite.test.mjs` |
 | `briques/` | Les points de départ des produits (`webapp`, et ses surcouches `site`, `api`, `pwa`), assemblés par `assembler.mjs` ; la liste de l'analyste est `BRIQUES` (analyste.mjs). L'interface part du kit `client/src/ui` (shadcn/ui sur Radix, icônes Lucide, page `/kit`) |
 | `orchestrateur/src/design.mjs` | Le brief de design (palette, thème sombre, arrondi, polices), vérifié par `verifierDesign()` (contrastes AA compris) et traduit en jetons par `jetonsCss()` : les seules couleurs d'un produit |
 | `orchestrateur/src/controle-ui.mjs` | Le contrôle du design system par du code, sur les lignes ajoutées de `client/src` (couleurs en dur, palette Tailwind, valeurs arbitraires, icônes hors Lucide) : un défaut refuse la tâche. Seulement pour un produit né avec le kit (`components.json`) |
