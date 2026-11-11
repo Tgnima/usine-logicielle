@@ -77,6 +77,7 @@ const etat = {
   resume: null,
   projet: null,
   sante: null,
+  visibilite: null, // la page Visibilité : ce qui attend, les produits, l'usine maintenant, la semaine
   acces: null,
   reglages: null,
   premiersPas: null, // les étapes restantes pour que l'usine soit prête
@@ -142,6 +143,7 @@ function lireRoute() {
   // « Nouveau projet » n'est plus une page : la saisie de l'accueil prend le focus.
   if (h.startsWith("/nouveau")) return { vue: "accueil", nouveau: true }
   if (h === "/projets") return { vue: "projets" }
+  if (h.startsWith("/visibilite")) return { vue: "visibilite" }
   const mp = h.match(/^\/personas\/(\d+)/)
   if (mp) return { vue: "persona", id: Number(mp[1]) }
   if (h.startsWith("/personas")) return { vue: "personas" }
@@ -1853,10 +1855,181 @@ function vueHistorique() {
     : html`<div class="carte vide">Rien pour ce choix.</div>`}`
 }
 
+// --- Visibilité ---------------------------------------------------------------------------
+// Tout voir d'un coup d'œil : ce qui t'attend, l'état réel des produits (la sonde du serveur),
+// ce que fait l'usine maintenant, et ses 7 derniers jours. Les heures sont celles de Paris, où
+// que soit la personne ; les durées se comptent depuis l'heure du serveur (v.le).
+const PARIS = "Europe/Paris"
+const aParis = (le, options) => {
+  const d = le ? new Date(le) : new Date(NaN)
+  return isNaN(d) ? "" : d.toLocaleString("fr-FR", { timeZone: PARIS, ...options })
+}
+const heureParis = (le) => aParis(le, { hour: "2-digit", minute: "2-digit" })
+const momentParis = (le) => aParis(le, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+const nombre = (n, decimales = 0) => (Number.isFinite(n) ? n.toLocaleString("fr-FR", { maximumFractionDigits: decimales }) : "—")
+// Une durée en clair : « 40 s », « 12 min », « 5 h », « 3 j ».
+function duree(s) {
+  if (!Number.isFinite(s)) return ""
+  if (s < 90) return `${Math.max(0, Math.round(s))} s`
+  if (s < 90 * 60) return `${Math.round(s / 60)} min`
+  if (s < 48 * 3600) return `${Math.round(s / 3600)} h`
+  return `${Math.round(s / 86400)} j`
+}
+const ecart = (le, reference) => (le ? (new Date(reference) - new Date(le)) / 1000 : NaN)
+// Un jour du bilan (AAAA-MM-JJ, déjà à l'heure de Paris) : « lun. 9 ».
+const jourCourt = (j, options = { weekday: "short", day: "numeric" }) => new Date(`${j}T12:00:00Z`).toLocaleDateString("fr-FR", { timeZone: "UTC", ...options })
+const ETATS_PRODUIT = { ok: ["En ligne", "vert"], alerte: ["À surveiller", "orange"], panne: ["En panne", "rouge"], inconnu: ["État inconnu", ""] }
+const badgeProduit = (e) => {
+  const [nom, ton] = ETATS_PRODUIT[e] ?? ETATS_PRODUIT.inconnu
+  return html`<span class="badge ${ton}"><span class="point ${e === "ok" ? "" : e}" aria-hidden="true"></span>${nom}</span>`
+}
+const PICTOS_ATTENTE = { decision: "◆", panne: "!", alerte: "!", sonde: "?", plan: "☰", questions: "?", livre: "↗" }
+const JAUGES = { ok: "bleue", alerte: "orange", panne: "rouge" }
+
+function blocAttente(v) {
+  const l = v.attend
+  return html`<section class="pile" aria-labelledby="v-attend">
+    <div class="rangee"><h2 id="v-attend">Ce qui t'attend</h2>${l.length ? html`<span class="badge orange">${l.length}</span>` : ""}</div>
+    ${l.length ? html`<ol class="fil carte">${l.map((x) => html`<li class="${x.type === "panne" ? "panne" : "alerte"}">
+        <span class="fil-picto" aria-hidden="true">${PICTOS_ATTENTE[x.type] ?? "•"}</span>
+        <div style="flex:1;min-width:0"><a class="lien-projet" href="${x.lien}">${x.titre}</a><div class="fil-texte aide">${nettoyer(x.detail)}</div></div>
+        ${x.depuis ? html`<span class="aide" title="${momentParis(x.depuis)}">depuis ${duree(ecart(x.depuis, v.le))}</span>` : ""}
+      </li>`)}</ol>`
+      : html`<div class="carte vide">Rien ne t'attend : l'usine avance seule.</div>`}
+  </section>`
+}
+
+function carteProduit(x) {
+  const nom = x.projet_id ? html`<a class="lien-projet" href="#/projets/${x.projet_id}">${x.nom}</a>` : html`<strong>${x.nom}</strong>`
+  return html`<li class="carte carte-produit ${x.etat}">
+    <div class="barre" style="gap:8px;align-items:flex-start;flex-wrap:nowrap"><span style="min-width:0;overflow-wrap:anywhere">${nom}</span>${badgeProduit(x.etat)}</div>
+    ${x.raison ? html`<div class="aide raison">${x.raison}</div>` : ""}
+    <dl class="mesures">
+      <div><dt>Version</dt><dd class="mono">${x.version ?? "—"}</dd></div>
+      <div><dt>Démarré</dt><dd title="${x.demarre_le ? momentParis(x.demarre_le) : ""}">${x.age_s !== null ? `il y a ${duree(x.age_s)}` : "—"}</dd></div>
+      <div><dt>Redémarrages</dt><dd title="${x.redemarrages_30_min ? `dont ${nombre(x.redemarrages_30_min)} ces 30 dernières minutes` : ""}">${nombre(x.redemarrages)}</dd></div>
+    </dl>
+    ${x.adresse ? html`<a class="aide" href="${x.adresse}" target="_blank" rel="noopener">${x.environnement === "apercu" ? "Ouvrir l'aperçu" : "Ouvrir le produit"} ↗</a>` : ""}
+  </li>`
+}
+
+function blocProductions(v) {
+  const s = v.sonde
+  const verifie = s.le ? html`<span class="aide" title="${momentParis(s.le)}">Vérifié il y a ${duree(s.age_s)}</span>` : ""
+  const avertissement = s.absente ? html`<div class="message info"><span>Le serveur ne vérifie pas encore l'état des produits : la vérification arrive avec la prochaine mise à jour de l'usine.</span></div>`
+    : s.muette ? html`<div class="message erreur"><span>À la dernière vérification, le serveur n'a pas pu lire l'état des applications.</span></div>`
+    : s.perimee ? html`<div class="message erreur"><span>La dernière vérification date de ${duree(s.age_s)} : l'état réel des produits est inconnu.</span></div>` : ""
+  return html`<section class="pile" aria-labelledby="v-prod">
+    <div class="barre"><h2 id="v-prod">Productions</h2>${verifie}</div>
+    ${avertissement}
+    ${v.productions.length ? html`<ul class="cartes-produits">${v.productions.map(carteProduit)}</ul>` : s.absente ? "" : html`<div class="carte vide">Aucun produit en ligne pour l'instant.</div>`}
+    ${v.apercus.length ? html`<h3 class="surtitre" style="margin-top:6px">Aperçus</h3><ul class="cartes-produits compact" aria-label="Aperçus">${v.apercus.map(carteProduit)}</ul>` : ""}
+  </section>`
+}
+
+function jaugeServeur(titre, m, pct, detail) {
+  if (!m) return html`<div class="mesure-serveur"><div class="barre"><strong>${titre}</strong><span class="aide">inconnu</span></div></div>`
+  return html`<div class="mesure-serveur">
+    <div class="barre"><strong>${titre}</strong><span>${pct ?? "—"} %</span></div>
+    <div class="jauge ${JAUGES[m.etat] ?? "bleue"}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, pct ?? 0)}" aria-label="${titre}"><div style="width:${Math.min(100, pct ?? 0)}%"></div></div>
+    <span class="aide">${detail}${m.etat === "panne" ? " · presque plein" : m.etat === "alerte" ? " · à surveiller" : ""}</span>
+  </div>`
+}
+
+function blocUsine(v) {
+  const u = v.usine
+  const d = u.deploiements
+  const s = u.serveur
+  const ou = (x) => (x.environnement === "apercu" ? "aperçu" : "production")
+  const lienNom = (x) => (x.projet_id ? html`<a class="lien-projet" href="#/projets/${x.projet_id}">${x.nom}</a>` : html`<strong>${x.nom}</strong>`)
+  const couleur = { blue: "bleue", green: "verte" }
+  return html`<section class="pile" aria-labelledby="v-usine">
+    <h2 id="v-usine">L'usine maintenant</h2>
+    <div class="grille">
+      <div class="carte carte-p pile"><h3 class="surtitre">En construction</h3>
+        ${u.taches.length ? html`<ul class="lignes-usine">${u.taches.map((t) => html`<li>
+          <div><a class="lien-projet" href="#/projets/${t.projet_id}">${t.projet}</a> <span class="mono aide">${t.cle}</span></div>
+          <div>${t.titre}</div>
+          <div class="aide">${t.statut === "verification" ? "Au contrôle qualité" : "En construction"}${t.tentative ? ` · correction ${t.tentative}` : ""}${t.approche ? " · autre approche" : ""}${t.depuis ? ` · depuis ${duree(ecart(t.depuis, v.le))}` : ""}</div>
+        </li>`)}</ul>` : html`<p class="aide" style="margin:0">Aucune fonction en construction : l'usine est au repos.</p>`}
+      </div>
+      <div class="carte carte-p pile"><h3 class="surtitre">Mises en ligne</h3>
+        ${d.en_cours.length ? html`<ul class="lignes-usine">${d.en_cours.map((x) => html`<li>
+          <div class="rangee">${lienNom(x)}<span class="aide">· ${ou(x)}</span>${x.bloque ? html`<span class="badge rouge">bloquée</span>` : html`<span class="badge bleu">en cours</span>`}</div>
+          <div class="aide">version <span class="mono">${x.sha ?? "—"}</span>${x.demande_le ? ` · demandée à ${heureParis(x.demande_le)}` : ""}</div>
+        </li>`)}</ul>` : html`<p class="aide" style="margin:0">Aucune mise en ligne en cours.</p>`}
+        ${d.dernier ? html`<div class="separe pile" style="gap:4px">
+          <span class="aide">La dernière</span>
+          <div class="rangee">${lienNom(d.dernier)}<span class="aide">· ${ou(d.dernier)}</span>${d.dernier.etat === "ok" ? html`<span class="badge vert">réussie</span>` : html`<span class="badge rouge">échouée</span>`}</div>
+          <div class="aide">version <span class="mono">${d.dernier.sha ?? "—"}</span>${d.dernier.le ? ` · le ${momentParis(d.dernier.le)}` : ""}${d.dernier.couleur ? ` · couleur ${couleur[d.dernier.couleur]}` : ""}</div>
+          ${d.dernier.message ? html`<div class="aide raison">${d.dernier.message}</div>` : ""}
+        </div>` : ""}
+      </div>
+      <div class="carte carte-p pile"><div class="barre"><h3 class="surtitre">Le serveur</h3>${s?.le ? html`<span class="aide">${s.perime ? "bilan ancien · " : ""}${heureParis(s.le)}</span>` : ""}</div>
+        ${s ? html`
+          ${jaugeServeur("Espace disque", s.disque, s.disque?.pct, s.disque ? `${nombre(s.disque.libre_go, 1)} Go libres sur ${nombre(s.disque.total_go, 1)}` : "")}
+          ${jaugeServeur("Mémoire", s.memoire, s.memoire?.pct, s.memoire ? `${nombre(s.memoire.dispo_mo)} Mo libres sur ${nombre(s.memoire.total_mo)}${s.memoire.swap_utilise_mo > 500 ? ` · ${nombre(s.memoire.swap_utilise_mo)} Mo en réserve sur le disque` : ""}` : "")}
+          ${jaugeServeur("Processeur", s.charge, s.charge?.pct, s.charge ? `charge ${nombre(s.charge.minute, 2)} pour ${s.charge.processeurs} processeur${s.charge.processeurs > 1 ? "s" : ""}` : "")}`
+        : html`<p class="aide" style="margin:0">Le serveur n'a pas encore envoyé de bilan.</p>`}
+      </div>
+    </div>
+  </section>`
+}
+
+function blocSemaine(v) {
+  const w = v.semaine
+  const max = Math.max(1, ...w.jours.map((j) => Math.max(j.fusions, j.refus)))
+  const meme = w.du.slice(0, 7) === w.au.slice(0, 7)
+  const periode = `du ${jourCourt(w.du, meme ? { day: "numeric" } : { day: "numeric", month: "long" })} au ${jourCourt(w.au, { day: "numeric", month: "long" })}`
+  const chiffre = (titre, valeur, aide) => html`<div class="carte"><span class="aide">${titre}</span><span class="chiffre">${valeur}</span>${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
+  return html`<section class="pile" aria-labelledby="v-semaine">
+    <div class="barre"><h2 id="v-semaine">7 derniers jours</h2><span class="aide">${periode}, à l'heure de Paris</span></div>
+    <div class="chiffres">
+      ${chiffre("Fonctions ajoutées", nombre(w.fusions), w.acceptes_pct !== null ? `${w.acceptes_pct} % des contrôles réussis` : "")}
+      ${chiffre("Refus du contrôle", nombre(w.refus), "versions refaites")}
+      ${chiffre("Décisions demandées", nombre(w.escalades), "l'usine a demandé de l'aide")}
+      ${chiffre("Coût au prix public", w.cout_api_texte, w.cout_incomplet ? "prix inconnu pour une partie" : "ce qu'aurait coûté l'IA")}
+      ${chiffre("Temps de calcul", `${nombre(w.heures, 1)} h`, "IA au travail")}
+    </div>
+    <div class="colonnes">
+      <div class="carte carte-p pile colonne-large"><h3 class="surtitre">Jour par jour</h3>
+        <div class="graph" aria-hidden="true">${w.jours.map((j) => html`<div title="${jourCourt(j.jour, { weekday: "long", day: "numeric", month: "long" })} : ${j.fusions} fonction(s) ajoutée(s), ${j.refus} refus"><i class="fusion" style="height:${Math.round((j.fusions / max) * 100)}%"></i><i class="refus" style="height:${Math.round((j.refus / max) * 100)}%"></i></div>`)}</div>
+        <div class="graph-legende alignee" aria-hidden="true">${w.jours.map((j) => html`<span>${jourCourt(j.jour)}<br><b class="n-fusion">${j.fusions}</b> · <b class="n-refus">${j.refus}</b></span>`)}</div>
+        <div class="rangee aide"><span><span class="carre fusion" aria-hidden="true"></span> fonctions ajoutées</span><span><span class="carre refus" aria-hidden="true"></span> refus du contrôle</span></div>
+        <table class="cache"><caption>Fonctions ajoutées et refus, jour par jour</caption><tbody>${w.jours.map((j) => html`<tr><th>${jourCourt(j.jour, { weekday: "long", day: "numeric", month: "long" })}</th><td>${j.fusions} fonction(s) ajoutée(s)</td><td>${j.refus} refus</td></tr>`)}</tbody></table>
+      </div>
+      <div class="carte carte-p pile colonne-etroite"><h3 class="surtitre">Pourquoi le contrôle refuse</h3>
+        ${w.causes.length ? html`<ul class="causes">${w.causes.map((c) => html`<li><span>${c.cause}</span><span class="mono" style="text-align:right">${c.n}</span>
+          <span class="jauge orange" role="img" aria-label="${c.pct} % des refus"><span style="width:${c.pct}%"></span></span></li>`)}</ul>`
+        : html`<p class="aide" style="margin:0">Aucun refus cette semaine.</p>`}
+      </div>
+    </div>
+    <div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Par produit</h3>
+      ${w.produits.length ? html`<div class="tableau"><table style="min-width:620px">
+        <thead><tr><th>Produit</th><th>Fonctions ajoutées</th><th>Refus</th><th>Décisions</th><th title="Ce qu'aurait coûté le calcul au tarif public">Coût au prix public</th><th>Calcul</th></tr></thead>
+        <tbody>${w.produits.map((p) => html`<tr>
+          <td>${p.projet_id ? html`<a class="lien-projet" href="#/projets/${p.projet_id}">${p.nom}</a>` : html`<span class="aide">${p.nom}</span>`}</td>
+          <td class="mono">${p.fusions}</td><td class="mono">${p.refus}</td><td class="mono">${p.escalades}</td>
+          <td class="mono">${p.cout_api_texte}</td><td class="mono">${nombre(p.heures, 1)} h</td></tr>`)}</tbody></table></div>`
+      : html`<div class="vide">Rien n'a été construit ces 7 derniers jours.</div>`}
+    </div>
+  </section>`
+}
+
+function vueVisibilite() {
+  const v = etat.visibilite
+  return html`
+    ${barreHaut()}
+    ${messageGlobal()}
+    <div class="entete"><div><h1>Visibilité</h1><p class="chapeau">Ce qui t'attend, l'état réel de chaque produit, ce que fait l'usine en ce moment et sa dernière semaine.</p></div>
+      ${v ? html`<span class="aide">Heure de Paris : ${heureParis(v.le)} · mis à jour toutes les 15 s</span>` : ""}</div>
+    ${v ? html`${blocAttente(v)}${blocProductions(v)}${blocUsine(v)}${blocSemaine(v)}` : html`<div class="chargement">Chargement…</div>`}`
+}
+
 // --- Rendu et chargement ------------------------------------------------------------------
 let dernierCote = ""
 function rendre() {
-  const vue = { accueil: vueAccueil, projets: vueProjets, projet: vueProjet, reglages: vueReglages, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer }[etat.route.vue]
+  const vue = { accueil: vueAccueil, projets: vueProjets, projet: vueProjet, reglages: vueReglages, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer, visibilite: vueVisibilite }[etat.route.vue]
   const m = $("#principal")
   // Garder le défilement du journal s'il était en bas.
   const j = $("#journal")
@@ -1915,6 +2088,7 @@ async function charger({ silencieux = false } = {}) {
     if (r.vue === "persona") charge(`personas/${r.id}`, "persona")
     if (sec === "historique") charge(`historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`, "historique")
     if (r.vue === "projet") charge(`projets/${r.id}`, "projet")
+    if (r.vue === "visibilite") charge("visibilite", "visibilite")
     // Le bilan de santé nourrit la pastille du haut : une fois par minute suffit, hors des pages qui le détaillent.
     if (["utilisation", "etat"].includes(sec) || Date.now() - etat.santeLe > 60_000) taches.push(api("GET", "sante").then((x) => { etat.sante = x; etat.santeLe = Date.now(); rendre() }))
     if (sec === "equipe" || r.vue === "demarrer") charge("acces", "acces")
@@ -2734,6 +2908,7 @@ function entreesPalette(filtre) {
   const commandes = [
     { texte: "Nouveau projet", aide: "commande", aller: "#/nouveau" },
     { texte: "Projets", aide: "page", aller: "#/" },
+    { texte: "Visibilité : ce qui t'attend, l'état des produits, la semaine", aide: "page", aller: "#/visibilite" },
     { texte: "Publics : pour qui on construit", aide: "page", aller: "#/personas" },
     { texte: "Intégrations : IA, GitHub, Slack", aide: "réglages", aller: "#/reglages/integrations" },
     { texte: "Connecteurs : des outils pour les IA", aide: "réglages", aller: "#/reglages/connecteurs" },

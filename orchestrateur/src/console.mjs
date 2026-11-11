@@ -46,6 +46,7 @@ import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
 import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recevoirManifeste } from "./forge-github.mjs"
 import { adresseTableau } from "./slack-couts.mjs"
+import { visibilite } from "./visibilite.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -117,13 +118,14 @@ function aTraiter(ctx) {
   const liste = []
   for (const e of db.prepare("SELECT e.*, p.nom FROM escalades e JOIN projets p ON p.id = e.projet_id WHERE e.statut = 'ouverte' ORDER BY e.id").all()) {
     const t = e.tache_id ? obtenir(db, "taches", e.tache_id) : null
-    liste.push({ type: "decision", projet: e.projet_id, titre: `${e.nom} · décision attendue`, detail: `${t ? `${t.cle} : ` : ""}${RAISONS[e.raison] ?? e.raison}` })
+    liste.push({ type: "decision", projet: e.projet_id, titre: `${e.nom} · décision attendue`, detail: `${t ? `${t.cle} : ` : ""}${RAISONS[e.raison] ?? e.raison}`, depuis: e.cree_le })
   }
+  // depuis : la dernière modification du projet, à peu près le moment où il s'est mis à attendre.
   for (const p of db.prepare("SELECT * FROM projets WHERE statut IN ('plan_a_valider', 'questions', 'livre') ORDER BY id DESC").all()) {
     const plan = lirePlan(p)
-    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches` })
-    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "" })
-    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger" })
+    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches`, depuis: p.maj_le })
+    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "", depuis: p.maj_le })
+    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger", depuis: p.maj_le })
   }
   return liste
 }
@@ -367,6 +369,8 @@ const ROUTES = [
   ["GET", /^\/api\/estimation$/, (ctx) => estimation(ctx)],
   ["GET", /^\/api\/historique$/, (ctx, _p, _c, _q, url) => historique(ctx, { projet: Number(url.searchParams.get("projet")) || null, type: url.searchParams.get("type") })],
   ["GET", /^\/api\/sante$/, (ctx) => santeEtCouts(ctx)],
+  // La page Visibilité : ce qui attend, l'état réel des produits, l'usine maintenant, les 7 derniers jours (visibilite.mjs).
+  ["GET", /^\/api\/visibilite$/, (ctx) => visibilite(ctx, { aTraiter: aTraiter(ctx) })],
   ["GET", /^\/api\/projets\/(\d+)$/, (ctx, [id]) => detailProjet(ctx, Number(id))],
   // Le direct : ce que fait l'agent (ou le vérificateur) sur la tâche en cours du projet.
   ["GET", /^\/api\/projets\/(\d+)\/direct$/, (ctx, [id]) => direct(ctx, ctx.db.prepare("SELECT * FROM taches WHERE projet_id = ? AND statut IN ('en_cours', 'verification') ORDER BY id LIMIT 1").get(Number(id)))],
