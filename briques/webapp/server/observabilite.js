@@ -120,7 +120,8 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
     }
   }
 
-  // Une erreur pour Sentry : une même erreur une fois par 10 min, 20 par heure au plus (quota gratuit).
+  // Une erreur pour Sentry : une même erreur une fois par heure, 20 par heure au plus (quota gratuit :
+  // une erreur qui revient chaque minute coûte 24 envois par jour, pas 1 440).
   function signalerErreur(erreur, { message = null, niveau = "error", gere = true, etiquettes = {} } = {}) {
     if (!dsn || Date.now() < enPauseJusqua) return Promise.resolve(false)
     try {
@@ -138,7 +139,7 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
       const cle = [v?.type, v?.value, e.message, v?.stacktrace?.frames.at(-1)?.filename].join("¦").replace(/\d+/g, "#").slice(0, 500)
       const t = Date.now()
       if (t - fenetre.debut > 3_600_000) fenetre = { debut: t, n: 0 }
-      if ((vues.get(cle) && t - vues.get(cle) < 10 * 60_000) || fenetre.n >= erreursParHeure) {
+      if ((vues.get(cle) && t - vues.get(cle) < 60 * 60_000) || fenetre.n >= erreursParHeure) {
         comptes.erreurs.ignorees += 1
         return Promise.resolve(false)
       }
