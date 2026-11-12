@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
+import { attendreSante, decisionDeploiement, REPRISES_MAX } from "./deploiement.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
 
@@ -252,17 +253,8 @@ async function supprimerReseau(produit) {
   await lancer("docker", ["network", "rm", reseau])
 }
 
-async function sante(conteneur, secondes = 90) {
-  const limite = Date.now() + secondes * 1000
-  while (Date.now() < limite) {
-    try {
-      const res = await fetch(`http://${conteneur}:3000/api/health`, { signal: AbortSignal.timeout(5_000) })
-      if (res.ok) return true
-    } catch {}
-    await pause(3_000)
-  }
-  return false
-}
+// Sans suivre de redirection (attendreSante, deploiement.mjs).
+const sante = (conteneur, secondes = 90) => attendreSante(`http://${conteneur}:3000/api/health`, { secondes })
 
 async function construire(s) {
   const dossier = join(SRV, "produits", s.produit)
@@ -381,6 +373,9 @@ async function regenererCaddy(statut) {
 }
 
 // --- La boucle ----------------------------------------------------------------
+// L'ancienne version d'un produit, gardée dans le statut quand la nouvelle échoue : elle reste servie.
+const versionServie = (actuel) => (actuel?.conteneur ? { hote: actuel.hote, hote_mails: actuel.hote_mails, conteneur: actuel.conteneur, couleur: actuel.couleur } : {})
+
 async function tour() {
   const souhaits = await synchroniserEtat()
   const statut = lireStatut()
@@ -391,9 +386,19 @@ async function tour() {
     }
     const cle = `${s.environnement}/${s.produit}`
     const actuel = statut[cle]
-    if (actuel?.sha === s.sha && actuel?.demande_le === s.demande_le) continue
-    log(`Déploiement ${cle} @ ${s.sha.slice(0, 7)}…`)
-    statut[cle] = { ...actuel, etat: "en_cours", sha_demande: s.sha, demande_le: s.demande_le, le: horodatage() }
+    const decision = decisionDeploiement(actuel, s)
+    if (!decision) continue
+    if (decision === "abandonner") {
+      log(`${cle} : déploiement interrompu ${REPRISES_MAX + 1} fois, abandonné.`)
+      // La couleur qu'il démarrait en production n'est pas servie : elle est retirée.
+      const demarree = `usine-prod-${s.produit}-${actuel.couleur === "blue" ? "green" : "blue"}`
+      if (s.environnement === "production" && demarree !== actuel.conteneur) await lancer("docker", ["rm", "-f", demarree])
+      statut[cle] = { ...versionServie(actuel), etat: "echec", sha: s.sha, demande_le: s.demande_le, message: `déploiement interrompu ${REPRISES_MAX + 1} fois (le déployeur a redémarré pendant le déploiement) : abandonné. Une nouvelle demande le relancera.`, le: horodatage() }
+      ecrireStatut(statut)
+      continue
+    }
+    log(decision === "reprendre" ? `Reprise du déploiement interrompu ${cle} @ ${s.sha.slice(0, 7)}…` : `Déploiement ${cle} @ ${s.sha.slice(0, 7)}…`)
+    statut[cle] = { ...actuel, etat: "en_cours", sha_demande: s.sha, demande_le: s.demande_le, reprises: decision === "reprendre" ? (actuel.reprises ?? 0) + 1 : 0, le: horodatage() }
     ecrireStatut(statut)
     try {
       const r = s.environnement === "apercu" ? await deployerApercu(s) : await deployerProduction(s, actuel?.conteneur ? actuel : null)
@@ -408,7 +413,7 @@ async function tour() {
     } catch (error) {
       log(`${cle} en échec : ${error.message.split("\n")[0]}`)
       // L'ancienne version (si elle existe) reste servie : on garde son conteneur dans le statut.
-      statut[cle] = { ...(actuel?.conteneur ? { hote: actuel.hote, hote_mails: actuel.hote_mails, conteneur: actuel.conteneur, couleur: actuel.couleur } : {}), etat: "echec", sha: s.sha, demande_le: s.demande_le, message: error.message.slice(0, 2000), le: horodatage() }
+      statut[cle] = { ...versionServie(actuel), etat: "echec", sha: s.sha, demande_le: s.demande_le, message: error.message.slice(0, 2000), le: horodatage() }
       ecrireStatut(statut)
     }
   }
