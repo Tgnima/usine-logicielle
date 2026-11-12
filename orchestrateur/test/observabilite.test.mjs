@@ -168,7 +168,7 @@ test("evenement : un lot /batch/ en région européenne, sans profil de personne
   assert.equal(e.event, "journal")
   assert.equal(e.distinct_id, "usine-orchestrateur")
   assert.match(e.timestamp, /^\d{4}-\d\d-\d\dT/)
-  assert.deepEqual(e.properties, { service: "usine-orchestrateur", environnement: "production", version: "94f260e", type: "fusion", projet: 9, tache: 41, $process_person_profile: false })
+  assert.deepEqual(e.properties, { service: "usine-orchestrateur", environnement: "production", version: "94f260e", type: "fusion", projet: 9, tache: 41, $process_person_profile: false, $geoip_disable: true })
   assert.equal(o.etat().evenements.envoyes, 2)
 })
 
