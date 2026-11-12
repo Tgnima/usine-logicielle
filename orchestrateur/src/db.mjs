@@ -7,6 +7,7 @@
 //   attente -> prete -> en_cours -> verification -> fusionnee
 //   (bloquee : escalade en cours ; abandonnee)
 import { DatabaseSync } from "node:sqlite"
+import { evenementJournal } from "./observabilite.mjs"
 
 export function ouvrirDb(chemin) {
   const db = new DatabaseSync(chemin)
@@ -109,6 +110,8 @@ export function maj(db, table, id, champs) {
 export function noter(db, { projet, tache = null, type, message }) {
   db.prepare("INSERT INTO journal (projet_id, tache_id, type, message) VALUES (?, ?, ?, ?)").run(projet, tache, type, String(message).slice(0, 4000))
   console.log(`[projet ${projet}${tache ? ` · tâche ${tache}` : ""}] ${type} : ${String(message).split("\n")[0].slice(0, 300)}`)
+  // Un événement PostHog : le type, le projet, la tâche et leur consommation, jamais le message.
+  evenementJournal(db, { projet, tache, type })
 }
 
 export const plan = (projet) => (projet.plan ? JSON.parse(projet.plan) : null)
