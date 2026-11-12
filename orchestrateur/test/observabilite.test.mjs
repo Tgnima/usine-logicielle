@@ -189,6 +189,16 @@ test("erreur : une enveloppe par erreur, la clé dans X-Sentry-Auth, les doublon
   assert.equal(o.etat().erreurs.ignores, 1)
 })
 
+test("incident : l'environnement du produit, son étiquette et son empreinte", async () => {
+  const f = fauxFetch()
+  const o = instance({ fetch: f, service: "usine-deployeur" })
+  o.incident("vigie-copro (apercu) en panne : ne répond pas à /api/health", { environnement: "apercu", etiquettes: { produit: "vigie-copro" }, empreinte: ["panne", "apercu", "vigie-copro"] })
+  await o.vider()
+  const e = JSON.parse(f.appels[0].corps.split("\n")[2])
+  assert.deepEqual([e.environment, e.tags.produit, e.tags.service, e.level], ["apercu", "vigie-copro", "usine-deployeur", "error"])
+  assert.deepEqual(e.fingerprint, ["panne", "apercu", "vigie-copro"])
+})
+
 test("erreur : 20 par heure au plus, et une réponse 429 met Sentry en pause", async () => {
   const f = fauxFetch()
   const o = instance({ fetch: f, erreursParHeure: 3 })

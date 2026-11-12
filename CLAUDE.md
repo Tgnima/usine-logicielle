@@ -17,6 +17,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
 | `orchestrateur/src/console.mjs`, `orchestrateur/console/` | La console web (API JSON + interface sans build), servie sur le port 8091 derrière le portier (administrateurs) |
 | `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |
+| `deployeur/observation.mjs` | Ce que le déployeur envoie de chaque produit (module commun) : `etat_produit` toutes les 5 min et à chaque changement, un incident Sentry quand la panne est confirmée (deux sondes de suite), un événement `deploiement` (ok, échec, abandon), les nouvelles lignes des journaux vers PostHog (`service.name` = produit, `deployment.environment`) |
 | `deployeur/deploiement.mjs` | Les décisions du tour : déployer, reprendre un déploiement interrompu (deux fois au plus), sinon l'abandonner ; l'attente de `/api/health` sans suivre de redirection |
 | `deployeur/sonde.mjs` | La sonde des produits (chaque minute) : état Docker, santé, redémarrages, `/api/health`, version ; jugée produit par produit, publiée dans `sante.json` (`applications`), une ligne de santé et une alerte par produit dans `orchestrateur/src/sante.mjs` |
 | `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes |

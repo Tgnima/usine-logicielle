@@ -22,7 +22,9 @@ import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { attendreSante, decisionDeploiement, REPRISES_MAX } from "./deploiement.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
+import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
 import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
+import { creerObservabilite } from "../commun/observabilite.mjs"
 
 const env = process.env
 // Les secrets arrivent en fichiers (/run/secrets, voir secrets.sh), jamais par l'environnement.
@@ -66,6 +68,21 @@ const DEPOT_USINE = env.DEPOT_USINE ?? ""
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const horodatage = () => new Date().toISOString()
 const log = (...a) => console.log(horodatage(), ...a)
+
+// L'observabilité (commun/observabilite.mjs) : l'état de chaque produit, ses déploiements et ses
+// journaux vers PostHog, un incident Sentry quand un produit tombe en panne, et les exceptions
+// non attrapées du déployeur. Un seul DSN et un seul jeton pour tous les produits : chaque envoi
+// porte le produit en étiquette. Sans clé, rien ne part ; un envoi ne bloque jamais un déploiement.
+const obs = creerObservabilite({
+  sentryDsn: secret("sentry_dsn"),
+  posthogJeton: secret("posthog_token"),
+  posthogHote: env.POSTHOG_HOTE || "eu.i.posthog.com",
+  service: "usine-deployeur",
+  environnement: env.USINE_ENVIRONNEMENT || "production",
+  version: () => miseAJour.version,
+  signaler: (texte) => log(texte),
+})
+obs.brancherProcessus()
 
 // Le jeton passe par la configuration git de l'environnement : jamais dans les
 // arguments (visibles dans ps) ni dans .git/config.
@@ -395,8 +412,10 @@ async function tour() {
       if (s.environnement === "production" && demarree !== actuel.conteneur) await lancer("docker", ["rm", "-f", demarree])
       statut[cle] = { ...versionServie(actuel), etat: "echec", sha: s.sha, demande_le: s.demande_le, message: `déploiement interrompu ${REPRISES_MAX + 1} fois (le déployeur a redémarré pendant le déploiement) : abandonné. Une nouvelle demande le relancera.`, le: horodatage() }
       ecrireStatut(statut)
+      obs.evenement("deploiement", proprietesDeploiement(s, "abandonne", { reprise: true }), { distinctId: `produit:${s.produit}` })
       continue
     }
+    const debut = Date.now()
     log(decision === "reprendre" ? `Reprise du déploiement interrompu ${cle} @ ${s.sha.slice(0, 7)}…` : `Déploiement ${cle} @ ${s.sha.slice(0, 7)}…`)
     statut[cle] = { ...actuel, etat: "en_cours", sha_demande: s.sha, demande_le: s.demande_le, reprises: decision === "reprendre" ? (actuel.reprises ?? 0) + 1 : 0, le: horodatage() }
     ecrireStatut(statut)
@@ -410,11 +429,13 @@ async function tour() {
         await lancer("docker", ["rm", "-f", r.ancien])
       }
       log(`${cle} en ligne (${r.conteneur}).`)
+      obs.evenement("deploiement", proprietesDeploiement(s, "ok", { debut, reprise: decision === "reprendre", couleur: r.couleur ?? null }), { distinctId: `produit:${s.produit}` })
     } catch (error) {
       log(`${cle} en échec : ${error.message.split("\n")[0]}`)
       // L'ancienne version (si elle existe) reste servie : on garde son conteneur dans le statut.
       statut[cle] = { ...versionServie(actuel), etat: "echec", sha: s.sha, demande_le: s.demande_le, message: error.message.slice(0, 2000), le: horodatage() }
       ecrireStatut(statut)
+      obs.evenement("deploiement", proprietesDeploiement(s, "echec", { debut, reprise: decision === "reprendre", erreur: error }), { distinctId: `produit:${s.produit}` })
     }
   }
   await retirerAbsents(souhaits, statut)
@@ -629,6 +650,7 @@ async function sonderProduits() {
     for (const nom of redemarrages.keys()) if (!conteneurs.some((c) => c.nom === nom)) redemarrages.delete(nom)
     for (const cle of enBoucle) if (!produits[cle]) enBoucle.delete(cle)
     etatApplications = { le: horodatage(), produits }
+    observerProduits(produits)
   } catch (e) {
     log(`Sonde des produits : ${e.message}`)
   } finally {
@@ -636,6 +658,23 @@ async function sonderProduits() {
   }
   // Publié tout de suite : l'orchestrateur ne lit pas deux fois la même mesure comme deux constats.
   await bilanSante()
+}
+
+// L'état de chaque produit vers PostHog (etat_produit : toutes les 5 min, et à chaque changement),
+// et un incident Sentry quand son état confirmé devient « panne » (observation.mjs). Un relevé sans
+// valeur (Docker injoignable) n'est jamais transmis : il ne dit rien des produits.
+const memoireEtats = new Map()
+function observerProduits(produits) {
+  const { evenements, incidents } = suivreEtats(memoireEtats, produits)
+  for (const e of evenements) obs.evenement("etat_produit", e, { distinctId: `produit:${e.produit}` })
+  for (const i of incidents) {
+    obs.incident(`${i.produit} (${i.environnement}) en panne : ${i.raison}`, {
+      environnement: i.environnement,
+      etiquettes: { produit: i.produit, version: i.version, deploiement: i.deploiement },
+      // Toutes les pannes d'un même produit dans un même sujet Sentry.
+      empreinte: ["panne", i.environnement, i.produit],
+    })
+  }
 }
 
 // --- L'entretien (toutes les 6 heures) --------------------------------------------------
@@ -739,16 +778,37 @@ async function suivreMiseAJour() {
 
 // Les journaux récents de chaque produit en ligne, sur le volume partagé : quand
 // une correction est demandée, l'analyste enquête sur ce qui s'est vraiment passé.
+// Les lignes nouvelles partent aussi vers PostHog (service.name = le produit, deployment.environment),
+// masquées par le module commun. La dernière ligne envoyée de chaque conteneur est notée sur le
+// volume : un redémarrage du déployeur ne renvoie pas les mêmes lignes.
 async function publierJournaux() {
   const dossier = join(ETAT, "journaux")
   mkdirSync(dossier, { recursive: true })
+  const fichierEnvois = join(dossier, ".envoyes-posthog.json")
+  let envoyes = null
+  if (obs.actif.posthog) {
+    try {
+      envoyes = JSON.parse(readFileSync(fichierEnvois, "utf8"))
+    } catch {
+      envoyes = {}
+    }
+  }
+  const suivis = {}
   for (const [cle, s] of Object.entries(lireStatut())) {
     if (!s.conteneur) continue
+    if (envoyes?.[s.conteneur]) suivis[s.conteneur] = envoyes[s.conteneur] // gardé si docker logs échoue
     const r = await lancer("docker", ["logs", "--tail", "200", "--timestamps", s.conteneur])
     if (r.code !== 0) continue
     const texte = r.sortie.split("\n").filter((l) => !/ExperimentalWarning|trace-warnings/.test(l)).join("\n")
     writeFileSync(join(dossier, `${cle.replace("/", "-")}.log`), texte)
+    if (!envoyes) continue
+    const [environnement, produit] = cle.split("/")
+    const lignes = lignesNouvelles(texte, envoyes[s.conteneur])
+    for (const l of lignes) obs.journal(l.texte, { niveau: l.niveau, horodatage: l.horodatage, service: produit, environnement, version: s.sha ? s.sha.slice(0, 12) : null, attributs: { conteneur: s.conteneur } })
+    suivis[s.conteneur] = lignes.at(-1)?.horodatage ?? envoyes[s.conteneur] ?? null
   }
+  // Seuls les conteneurs encore en service restent notés.
+  if (envoyes) writeFileSync(fichierEnvois, JSON.stringify(suivis))
 }
 
 // Les produits déjà déployés passent sur leur propre réseau, puis quittent les réseaux communs

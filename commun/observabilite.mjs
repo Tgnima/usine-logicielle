@@ -296,11 +296,12 @@ export function creerObservabilite({
     return true
   }
 
-  // Une erreur (exception) ou un incident (message) pour Sentry.
-  function erreur(err, { message = null, niveau = "error", etiquettes = {}, empreinte = null, gere = true } = {}) {
+  // Une erreur (exception) ou un incident (message) pour Sentry. environnement : celui de
+  // l'instance, ou celui d'un produit (un incident du déployeur sur un aperçu, par exemple).
+  function erreur(err, { message = null, niveau = "error", etiquettes = {}, empreinte = null, gere = true, environnement: env = environnement } = {}) {
     if (!dsn) return false
     try {
-      const e = evenementSentry({ erreur: err, message, niveau, service, environnement, version: laVersion(), etiquettes, empreinte, gere })
+      const e = evenementSentry({ erreur: err, message, niveau, service, environnement: env, version: laVersion(), etiquettes, empreinte, gere })
       const v = e.exception?.values[0]
       const cle = [empreinte?.join("|") ?? "", v?.type ?? "", v?.value ?? "", e.message ?? "", v?.stacktrace?.frames.at(-1)?.filename ?? ""].join("¦").replace(/\d+/g, "#").slice(0, 500)
       if (!admettre(cle)) return false
