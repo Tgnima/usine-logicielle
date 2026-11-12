@@ -20,6 +20,23 @@ export function decisionDeploiement(actuel, souhait) {
   return (actuel.reprises ?? 0) >= REPRISES_MAX ? "abandonner" : "reprendre"
 }
 
+// La mise à jour de l'usine, avant de toucher au dépôt : chaque secret que la NOUVELLE version de
+// docker-compose.yml attend doit exister sur le serveur (/run/usine-secrets, écrit par
+// « bash secrets.sh dechiffrer »). Sinon la mise à jour s'arrête (code 3), avec la commande à
+// lancer, et rien ne change : « docker compose up » ne trouve jamais un secret absent. Le
+// conteneur d'aide ne voit pas ce dossier : un conteneur de l'image du déployeur le regarde, sans
+// réseau, en lecture seule, et ne lit que l'existence des fichiers. Si cette vérification ne peut
+// pas se faire (Docker indisponible), elle ne bloque pas.
+export function scriptVerifierSecrets(usineDir, image) {
+  return [
+    `attendus=$( (git -c safe.directory=${usineDir} show refs/remotes/github/main:docker-compose.yml || true) | grep -oE '/run/usine-secrets/[a-z0-9_]+' | sed 's#.*/##' | sort -u | tr '\\n' ' ' || true)`,
+    `if [ -n "$attendus" ] && manquants=$(docker run --rm --network none -v /run/usine-secrets:/s:ro --entrypoint sh ${image} -c 'for f; do [ -e "/s/$f" ] || printf "%s " "$f"; done' _ $attendus) && [ -n "$manquants" ]; then`,
+    `  echo "Secrets absents du serveur : $manquants. Lancer « sudo bash secrets.sh dechiffrer » dans ${usineDir}, puis relancer la mise à jour. Rien n'a changé."`,
+    "  exit 3",
+    "fi",
+  ]
+}
+
 // Attend qu'un conteneur qui démarre réponde à /api/health par un 2xx. Sans suivre de
 // redirection, comme la sonde (sonderSante) : une réponse 3xx d'un produit ne doit pas faire
 // appeler par le déployeur une autre adresse de ses réseaux. Une redirection n'est pas saine.

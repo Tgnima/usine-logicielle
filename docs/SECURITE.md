@@ -85,6 +85,10 @@ les secrets et l'installation. Les corrections sont dans la branche `securite/au
   autre utilisateur, sans accès à ces dossiers, et filtrer les sorties réseau.
 - **Tous les produits reçoivent la clé `AI_GATEWAY_API_KEY`.** Il faut une clé dédiée, avec un
   plafond de dépense.
+- **Tous les produits reçoivent le DSN Sentry et le jeton PostHog** de l'usine (`variables()`).
+  Ce sont des clés d'envoi seulement : elles ne lisent rien. Mais un produit pourrait envoyer de
+  faux événements au nom d'un autre, ou épuiser le quota gratuit. Le remède serait un projet
+  Sentry et un projet PostHog par produit, ce que les plans gratuits ne permettent pas.
 - **L'interface de Mailpit est ouverte** aux produits qui capturent leurs emails : un produit peut
   y lire les emails de démo des autres. Il faudrait protéger cette interface (`MP_UI_AUTH_FILE`).
 - **Images en `latest`** (`caddy`, `mailpit`, `docker:cli`, Claude Code, Codex) : c'est un choix

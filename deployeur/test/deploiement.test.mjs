@@ -1,8 +1,51 @@
-// Le tour de déploiement : reprise d'un déploiement interrompu, santé sans redirection.
+// Le tour de déploiement : reprise d'un déploiement interrompu, santé sans redirection ; la mise à
+// jour de l'usine ne part pas sans les secrets que la nouvelle version attend.
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
-import { REPRISES_MAX, attendreSante, decisionDeploiement } from "../deploiement.mjs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { REPRISES_MAX, attendreSante, decisionDeploiement, scriptVerifierSecrets } from "../deploiement.mjs"
+
+// Le script de vérification des secrets, avec un faux git (le nouveau docker-compose.yml) et un
+// faux docker (il joue le conteneur de vérification sur un dossier local à la place de /s).
+const posix = (p) => (process.platform === "win32" ? p.replace(/^([A-Za-z]):/, (_, l) => `/${l.toLowerCase()}`).replaceAll("\\", "/") : p)
+function verifierSecrets({ presents, attendus = ["github_token", "sentry_dsn", "posthog_token"], dockerEnPanne = false, gitEnPanne = false }) {
+  const d = mkdtempSync(join(tmpdir(), "secrets-"))
+  const secrets = join(d, "secrets")
+  mkdirSync(secrets)
+  for (const f of presents) writeFileSync(join(secrets, f), "")
+  const compose = `secrets:\n${attendus.map((a) => `  ${a}: { file: /run/usine-secrets/${a} }`).join("\n")}\n`
+  writeFileSync(join(d, "compose.yml"), compose)
+  writeFileSync(join(d, "git"), `#!/usr/bin/env bash\n${gitEnPanne ? "exit 128" : `cat "${posix(join(d, "compose.yml"))}"`}\n`)
+  writeFileSync(join(d, "docker"), `#!/usr/bin/env bash\n${dockerEnPanne ? "exit 1" : ""}\nwhile [ "$1" != "-c" ]; do shift; done\nshift; script="$1"; shift\nscript="\${script//\\/s\\//${posix(secrets)}/}"\nexec sh -c "$script" "$@"\n`)
+  chmodSync(join(d, "git"), 0o755)
+  chmodSync(join(d, "docker"), 0o755)
+  writeFileSync(join(d, "script.sh"), `set -eo pipefail\nexport PATH="${posix(d)}:$PATH"\n${scriptVerifierSecrets("/srv/usine-logicielle", "usine-logicielle-deployeur").join("\n")}\necho "@@ SUITE"\n`)
+  const r = spawnSync("bash", [posix(join(d, "script.sh"))], { encoding: "utf8" })
+  return { code: r.status, sortie: `${r.stdout}${r.stderr}` }
+}
+
+test("mise à jour : tous les secrets attendus existent, elle continue", () => {
+  const r = verifierSecrets({ presents: ["github_token", "sentry_dsn", "posthog_token"] })
+  assert.equal(r.code, 0, r.sortie)
+  assert.match(r.sortie, /@@ SUITE/)
+})
+
+test("mise à jour : un secret nouveau absent du serveur l'arrête avant toute modification, avec la commande à lancer", () => {
+  const r = verifierSecrets({ presents: ["github_token"] })
+  assert.equal(r.code, 3, r.sortie)
+  assert.doesNotMatch(r.sortie, /@@ SUITE/)
+  assert.match(r.sortie, /Secrets absents du serveur : posthog_token sentry_dsn \./)
+  assert.match(r.sortie, /sudo bash secrets\.sh dechiffrer/)
+})
+
+test("mise à jour : une vérification impossible (Docker, git) ne bloque pas", () => {
+  assert.match(verifierSecrets({ presents: [], dockerEnPanne: true }).sortie, /@@ SUITE/)
+  assert.match(verifierSecrets({ presents: [], gitEnPanne: true }).sortie, /@@ SUITE/)
+})
 
 const SHA = "a".repeat(40)
 const AUTRE = "b".repeat(40)
