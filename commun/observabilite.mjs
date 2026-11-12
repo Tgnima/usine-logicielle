@@ -322,7 +322,9 @@ export function creerObservabilite({
         event: nettoyer(nom, 100),
         distinct_id: nettoyer(distinctId ?? service, 200),
         timestamp: new Date(horodatage ?? Date.now()).toISOString(),
-        properties: { service, environnement, ...(v ? { version: v } : {}), ...proprietesSures(proprietes), $process_person_profile: false },
+        // Ni profil de personne, ni géolocalisation : PostHog déduirait sinon une ville et des coordonnées
+        // de l'adresse d'envoi (celle du serveur, ou d'un poste lors d'un essai).
+        properties: { service, environnement, ...(v ? { version: v } : {}), ...proprietesSures(proprietes), $process_person_profile: false, $geoip_disable: true },
       }, MAX_EVENEMENTS)
       return true
     } catch {
