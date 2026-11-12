@@ -36,7 +36,12 @@ const MASQUES = [
   [/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, "[ip]"],
   [/\b(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b/gi, "[ip]"],
   [/(?<![\w:])(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])/gi, (m) => (m.length > 2 ? "[ip]" : m)],
+  // Un jeton aléatoire (lien public d'un produit, identifiant de session, UUID) : 24 caractères
+  // ou plus, lettres ET chiffres. Un nom de conteneur ou de fichier (sans chiffre) reste lisible.
+  [/[A-Za-z0-9_-]{24,}/g, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) ? "[jeton]" : m)],
 ]
+// Les motifs, pour vérifier que la copie des produits (briques/webapp/server/observabilite.js) masque pareil.
+export const MOTIFS_MASQUES = MASQUES.map(([motif]) => `${motif.source}/${motif.flags}`)
 
 // Un texte qui peut sortir : masqué, sans caractères de contrôle, limité à max caractères.
 export function nettoyer(texte, max = 1000) {
@@ -208,7 +213,7 @@ export function creerObservabilite({
   let minuterie = null
   let vidage = null
   let sentryEnPauseJusqua = 0
-  const vues = new Map() // empreinte d'une erreur -> dernier envoi (doublons : une fois par 10 min)
+  const vues = new Map() // empreinte d'une erreur -> dernier envoi (doublons : une fois par heure)
   let fenetre = { debut: Date.now(), n: 0 }
 
   const demarrer = () => {
@@ -280,13 +285,13 @@ export function creerObservabilite({
     return vidage
   }
 
-  // Les doublons d'une même erreur ne partent qu'une fois par 10 min, et 20 erreurs par heure au
+  // Les doublons d'une même erreur ne partent qu'une fois par heure, et 20 erreurs par heure au
   // plus : le plan gratuit de Sentry (5 000 par mois) ne se vide pas sur une boucle d'erreurs.
   function admettre(cle) {
     const t = Date.now()
     if (t - fenetre.debut > 3_600_000) fenetre = { debut: t, n: 0 }
     const vue = vues.get(cle)
-    if ((vue && t - vue < 10 * 60_000) || fenetre.n >= erreursParHeure) {
+    if ((vue && t - vue < 60 * 60_000) || fenetre.n >= erreursParHeure) {
       comptes.erreurs.ignores += 1
       return false
     }

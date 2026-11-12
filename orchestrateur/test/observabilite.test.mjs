@@ -41,6 +41,21 @@ test("nettoyer : adresses email, téléphones, IBAN, adresses IP, jetons et clé
   assert.match(masque, /\[secret\]/)
 })
 
+test("nettoyer : le jeton aléatoire d'un lien public ne sort pas, un nom de conteneur reste lisible", () => {
+  const masque = nettoyer("GET /api/public/desinscription/k3Jx9QmZ2vT8pL4wR7nY1aB6 : 500 ; session 123e4567-e89b-12d3-a456-426614174000 ; usine-prod-vigie-copro-blue")
+  assert.ok(!masque.includes("k3Jx9QmZ2vT8"), masque)
+  assert.ok(!masque.includes("123e4567"), masque)
+  assert.equal(masque, "GET /api/public/desinscription/[jeton] : 500 ; session [jeton] ; usine-prod-vigie-copro-blue")
+})
+
+test("la copie des produits (briques/webapp/server/observabilite.js) masque exactement comme l'usine", async () => {
+  const usine = await import("../../commun/observabilite.mjs")
+  const produit = await import("../../briques/webapp/server/observabilite.js")
+  assert.deepEqual(produit.MOTIFS_MASQUES, usine.MOTIFS_MASQUES)
+  const corpus = ["lea@exemple.fr 06 12 34 56 78 FR76 3000 6000 0112 3456 7890 189 10.0.0.1 ::1", "Bearer abcdefghijklmnop ghp_abcdefghijklmnopqrstuvwxyz0123 token=abc", "/api/public/r/k3Jx9QmZ2vT8pL4wR7nY1aB6 https://u:p@h.fr", "\u001b[31mtexte ordinaire 2026-11-10T10:00:00Z\u0007"]
+  for (const t of corpus) assert.equal(produit.nettoyer(t), usine.nettoyer(t))
+})
+
 test("nettoyer : le reste du texte est intact (dates, heures, versions, durées, sha)", () => {
   const texte = "2026-11-10T10:00:00.123Z déploiement production/vigie-copro @ 94f260e5a1b2 en 1234 ms, node 24.20.0, lot 3/5 : 12 tests"
   assert.equal(nettoyer(texte), texte)
