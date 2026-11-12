@@ -169,7 +169,8 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
         signalerErreur(e, { message: "Pouls : un compteur a échoué" })
       }
     }
-    const proprietes = { produit, environnement, ...(version ? { version } : {}), ...compteurs, pouls_echecs: echecs, erreurs_depuis_demarrage: erreursVues, en_marche_s: Math.round(process.uptime()), memoire_mo: Math.round(process.memoryUsage().rss / 1e6), $process_person_profile: false }
+    // Ni profil de personne, ni géolocalisation (PostHog la déduirait de l'adresse du serveur).
+    const proprietes = { produit, environnement, ...(version ? { version } : {}), ...compteurs, pouls_echecs: echecs, erreurs_depuis_demarrage: erreursVues, en_marche_s: Math.round(process.uptime()), memoire_mo: Math.round(process.memoryUsage().rss / 1e6), $process_person_profile: false, $geoip_disable: true }
     return poster("pouls", `${hote}/batch/`, JSON.stringify({ api_key: jeton, batch: [{ event: "pouls", distinct_id: `produit:${produit}`, timestamp: new Date().toISOString(), properties: proprietes }] }), { "content-type": "application/json" })
   }
 

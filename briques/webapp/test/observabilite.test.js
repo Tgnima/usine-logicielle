@@ -39,7 +39,7 @@ test("le pouls : un événement PostHog avec les compteurs, étiqueté par le pr
   const [e] = corps.batch
   assert.equal(e.event, "pouls")
   assert.equal(e.distinct_id, "produit:mon-produit")
-  assert.deepEqual([e.properties.produit, e.properties.environnement, e.properties.version, e.properties.en_attente, e.properties.envois_ok, e.properties.$process_person_profile], ["mon-produit", "apercu", "94f260e5a1b2", 4, 12, false])
+  assert.deepEqual([e.properties.produit, e.properties.environnement, e.properties.version, e.properties.en_attente, e.properties.envois_ok, e.properties.$process_person_profile, e.properties.$geoip_disable], ["mon-produit", "apercu", "94f260e5a1b2", 4, 12, false, true])
   assert.equal(e.properties.client, undefined)
   assert.ok(!appel.body.includes("Léa"))
 })
