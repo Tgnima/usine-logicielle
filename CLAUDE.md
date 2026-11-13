@@ -22,7 +22,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `deployeur/observation.mjs` | Ce que le déployeur envoie de chaque produit (module commun) : `etat_produit` toutes les 5 min et à chaque changement, un incident Sentry quand la panne est confirmée (deux sondes de suite), un événement `deploiement` (ok, échec, abandon), les nouvelles lignes des journaux vers PostHog (`service.name` = produit, `deployment.environment`) |
 | `deployeur/deploiement.mjs` | Les décisions du tour : déployer, reprendre un déploiement interrompu (deux fois au plus), sinon l'abandonner ; l'attente de `/api/health` sans suivre de redirection |
 | `deployeur/sonde.mjs` | La sonde des produits (chaque minute) : état Docker, santé, redémarrages, `/api/health`, version ; jugée produit par produit, publiée dans `sante.json` (`applications`), une ligne de santé et une alerte par produit dans `orchestrateur/src/sante.mjs` |
-| `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes |
+| `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes ; la déconnexion (`/_portier/deconnexion`, sur chaque adresse protégée) ferme la session côté serveur (`sessions_fermees`) : le cookie rejoué ensuite est refusé |
 | `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |
 | `orchestrateur/src/relectures.mjs` | Les relectures entre agents (sécurité) avant le vérificateur |
 | `commun/serveur-travaux.mjs` | Le serveur de travaux de l'atelier et du vérificateur |

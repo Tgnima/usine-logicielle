@@ -9,7 +9,7 @@ les secrets et l'installation. Les corrections sont dans la branche `securite/au
 | Composant | Exposé à | Protection |
 |---|---|---|
 | Caddy (80, 443) | Internet | HTTPS, portier devant chaque adresse, `/_portier/api/*` bloqué |
-| Portier `/_portier/*` | Internet (via Caddy) | sessions HMAC liées à l'adresse, essais limités |
+| Portier `/_portier/*` | Internet (via Caddy) | sessions HMAC liées à l'adresse, fermées côté serveur à la déconnexion, essais limités |
 | Portier `/_portier/api/*` | réseau `usine` | jeton `portier_api_token` |
 | Console `:8091` (`/api/*`) | Internet (via Caddy et portier) | session d'administrateur revérifiée, `Origin` contrôlé, JSON exigé |
 | API locale `:8090` | l'intérieur du conteneur | écoute sur 127.0.0.1 |
