@@ -1664,6 +1664,15 @@ const ilYa = (le) => (le ? `il y a ${duree((Date.now() - new Date(le)) / 1000)}`
 const serviceDe = (id) => etat.services?.services?.find((s) => s.id === id) ?? null
 const cleDe = (s, nom) => s?.cles.find((c) => c.nom === nom) ?? null
 const principaleDe = (s) => cleDe(s, s?.id === "sentry" ? "SENTRY_DSN" : "POSTHOG_TOKEN")
+// Le message de la dernière action, dans la fenêtre : la zone des messages est derrière le voile.
+// Pas deux fois le résultat d'un test, déjà affiché avec sa date.
+const messageDansFenetre = (s) => (etat.message && etat.message.texte !== s?.test?.message ? html`<div class="message ${etat.message.type}" style="margin:0" role="${etat.message.type === "erreur" ? "alert" : "status"}"><span style="flex:1">${etat.message.texte}</span></div>` : "")
+// Une action lancée depuis une fenêtre : en cas d'échec, la fenêtre se redessine avec le message.
+async function agirFenetre(fonction) {
+  const r = await agir(fonction)
+  if (!r) rendre()
+  return r
+}
 
 // Branché (true), à vérifier (des envois échouent), ou pas branché (false).
 function etatService(id) {
@@ -1732,6 +1741,7 @@ function fenetreService(id) {
   const s = serviceDe(id)
   if (!s) return fenetre(id === "sentry" ? "Sentry" : "PostHog", html`<div class="chargement">Chargement…</div>`)
   if (id === "sentry") return fenetre("Sentry", html`<div class="pile" style="gap:16px">
+    ${messageDansFenetre(s)}
     <p style="margin:0">Sentry t'écrit quand l'usine plante, et quand elle ne donne plus signe de vie pendant deux minutes. Facultatif, et gratuit pour une personne.</p>
     ${envoisService(s)}
     <ol class="etapes-machine">
@@ -1747,6 +1757,7 @@ function fenetreService(id) {
   const hote = region?.valeur || "eu.i.posthog.com"
   const autre = !["eu.i.posthog.com", "us.i.posthog.com"].includes(hote)
   return fenetre("PostHog", html`<div class="pile" style="gap:16px">
+    ${messageDansFenetre(s)}
     <p style="margin:0">PostHog garde le journal de l'usine : chaque étape d'un projet, chaque mise en ligne, sans aucune donnée personnelle. Facultatif.</p>
     ${envoisService(s)}
     <ol class="etapes-machine">
@@ -1801,6 +1812,7 @@ function actionsService(s, { essai = false, couper = "Couper" } = {}) {
 function fenetreSmtp(s) {
   const hote = cleDe(s, "SMTP_HOST")
   return fenetre("Envoi d'emails", html`<div class="pile" style="gap:16px">
+    ${messageDansFenetre(s)}
     <p style="margin:0">Pour que les invitations partent par email, et que les applications en ligne puissent envoyer de vrais emails. Facultatif : sans lui, tu copies les liens d'invitation toi-même.</p>
     <ol class="etapes-machine">
       <li>Chez ton fournisseur d'emails (celui de ton domaine, ou un service d'envoi), cherche les <strong>paramètres SMTP</strong> : le serveur, le port, un identifiant et un mot de passe.</li>
@@ -1824,6 +1836,7 @@ function fenetreSmtp(s) {
 function fenetreSlack(s) {
   const admins = cleDe(s, "ADMIN_USER_IDS")?.valeur
   return fenetre("Slack", html`<div class="pile" style="gap:16px">
+    ${messageDansFenetre(s)}
     <div class="barre"><strong>${s.connecte ? "Connecté" : s.actif ? "Pas encore connecté" : "Pas branché"}</strong>${s.connecte ? html`<span class="badge vert">connecté</span>` : ""}</div>
     <p style="margin:0">Tout se fait dans cette console. Slack ajoute des notifications et des boutons dans un canal de ton équipe. Facultatif.</p>
     <ol class="etapes-machine">
@@ -1844,6 +1857,7 @@ function fenetreSlack(s) {
 
 function fenetrePasserelle(s) {
   return fenetre("Passerelle des applications", html`<div class="pile" style="gap:16px">
+    ${messageDansFenetre(s)}
     <p style="margin:0">Les applications qui se servent de l'IA (résumés, suggestions…) passent par la passerelle Vercel. Donne-leur une clé à elles, avec un plafond de dépense : la clé des agents reste aux agents, et une application qui s'emballe ne vide pas leur crédit.</p>
     <ol class="etapes-machine">
       <li>Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys : crée une clé réservée aux applications et fixe-lui un plafond de dépense si ton compte le permet.</li>
@@ -2641,22 +2655,22 @@ const ACTIONS = {
     return agir(() => api("DELETE", "github", {}))
   },
   "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
-  "tester-service": (el) => agir(() => api("POST", `services/${el.dataset.service}/tester`, {})),
-  "essai-courriel": () => agir(() => api("POST", "services/smtp/essai", {})),
+  "tester-service": (el) => agirFenetre(() => api("POST", `services/${el.dataset.service}/tester`, {})),
+  "essai-courriel": () => agirFenetre(() => api("POST", "services/smtp/essai", {})),
   "couper-service": (el) => {
     const nom = serviceDe(el.dataset.service)?.libelle ?? el.dataset.service
     if (!confirmer(`Couper « ${nom} » ? L'usine ne s'en servira plus, même avec la valeur du serveur, jusqu'à ce que tu cliques sur « Retirer » ou « Ne plus couper ».`)) return
-    return agir(() => api("POST", `services/${el.dataset.service}/couper`, {}))
+    return agirFenetre(() => api("POST", `services/${el.dataset.service}/couper`, {}))
   },
   "appliquer-services": () => {
     const ap = etat.services?.applications
     const liste = (ap?.en_retard ?? []).map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`).join(", ")
     if (!confirmer(`Redémarrer ${ap?.en_retard?.length ?? 0} application(s) avec les clés de la console : ${liste} ? Même version du code ; une production passe comme à chaque mise en ligne (sauvegarde des données, puis bascule).`)) return
-    return agir(() => api("POST", "services/appliquer", { confirme: true }))
+    return agirFenetre(() => api("POST", "services/appliquer", { confirme: true }))
   },
   "retirer-service": (el) => {
     if (!confirmer("Retirer ce réglage de la console ? Celui du serveur, s'il y en a un, reprendra.")) return
-    return agir(() => api("DELETE", `services/cles/${el.dataset.nom}`, {}))
+    return agirFenetre(() => api("DELETE", `services/cles/${el.dataset.nom}`, {}))
   },
   "retirer-identifiant": (el) => {
     if (!confirmer("Retirer cette valeur de la console ? Celle du serveur, s'il y en a une, reprendra.")) return
@@ -2823,6 +2837,8 @@ const ACTIONS = {
   "voir-archives": () => { etat.filtre = "archives"; if (location.hash === "#/projets") rendre(); else location.hash = "#/projets" },
   fenetre: (el) => {
     etat.fenetre = el.dataset.quoi
+    // Une intégration s'ouvre sans le message d'une action précédente (il s'y afficherait).
+    if (el.dataset.quoi.startsWith("integration-")) etat.message = null
     if (el.dataset.quoi === "public") etat.departPublic = null
     if (el.dataset.quoi === "machine") { etat.jetonCree = null; chargerJetons() }
     if (["public", "integration-drive"].includes(el.dataset.quoi) && !etat.drive) chargerDrive()
@@ -3156,13 +3172,13 @@ document.addEventListener("submit", async (e) => {
     } catch {}
     const horsUE = f.dataset.nom === "SENTRY_DSN" && Boolean(hote) && !/(^|\.)de\.sentry\.io$/.test(hote)
     if (horsUE && !confirmer("Ce projet Sentry n'est pas en région européenne : les erreurs de l'usine partiraient hors d'Europe. Mieux vaut créer un projet en région UE. Garder quand même cette clé ?")) return
-    await agir(() => api("PUT", `services/cles/${f.dataset.nom}`, { valeur, confirme: horsUE }))
+    await agirFenetre(() => api("PUT", `services/cles/${f.dataset.nom}`, { valeur, confirme: horsUE }))
   }
   if (type === "service-champs") {
     // Seuls les champs changés partent, un par un (chacun est vérifié par le serveur).
     const changes = [...f.querySelectorAll("[name]")].map((el) => [el.name, String(el.value ?? "").trim(), el.dataset.actuel ?? ""]).filter(([, v, avant]) => v && v !== avant)
     if (!changes.length) return
-    await agir(async () => {
+    await agirFenetre(async () => {
       let r
       for (const [nom, valeur] of changes) r = await api("PUT", `services/cles/${nom}`, { valeur })
       return r
@@ -3174,7 +3190,7 @@ document.addEventListener("submit", async (e) => {
     if (!valeur) return
     const horsUE = valeur === "us.i.posthog.com"
     if (horsUE && !confirmer("Avec la région États-Unis, le journal de l'usine partira hors d'Europe. Continuer ?")) return
-    await agir(() => api("PUT", "services/cles/POSTHOG_HOTE", { valeur, confirme: horsUE }))
+    await agirFenetre(() => api("PUT", "services/cles/POSTHOG_HOTE", { valeur, confirme: horsUE }))
   }
   if (type === "modeles") {
     await agir(() => api("PUT", "fournisseurs/modeles", Object.fromEntries([...d.entries()].map(([k, v]) => [k, String(v).trim()]))))
