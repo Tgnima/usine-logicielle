@@ -12,10 +12,24 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+## v1.1.0
+
+Ce qui a été fusionné du 13 au 14 novembre 2026.
+
+- **Branchements depuis la console** : Sentry, PostHog, l'envoi d'emails, Slack et la clé d'IA des
+  applications se règlent dans Réglages, Intégrations. On colle, on teste, sans SSH ni redémarrage.
+  Les clés passent au déployeur par une boîte en mémoire, jamais par GitHub ni vers les agents.
+  « Appliquer aux applications » redéploie après confirmation, et la production passe par une PR.
+- **File d'attention** : ce qui attend une personne est rangé en À décider, À débloquer et
+  À réparer, avec le même compte à l'accueil, dans Visibilité, dans le titre de l'onglet et dans les
+  notifications. On décide sur place, avec 5 s pour annuler. Les chiffres sont donnés avec leur
+  nombre d'essais, et les échecs sont regroupés par cause.
 - **Déconnexion** : un bouton « Se déconnecter » dans la console. `/_portier/deconnexion`, sur
   chaque adresse protégée, ferme aussi la session côté serveur : le même cookie, rejoué ensuite,
   est refusé. Un lien venu d'un autre site demande confirmation. Les sessions ouvertes avant cette
   version restent valables jusqu'à leur expiration (personne n'est déconnecté par la mise à jour).
+- **Emails de l'usine toujours chiffrés** : hors TLS direct (port 465), STARTTLS est désormais
+  exigé. Un serveur d'envoi qui ne le propose pas est refusé avant l'envoi du mot de passe.
 - **Correction** : le chemin de retour de la page de connexion ne peut plus mener vers un autre site
   (une tabulation, retirée par le navigateur, le permettait).
 - **Correction** : `update.sh` et la vérification des mises à jour du déployeur n'utilisent plus
@@ -26,12 +40,9 @@ Ce qui est sur `main` sans être encore dans une version.
 - **Correction** : `update.sh` ne présente plus les secrets (chiffrés, donc absents de `.env`) comme
   des réglages nouveaux.
 
-- **Emails de l'usine toujours chiffrés** : hors TLS direct (port 465), STARTTLS est désormais
-  exigé. Un serveur d'envoi qui ne le propose pas est refusé avant l'envoi du mot de passe.
-
-**À faire** : rien. La table du portier se crée toute seule au démarrage. Si les invitations
-partaient par un serveur d'envoi sans chiffrement, choisis TLS direct (port 465) ou un autre
-serveur, puis lance « Tester » (Réglages, Intégrations, Envoi d'emails).
+**À faire** : rien. La table du portier et la boîte en mémoire se créent toutes seules au
+démarrage. Si les invitations partaient par un serveur d'envoi sans chiffrement, choisis TLS direct
+(port 465) ou un autre serveur, puis lance « Tester » (Réglages, Intégrations, Envoi d'emails).
 
 ## v1.0.0
 
