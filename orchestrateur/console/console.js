@@ -1583,8 +1583,8 @@ function integrations() {
     { id: "drive", nom: "Google Drive", logo: "▲", couleur: "#1a73e8", texte: "Facultatif : lit les dossiers que tu partages avec l'usine, pour créer un public à partir de tes documents.", branche: Boolean(etat.drive?.configure), facultatif: true },
     { id: "sentry", nom: "Sentry", logo: "Se", couleur: "#362d59", texte: "Facultatif : te prévient quand l'usine plante ou ne donne plus signe de vie.", branche: etatService("sentry"), facultatif: true },
     { id: "posthog", nom: "PostHog", logo: "Ph", couleur: "#1d4aff", texte: "Facultatif : garde le journal de l'usine, pour comprendre après coup ce qui s'est passé.", branche: etatService("posthog"), facultatif: true },
-    { id: "smtp", nom: "Envoi d'emails", logo: "@", couleur: "#0b6e4f", texte: "Facultatif : les invitations partent par email, et les applications en ligne peuvent en envoyer.", branche: Boolean(serviceDe("smtp")?.actif), facultatif: true },
-    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: Boolean(serviceDe("passerelle")?.actif), facultatif: true },
+    { id: "smtp", nom: "Envoi d'emails", logo: "@", couleur: "#0b6e4f", texte: "Facultatif : les invitations partent par email, et les applications en ligne peuvent en envoyer.", branche: etatTeste("smtp", serviceDe("smtp")?.complet !== false), facultatif: true },
+    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: etatTeste("passerelle"), facultatif: true },
   ]
 }
 const badgeIntegration = (x) => (x.branche === true ? html`<span class="badge vert">Connecté</span>`
@@ -1601,11 +1601,15 @@ function vueIntegrations() {
       ${f.protection === "axmaril" ? html`<p style="margin:8px 0 0"><span class="badge vert">clés scellées</span> <span class="aide">Même une copie du serveur ne permettrait pas de les lire.</span></p>` : ""}</div>
       <div class="pile" style="gap:4px;align-items:flex-end"><button type="button" class="btn btn-s" data-action="tester-fournisseurs">Tester les connexions</button><span class="aide">${f.tests.le ? `Dernier test : ${dateCourte(f.tests.le)}` : "Jamais testé"}</span></div></div>
     ${f.verrouille ? html`<div class="message erreur">Les clés enregistrées ici sont verrouillées pour l'instant : l'usine utilise celles du serveur. Préviens la personne qui s'occupe du serveur.</div>` : ""}
-    <div class="cartes-integrations">${integrations().map((x) => html`<div class="carte carte-integration">
+    <div class="cartes-integrations">${integrations().map((x) => {
+      // Le même mot dans le bouton et dans son nom accessible (commande vocale, lecteur d'écran).
+      const action = x.branche === true ? "Gérer" : x.facultatif ? "Voir" : "Connecter"
+      return html`<div class="carte carte-integration">
       <div class="barre"><span class="logo-integration" style="background:${x.couleur}" aria-hidden="true">${x.logo}</span>${badgeIntegration(x)}</div>
       <strong>${x.nom}</strong><span class="aide" style="flex:1">${x.texte}</span>
-      <div><button type="button" class="btn ${x.branche === true || x.facultatif ? "btn-s" : "btn-p"} btn-petit" data-action="fenetre" data-quoi="integration-${x.id}" aria-label="${x.branche === true ? "Gérer" : "Connecter"} ${x.nom}">${x.branche === true ? "Gérer" : x.facultatif ? "Voir" : "Connecter"}</button></div>
-    </div>`)}</div>
+      <div><button type="button" class="btn ${x.branche === true || x.facultatif ? "btn-s" : "btn-p"} btn-petit" data-action="fenetre" data-quoi="integration-${x.id}" aria-label="${action} ${x.nom}">${action}</button></div>
+    </div>`
+    })}</div>
     ${carteRelais(f)}
     <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Réglages avancés : passerelle de secours et modèles</summary>
       <div class="pile" style="gap:16px;margin-top:12px">
@@ -1668,33 +1672,49 @@ function fenetreIntegration(id) {
 // --- Sentry et PostHog (services.mjs) : des clés à part de celles des IA ----------------------
 // Ce qui est montré vient de ce que l'usine a vraiment envoyé (dernier envoi réussi, échecs).
 const ilYa = (le) => (le ? `il y a ${duree((Date.now() - new Date(le)) / 1000)}` : "")
+// Le début d'une panne : l'heure s'il date d'aujourd'hui, sinon le jour et l'heure.
+const depuisParis = (le) => (aParis(le, { dateStyle: "short" }) === aParis(new Date(), { dateStyle: "short" }) ? heureParis(le) : `le ${momentParis(le)}`)
 const serviceDe = (id) => etat.services?.services?.find((s) => s.id === id) ?? null
 const cleService = (s, nom) => s?.cles.find((c) => c.nom === nom) ?? null
-const principaleDe = (s) => cleService(s, s?.id === "sentry" ? "SENTRY_DSN" : "POSTHOG_TOKEN")
+const principaleDe = (s) => cleService(s, { sentry: "SENTRY_DSN", posthog: "POSTHOG_TOKEN", smtp: "SMTP_HOST", slack: "SLACK_BOT_TOKEN", passerelle: "AI_GATEWAY_API_KEY_APPLIS" }[s?.id])
 // Le message de la dernière action, dans la fenêtre : la zone des messages est derrière le voile.
 // Pas deux fois le résultat d'un test, déjà affiché avec sa date.
 const messageDansFenetre = (s) => (etat.message && etat.message.texte !== s?.test?.message ? html`<div class="message ${etat.message.type}" style="margin:0" role="${etat.message.type === "erreur" ? "alert" : "status"}"><span style="flex:1">${etat.message.texte}</span></div>` : "")
-// Une action lancée depuis une fenêtre : en cas d'échec, la fenêtre se redessine avec le message.
+// Une action lancée depuis une fenêtre : en cas d'échec, la fenêtre se redessine avec ce qui a
+// vraiment été enregistré et le dernier test (rechargés), et le message d'erreur.
 async function agirFenetre(fonction) {
   const r = await agir(fonction)
-  if (!r) rendre()
+  if (!r) await charger({ silencieux: true })
   return r
 }
 
-// Branché (true), à vérifier (des envois échouent), ou pas branché (false).
+// Branché (true), à vérifier (des envois échouent, ou le dernier test a échoué), ou pas branché (false).
 function etatService(id) {
   const s = serviceDe(id)
   if (!s?.actif) return false
-  return Object.values(s.envoi).some((c) => c.joignable === false) ? "a_verifier" : true
+  if (Object.values(s.envoi).some((c) => c.joignable === false)) return "a_verifier"
+  if (s.test && !s.test.ok) return "a_verifier"
+  return true
+}
+// Les services sans envoi mesuré (emails, passerelle) : branchés seulement sur preuve, un test
+// réussi. Sans test : « pas encore testé » ; incomplet ou test en échec : « à vérifier ».
+function etatTeste(id, complet = true) {
+  const s = serviceDe(id)
+  if (!s?.actif) return false
+  if (!complet || (s.test && !s.test.ok)) return "a_verifier"
+  return s.test?.ok ? true : null
 }
 
 // Une clé : d'où elle vient (console, serveur, coupée), jamais la valeur elle-même.
 function champService(s, nom, aide, titre) {
   const c = cleService(s, nom)
   if (!c) return ""
-  const source = c.illisible ? html`<span class="badge rouge">verrouillée</span> <span class="aide">la valeur du serveur sert</span>`
+  // La fin d'une clé longue aide à la reconnaître ; un mot de passe, lui, n'en montre rien.
+  const enregistree = c.console?.fin ? `enregistrée · …${c.console.fin}` : "enregistré"
+  const source = c.illisible ? html`<span class="badge rouge">verrouillée</span> <span class="aide">${c.serveur ? "la valeur du serveur sert" : "elle ne sert pas pour l'instant"}</span>`
     : c.coupe ? html`<span class="badge orange">envoi coupé</span> <span class="aide">le ${dateCourte(c.coupe.le)} par ${c.coupe.par}</span>`
-    : c.console ? html`<span class="badge vert">enregistrée · …${c.console.fin}</span> <span class="aide">le ${dateCourte(c.console.le)} par ${c.console.par}</span>`
+    : c.console && c.en_attente ? html`<span class="badge orange">${enregistree}, pas encore en service</span> <span class="aide">le ${dateCourte(c.console.le)} par ${c.console.par}</span>`
+    : c.console ? html`<span class="badge vert">${enregistree}</span> <span class="aide">le ${dateCourte(c.console.le)} par ${c.console.par}</span>`
     : c.serveur ? html`<span class="badge">posée sur le serveur</span>` : html`<span class="badge">pas de clé</span>`
   return html`<form class="pile" style="gap:6px" data-form="service-cle" data-nom="${nom}">
     <div class="barre" style="flex-wrap:wrap;gap:6px"><label for="sv-${nom}"><strong style="font-size:14px">${titre}</strong></label><span>${source}</span></div>
@@ -1710,7 +1730,7 @@ const NOMS_CANAUX = { battement: "Signal de vie", erreurs: "Erreurs", evenements
 function envoisService(s) {
   if (!s.actif) return html`<div class="aide">${principaleDe(s)?.coupe ? "Envoi coupé : l'usine n'envoie plus rien à ce service." : "Rien n'est envoyé pour l'instant : il n'y a pas de clé."}</div>`
   const lignes = Object.entries(s.envoi).map(([canal, c]) => html`<li><strong>${NOMS_CANAUX[canal] ?? canal}</strong> : ${c.joignable === false && c.dernier_echec
-    ? html`les envois échouent depuis ${heureParis(c.dernier_echec.le)}. ${c.dernier_echec.message}`
+    ? html`les envois échouent depuis ${depuisParis(c.premier_echec ?? c.dernier_echec.le)}. ${c.dernier_echec.message}`
     : c.dernier_ok ? `dernier envoi réussi ${ilYa(c.dernier_ok)}.` : "rien d'envoyé depuis le démarrage."}</li>`)
   return html`<div class="pile" style="gap:6px"><ul style="margin:0;padding-left:18px;font-size:14px">${lignes}</ul>${destinatairesService(s)}</div>`
 }
@@ -1725,21 +1745,27 @@ function destinatairesService(s) {
   const ligneDeployeur = !d?.connu ? "Le déployeur : pas encore de nouvelles."
     : !d.a_jour ? "Le déployeur : pas encore reçu la dernière clé (il la lit dans la minute)."
     : !Object.keys(d.envoi ?? {}).length ? "Le déployeur a les derniers réglages de la console."
-    : echec ? html`Le déployeur : ses envois échouent depuis ${heureParis(echec.dernier_echec.le)}. ${echec.dernier_echec.message}`
+    : echec ? html`Le déployeur : ses envois échouent depuis ${depuisParis(echec.premier_echec ?? echec.dernier_echec.le)}. ${echec.dernier_echec.message}`
     : dernier ? `Le déployeur : dernier envoi réussi ${ilYa(dernier)}.` : "Le déployeur : clé reçue, rien d'envoyé pour l'instant."
+  // Une mise en ligne en échec : l'ancienne version tourne encore, avec ses anciennes clés.
+  const enEchec = (ap?.en_retard ?? []).filter((a) => a.echec).map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`)
   const ligneApplis = !ap?.total ? "Aucune application en ligne pour l'instant."
     : ap.a_jour === ap.total ? `Les applications : ${ap.total} sur ${ap.total} ont la dernière clé.`
     : html`Les applications : ${ap.a_jour} sur ${ap.total} ont la dernière clé. Les autres la recevront à leur prochaine mise en ligne.
-      ${ap.en_cours ? html`<span class="aide">Redémarrage demandé…</span>` : html`<button type="button" class="btn btn-s btn-petit" data-action="appliquer-services">Appliquer maintenant</button>`}`
+      ${enEchec.length ? html`<span class="aide">Dernière mise en ligne en échec pour ${enEchec.join(", ")} : l'ancienne version tourne, avec les anciennes clés.</span>` : ""}
+      ${ap.en_cours ? html`<span class="aide">Redémarrage en cours…</span>` : ""}
+      ${ap.a_faire ? html`<button type="button" class="btn btn-s btn-petit" data-action="appliquer-services">Appliquer maintenant</button>` : ""}`
   return html`<ul style="margin:0;padding-left:18px;font-size:14px"><li>${ligneDeployeur}</li><li>${ligneApplis}</li></ul>`
 }
 
 function boutonsService(s) {
   const t = s.test
+  const coupe = principaleDe(s)?.coupe
   return html`<div class="pile" style="gap:6px">
     ${t ? html`<div class="message ${t.ok ? "ok" : "erreur"}" style="margin:0"><span style="flex:1">${t.message} <span class="aide">(test du ${dateCourte(t.le)})</span></span></div>` : ""}
     <div class="rangee" style="justify-content:space-between;gap:8px">
-      ${s.actif && !principaleDe(s)?.coupe ? html`<button type="button" class="btn btn-d btn-petit" data-action="couper-service" data-service="${s.id}">Couper l'envoi</button>` : html`<span></span>`}
+      ${s.actif && !coupe ? html`<button type="button" class="btn btn-d btn-petit" data-action="couper-service" data-service="${s.id}">Couper l'envoi</button>`
+        : coupe ? html`<button type="button" class="btn btn-s btn-petit" data-action="reprendre-service" data-service="${s.id}">Ne plus couper</button>` : html`<span></span>`}
       <button type="button" class="btn btn-s" data-action="tester-service" data-service="${s.id}" ${brut(s.actif ? "" : "disabled")}>Tester</button>
     </div></div>`
 }
@@ -1788,30 +1814,35 @@ function fenetreService(id) {
 
 // Les réglages publics d'un service (serveur d'envoi, canal…) : leur valeur et d'où elle vient.
 // Les champs secrets ont chacun leur formulaire (champService).
-function champsService(s, champs) {
-  return html`<form class="pile" style="gap:10px" data-form="service-champs">
+// adopter (l'envoi d'emails) : data-actuel ne garde que ce que la console a posé. Une valeur venue
+// du serveur, affichée telle quelle, part donc à « Enregistrer » : la console la reprend à son compte.
+// retirer : [nom, libellé] d'un bouton qui rend la main au serveur.
+function champsService(s, champs, { adopter = false, retirer = null } = {}) {
+  return html`<form class="pile" style="gap:10px" data-form="service-champs" data-service="${s.id}">
     <div class="grille">${champs.map(([nom, titre, type, options, aide]) => {
       const c = cleService(s, nom)
       if (!c) return ""
-      const origine = c.coupe ? "coupé dans la console" : c.console ? `console, le ${dateCourte(c.console.le)}` : c.serveur ? "serveur" : ""
+      const origine = c.coupe ? "coupé dans la console" : c.console ? `console${c.en_attente ? ", pas encore en service" : `, le ${dateCourte(c.console.le)}`}` : c.serveur ? "serveur" : ""
       const libelle = html`<label class="aide" for="sc-${nom}">${titre}${origine ? html` <span class="aide">(${origine})</span>` : ""}</label>`
-      const valeur = c.valeur ?? ""
-      if (type === "choix") return html`<div class="pile" style="gap:6px">${libelle}<select id="sc-${nom}" name="${nom}" class="champ" data-actuel="${valeur}">
+      // Une saisie refusée reste dans son champ (etat.saisieService), même si la page se redessine.
+      const actuel = adopter && !c.console ? "" : c.valeur ?? ""
+      const valeur = etat.saisieService?.[nom] ?? c.valeur ?? ""
+      if (type === "choix") return html`<div class="pile" style="gap:6px">${libelle}<select id="sc-${nom}" name="${nom}" class="champ" data-actuel="${actuel}" data-libelle="${titre}">
         ${!valeur ? html`<option value="" selected>—</option>` : ""}${options.map(([v, t]) => html`<option value="${v}" ${brut(v === valeur ? "selected" : "")}>${t}</option>`)}</select>${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
-      return html`<div class="pile" style="gap:6px">${libelle}<input id="sc-${nom}" name="${nom}" class="champ mono" value="${valeur}" data-actuel="${valeur}" placeholder="${options ?? ""}" autocomplete="off" spellcheck="false">${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
+      return html`<div class="pile" style="gap:6px">${libelle}<input id="sc-${nom}" name="${nom}" class="champ mono" value="${valeur}" data-actuel="${actuel}" data-libelle="${titre}" placeholder="${options ?? ""}" autocomplete="off" spellcheck="false">${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
     })}</div>
-    <div><button type="submit" class="btn btn-s">Enregistrer</button></div>
+    <div class="rangee" style="gap:8px"><button type="submit" class="btn btn-s">Enregistrer</button>${retirer ? html`<button type="button" class="btn btn-s" data-action="retirer-service" data-nom="${retirer[0]}">${retirer[1]}</button>` : ""}</div>
   </form>`
 }
 
 // Couper, Tester, et le dernier test : pour les services sans envoi mesuré (emails, Slack, passerelle).
 function actionsService(s, { essai = false, couper = "Couper" } = {}) {
   const t = s.test
-  const principale = s.cles.find((c) => c.nom === { smtp: "SMTP_HOST", slack: "SLACK_BOT_TOKEN", passerelle: "AI_GATEWAY_API_KEY_APPLIS" }[s.id])
+  const principale = principaleDe(s)
   return html`<div class="pile" style="gap:6px">
     ${t ? html`<div class="message ${t.ok ? "ok" : "erreur"}" style="margin:0"><span style="flex:1">${t.message} <span class="aide">(test du ${dateCourte(t.le)})</span></span></div>` : ""}
     <div class="rangee" style="justify-content:space-between;gap:8px">
-      ${s.actif && !principale?.coupe ? html`<button type="button" class="btn btn-d btn-petit" data-action="couper-service" data-service="${s.id}" data-nom-service="${s.libelle}">${couper}</button>` : principale?.coupe ? html`<button type="button" class="btn btn-s btn-petit" data-action="retirer-service" data-nom="${principale.nom}">Ne plus couper</button>` : html`<span></span>`}
+      ${s.actif && !principale?.coupe ? html`<button type="button" class="btn btn-d btn-petit" data-action="couper-service" data-service="${s.id}" data-nom-service="${s.libelle}">${couper}</button>` : principale?.coupe ? html`<button type="button" class="btn btn-s btn-petit" data-action="reprendre-service" data-service="${s.id}">Ne plus couper</button>` : html`<span></span>`}
       <span class="rangee" style="gap:8px">${essai ? html`<button type="button" class="btn btn-s" data-action="essai-courriel" ${brut(s.actif ? "" : "disabled")}>M'envoyer un email d'essai</button>` : ""}<button type="button" class="btn btn-s" data-action="tester-service" data-service="${s.id}" ${brut(s.actif ? "" : "disabled")}>Tester</button></span>
     </div></div>`
 }
@@ -1831,10 +1862,12 @@ function fenetreSmtp(s) {
       ["SMTP_PORT", "Port", "texte", "587"],
       ["SMTP_SECURE", "Sécurité", "choix", [["0", "STARTTLS (port 587)"], ["1", "TLS direct (port 465)"]]],
       ["EMAIL_EXPEDITEUR", "Expéditeur", "texte", "Usine <usine@mon-domaine.fr>"],
-    ])}
+    ], { adopter: true, retirer: hote?.console || hote?.coupe ? ["SMTP_HOST", "Rendre la main au serveur"] : null })}
     ${champService(s, "SMTP_USER", "", "Identifiant")}
     ${champService(s, "SMTP_PASS", "", "Mot de passe")}
-    ${hote?.console ? html`<div class="aide">Le serveur d'envoi vient de la console : tout l'envoi en vient (identifiant et mot de passe compris), jamais un mélange avec le serveur.</div>` : ""}
+    ${hote?.console || hote?.coupe ? html`<div class="aide">Le serveur d'envoi vient de la console : tout l'envoi en vient (identifiant et mot de passe compris), jamais un mélange avec le serveur. Un champ vide ici ne sert pas.</div>`
+      : s.cles.some((c) => c.en_attente) ? html`<div class="message info" style="margin:0"><span style="flex:1">Des réglages enregistrés ici ne servent pas encore : l'envoi garde tous ceux du serveur. Enregistre aussi le serveur d'envoi ici pour que tout l'envoi vienne de la console.</span></div>`
+      : hote?.source === "serveur" ? html`<div class="aide">Ces réglages viennent du serveur. « Enregistrer » les reprend dans la console : colle alors aussi l'identifiant et le mot de passe ici, ceux du serveur ne serviront plus.</div>` : ""}
     ${destinatairesService(s)}
     ${actionsService(s, { essai: true, couper: "Couper l'envoi" })}
   </div>`)
@@ -1847,7 +1880,7 @@ function fenetreSlack(s) {
     <div class="barre"><strong>${s.connecte ? "Connecté" : s.actif ? "Pas encore connecté" : "Pas branché"}</strong>${s.connecte ? html`<span class="badge vert">connecté</span>` : ""}</div>
     <p style="margin:0">Tout se fait dans cette console. Slack ajoute des notifications et des boutons dans un canal de ton équipe. Facultatif.</p>
     <ol class="etapes-machine">
-      <li>Sur <span class="mono">api.slack.com/apps</span>, crée l'application de l'usine avec le manifeste du dépôt (<span class="mono">slack-manifest.yml</span>), puis installe-la dans ton espace.</li>
+      <li>Sur <span class="mono">api.slack.com/apps</span>, crée l'application de l'usine avec le fichier <span class="mono">slack-manifest.yml</span> fourni avec l'usine, puis installe-la dans ton espace.</li>
       <li>Copie le <strong>jeton du bot</strong> (OAuth &amp; Permissions, il commence par <span class="mono">xoxb-</span>) et le <strong>jeton de l'application</strong> (Basic Information, App-Level Tokens, avec <span class="mono">connections:write</span> ; il commence par <span class="mono">xapp-</span>).</li>
       <li>Indique le canal et les personnes qui pourront décider depuis Slack, puis lance le test.</li>
     </ol>
@@ -1857,7 +1890,7 @@ function fenetreSlack(s) {
       ["SLACK_CANAL", "Canal (identifiant)", "texte", "C0123456789"],
       ["ADMIN_USER_IDS", "Administrateurs (identifiants)", "texte", "U0123456789, U0987654321", "Eux seuls valident, décident et mettent en production depuis Slack."],
     ])}
-    ${!admins ? html`<div class="message erreur" style="margin:0"><span style="flex:1">Aucun administrateur désigné : personne ne peut décider depuis Slack. C'est voulu, tant que tu n'as nommé personne.</span></div>` : ""}
+    ${s.actif && !admins ? html`<div class="message info" style="margin:0"><span style="flex:1">Aucun administrateur désigné : personne ne peut décider depuis Slack tant que tu n'en as nommé aucun.</span></div>` : ""}
     ${actionsService(s, { couper: "Débrancher Slack" })}
   </div>`)
 }
@@ -2788,17 +2821,20 @@ const ACTIONS = {
   "essai-courriel": () => agirFenetre(() => api("POST", "services/smtp/essai", {})),
   "couper-service": (el) => {
     const nom = serviceDe(el.dataset.service)?.libelle ?? el.dataset.service
-    if (!confirmer(`Couper « ${nom} » ? L'usine ne s'en servira plus, même avec la valeur du serveur, jusqu'à ce que tu cliques sur « Retirer » ou « Ne plus couper ».`)) return
+    if (!confirmer(`Couper « ${nom} » ? L'usine ne s'en servira plus, même avec la valeur du serveur. Ce qui est enregistré ici est gardé : « Ne plus couper » le rebranche comme avant.`)) return
     return agirFenetre(() => api("POST", `services/${el.dataset.service}/couper`, {}))
   },
+  "reprendre-service": (el) => agirFenetre(() => api("POST", `services/${el.dataset.service}/reprendre`, {})),
   "appliquer-services": () => {
     const ap = etat.services?.applications
-    const liste = (ap?.en_retard ?? []).map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`).join(", ")
-    if (!confirmer(`Redémarrer ${ap?.en_retard?.length ?? 0} application(s) avec les clés de la console : ${liste} ? Même version du code ; une production passe comme à chaque mise en ligne (sauvegarde des données, puis bascule).`)) return
+    // Seulement celles qu'« Appliquer » redemande : pas celles dont le redémarrage est déjà en cours.
+    const aFaire = (ap?.en_retard ?? []).filter((a) => !a.en_cours)
+    const liste = aFaire.map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`).join(", ")
+    if (!confirmer(`Redémarrer ${aFaire.length} application(s) avec les clés de la console : ${liste} ? Même version du code ; une production passe comme à chaque mise en ligne (sauvegarde des données, puis bascule).`)) return
     return agirFenetre(() => api("POST", "services/appliquer", { confirme: true }))
   },
   "retirer-service": (el) => {
-    if (!confirmer("Retirer ce réglage de la console ? Celui du serveur, s'il y en a un, reprendra.")) return
+    if (!confirmer("Retirer ce réglage de la console ? Ce qui est enregistré ici (et une coupure) est effacé : celui du serveur, s'il y en a un, reprendra.")) return
     return agirFenetre(() => api("DELETE", `services/cles/${el.dataset.nom}`, {}))
   },
   "retirer-identifiant": (el) => {
@@ -2968,8 +3004,11 @@ const ACTIONS = {
     // Une fenêtre ouverte depuis une autre garde l'ouvreur de la première : c'est là que le focus revient.
     if (!etat.fenetre) etat.ouvreur = cleDe(el)
     etat.fenetre = el.dataset.quoi
-    // Une intégration s'ouvre sans le message d'une action précédente (il s'y afficherait).
-    if (el.dataset.quoi.startsWith("integration-")) etat.message = null
+    // Une intégration s'ouvre sans le message ni la saisie refusée d'une action précédente.
+    if (el.dataset.quoi.startsWith("integration-")) {
+      etat.message = null
+      etat.saisieService = null
+    }
     if (el.dataset.quoi === "public") etat.departPublic = null
     if (el.dataset.quoi === "machine") { etat.jetonCree = null; chargerJetons() }
     if (["public", "integration-drive"].includes(el.dataset.quoi) && !etat.drive) chargerDrive()
@@ -3113,6 +3152,11 @@ document.addEventListener("click", (e) => {
 })
 
 document.addEventListener("input", (e) => {
+  // Taper l'adresse d'un relais PostHog choisit l'option relais : la saisie n'est jamais ignorée.
+  if (e.target.matches("[data-form=service-region] [name=autre]")) {
+    const relais = e.target.form?.querySelector("[name=region][value=autre]")
+    if (relais) relais.checked = true
+  }
   if (e.target.closest("[data-form=plan]") && e.target.matches("[data-lot]") && !etat.planModifie) {
     etat.planEdition = syncPlan(planCourant())
     etat.planEditionId = etat.projet.id
@@ -3322,25 +3366,49 @@ document.addEventListener("submit", async (e) => {
     try {
       hote = new URL(valeur).host
     } catch {}
-    const horsUE = f.dataset.nom === "SENTRY_DSN" && Boolean(hote) && !/(^|\.)de\.sentry\.io$/.test(hote)
+    // Comme le serveur (sentryHorsUE) : seulement sentry.io hors de sa région UE ; un Sentry de
+    // l'entreprise est là où elle l'a mis.
+    const h = hote.toLowerCase().replace(/:\d+$/, "")
+    const horsUE = f.dataset.nom === "SENTRY_DSN" && /(^|\.)sentry\.io$/.test(h) && !/(^|\.)de\.sentry\.io$/.test(h)
     if (horsUE && !confirmer("Ce projet Sentry n'est pas en région européenne : les erreurs de l'usine partiraient hors d'Europe. Mieux vaut créer un projet en région UE. Garder quand même cette clé ?")) return
     await agirFenetre(() => api("PUT", `services/cles/${f.dataset.nom}`, { valeur, confirme: horsUE }))
   }
   if (type === "service-champs") {
-    // Seuls les champs changés partent, un par un (chacun est vérifié par le serveur).
-    const changes = [...f.querySelectorAll("[name]")].map((el) => [el.name, String(el.value ?? "").trim(), el.dataset.actuel ?? ""]).filter(([, v, avant]) => v && v !== avant)
-    if (!changes.length) return
-    await agirFenetre(async () => {
-      let r
-      for (const [nom, valeur] of changes) r = await api("PUT", `services/cles/${nom}`, { valeur })
-      return r
+    // Les champs changés partent, un par un (chacun est vérifié par le serveur). L'envoi d'emails est
+    // un bloc : si le serveur d'envoi change, tous les champs remplis partent avec lui.
+    const tous = [...f.querySelectorAll("[name]")].map((el) => [el.name, String(el.value ?? "").trim(), el.dataset.actuel ?? "", el.dataset.libelle ?? el.name])
+    const bloc = f.dataset.service === "smtp" && tous.some(([nom, v, avant]) => nom === "SMTP_HOST" && v && v !== avant)
+    const changes = tous.filter(([, v, avant]) => v && (bloc || v !== avant))
+    if (!changes.length) {
+      etat.message = { type: "info", texte: "Rien n'a changé." }
+      rendre()
+      return
+    }
+    const faits = []
+    const r = await agirFenetre(async () => {
+      let res
+      for (const [nom, valeur, , libelle] of changes) {
+        try {
+          res = await api("PUT", `services/cles/${nom}`, { valeur })
+        } catch (e) {
+          // Ce qui est déjà parti est enregistré : on le dit, avec le refus.
+          throw new Error(faits.length ? `${faits.map(([, l]) => l).join(", ")} : enregistré. ${e.message}` : e.message)
+        }
+        faits.push([nom, libelle])
+      }
+      return res
     })
+    // Un refus : la fenêtre montre ce qui a vraiment été enregistré, et garde la saisie du reste.
+    etat.saisieService = r ? null : Object.fromEntries(changes.filter(([nom]) => !faits.some(([n]) => n === nom)).map(([nom, valeur]) => [nom, valeur]))
+    if (!r) rendre()
   }
   if (type === "service-region") {
     const choix = String(d.get("region") ?? "")
     const valeur = choix === "autre" ? String(d.get("autre") ?? "").trim() : choix
     if (!valeur) return
-    const horsUE = valeur === "us.i.posthog.com"
+    // Nettoyée comme le fait le serveur (validerHotePosthog), avant de comparer.
+    const norme = valeur.replace(/^https:\/\//i, "").replace(/\/+$/, "").toLowerCase()
+    const horsUE = norme === "us.i.posthog.com" || norme === "app.posthog.com"
     if (horsUE && !confirmer("Avec la région États-Unis, le journal de l'usine partira hors d'Europe. Continuer ?")) return
     await agirFenetre(() => api("PUT", "services/cles/POSTHOG_HOTE", { valeur, confirme: horsUE }))
   }
