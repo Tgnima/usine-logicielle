@@ -92,6 +92,18 @@ test("sans session ou sans être administrateur : refusé", async () => {
   assert.equal((await appel("/", { session: null })).status, 403)
 })
 
+test("la console a un bouton « Se déconnecter » : un vrai formulaire, envoyé au portier", async () => {
+  const r = await appel("/")
+  assert.equal(r.status, 200)
+  // Le portier répond sur la même adresse que la console (Caddy lui envoie /_portier/*) : la CSP le laisse partir.
+  assert.match(r.headers.get("content-security-policy"), /form-action 'self'/)
+  const formulaire = /<form method="post" action="\/_portier\/deconnexion">([\s\S]*?)<\/form>/.exec(await r.text())
+  assert.ok(formulaire, "un formulaire POST vers /_portier/deconnexion")
+  assert.match(formulaire[1], /<button type="submit"[^>]*>[\s\S]*Se déconnecter<\/button>/)
+  // Sans data-form : la console ne l'intercepte pas, le navigateur l'envoie lui-même.
+  assert.doesNotMatch(formulaire[0], /data-form/)
+})
+
 test("le résumé liste les projets et ce qui attend une décision", async () => {
   const { statut, corps } = await json(await appel("/api/resume"))
   assert.equal(statut, 200)

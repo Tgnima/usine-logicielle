@@ -3,12 +3,14 @@
 import { test, before, after } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { createHmac } from "node:crypto"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 const BASE = "exemple.test"
 const JETON = "j".repeat(40)
+const SECRET = "s".repeat(64)
 let serveur
 const port = 18080
 const appel = (chemin, { hote = `prospecta.${BASE}`, methode = "GET", corps, entetes = {} } = {}) =>
@@ -19,7 +21,7 @@ const formEntetes = { "content-type": "application/x-www-form-urlencoded" }
 
 before(async () => {
   serveur = spawn(process.execPath, [join(import.meta.dirname, "..", "server.mjs")], {
-    env: { ...process.env, PORTIER_SECRET: "s".repeat(64), PORTIER_API_TOKEN: JETON, DOMAINE_BASE: BASE, DATA_DIR: mkdtempSync(join(tmpdir(), "portier-")), PORT: String(port) },
+    env: { ...process.env, PORTIER_SECRET: SECRET, PORTIER_API_TOKEN: JETON, DOMAINE_BASE: BASE, DATA_DIR: mkdtempSync(join(tmpdir(), "portier-")), PORT: String(port) },
     stdio: "ignore",
   })
   for (let i = 0; i < 50; i++) {
@@ -159,6 +161,158 @@ test("une adresse avec des jokers SQL ne désigne aucune application", async () 
   const { cle } = await (await api("cles", "POST", { nom: "jokers", applis: ["prospecta"], par: "test" })).json()
   const r = await appel("/_portier/verifier", { hote: "%", entetes: { authorization: `Bearer ${cle}`, "x-forwarded-uri": "/api/x" } })
   assert.equal(r.status, 401)
+})
+
+// --- Déconnexion ---------------------------------------------------------------------
+const connecter = async (email, hote = `prospecta.${BASE}`) => {
+  const c = await appel("/_portier/connexion", { hote, methode: "POST", corps: form({ email, mot_de_passe: "un mot de passe solide", retour: "/" }), entetes: formEntetes })
+  assert.equal(c.status, 302)
+  return c.headers.get("set-cookie").split(";")[0]
+}
+const deconnecter = (cookie, { hote = `prospecta.${BASE}`, methode = "POST", chemin = "/_portier/deconnexion", entetes = {} } = {}) =>
+  appel(chemin, { hote, methode, entetes: { ...(cookie ? { cookie } : {}), ...(methode === "POST" ? { origin: `https://${hote}` } : {}), ...entetes } })
+const verifier = (cookie, hote = `prospecta.${BASE}`) => appel("/_portier/verifier", { hote, entetes: { cookie, "x-forwarded-uri": "/" } })
+const qui = (cookie, hote = `prospecta.${BASE}`) => appel("/_portier/qui", { hote, entetes: { cookie } })
+const deconnexionsNotees = async () => (await (await api("evenements")).json()).filter((e) => e.evenement.startsWith("déconnexion")).length
+// Le cookie effacé côté navigateur : même nom, mêmes attributs, durée nulle.
+const efface = (r) => assert.match(r.headers.get("set-cookie") ?? "", /^usine_session=; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=0$/)
+
+test("déconnexion : le cookie est effacé, la session fermée, et le cookie rejoué ensuite est refusé", async () => {
+  const cookie = await connecter("alice@exemple.fr")
+  assert.equal((await verifier(cookie)).status, 200)
+  const avant = await deconnexionsNotees()
+  const r = await deconnecter(cookie)
+  assert.equal(r.status, 303)
+  assert.equal(r.headers.get("location"), "/_portier/connexion")
+  assert.equal(r.headers.get("cache-control"), "no-store")
+  efface(r)
+  assert.equal(await deconnexionsNotees(), avant + 1)
+  // Le vieux cookie, rejoué tel quel : Caddy renvoie vers la connexion, une API reçoit 401, le tableau de bord ne voit personne.
+  const rejoue = await verifier(cookie)
+  assert.equal(rejoue.status, 302)
+  assert.match(rejoue.headers.get("location"), /^\/_portier\/connexion\?retour=/)
+  assert.equal((await appel("/_portier/verifier", { entetes: { cookie, "x-forwarded-uri": "/api/contacts" } })).status, 401)
+  assert.equal((await qui(cookie)).status, 401)
+  // Le compte, lui, n'est pas touché : une nouvelle connexion ouvre une nouvelle session.
+  assert.equal((await verifier(await connecter("alice@exemple.fr"))).status, 200)
+})
+
+test("deux connexions du même compte, même à la même seconde : fermer l'une ne ferme pas l'autre", async () => {
+  const [une, autre] = await Promise.all([connecter("alice@exemple.fr"), connecter("alice@exemple.fr")])
+  assert.notEqual(une, autre)
+  await deconnecter(une)
+  assert.equal((await verifier(une)).status, 302)
+  assert.equal((await verifier(autre)).status, 200)
+})
+
+test("une session ouverte avant cette version (cookie sans aléa) reste valable, et la déconnexion la ferme", async () => {
+  const r = await api("utilisateurs", "POST", { email: "dora@exemple.fr", role: "membre", applis: ["prospecta"] })
+  const { id, lien } = await r.json()
+  await appel("/_portier/invitation", { methode: "POST", corps: form({ jeton: new URL(lien).searchParams.get("jeton"), mot_de_passe: "un mot de passe solide", confirmation: "un mot de passe solide" }), entetes: formEntetes })
+  // L'ancien format, signé comme le faisait le portier : id.version.hôte.expiration.signature (version 2 : le mot de passe choisi).
+  const corps = `${id}.2.${Buffer.from(`prospecta.${BASE}`).toString("base64url")}.${Math.floor(Date.now() / 1000) + 3600}`
+  const ancien = `usine_session=${corps}.${createHmac("sha256", SECRET).update(corps).digest("base64url")}`
+  assert.equal((await verifier(ancien)).status, 200)
+  await deconnecter(ancien)
+  assert.equal((await verifier(ancien)).status, 302)
+})
+
+test("déconnexion par un lien de l'application (GET) : la session est fermée aussi", async () => {
+  for (const entetes of [{ "sec-fetch-site": "same-origin" }, { "sec-fetch-site": "none" }, {}]) {
+    const cookie = await connecter("alice@exemple.fr")
+    const r = await deconnecter(cookie, { methode: "GET", entetes })
+    assert.equal(r.status, 303)
+    assert.equal(r.headers.get("location"), "/_portier/connexion")
+    efface(r)
+    assert.equal((await verifier(cookie)).status, 302, JSON.stringify(entetes))
+  }
+})
+
+test("déconnexion : un autre site ne peut pas fermer la session à l'insu de la personne", async () => {
+  const cookie = await connecter("alice@exemple.fr")
+  // Un formulaire posté depuis un autre site, ou avec Origin: null : refusé, rien n'est fermé.
+  for (const origin of ["https://evil.example", "null", `https://autre.${BASE}`]) {
+    const r = await deconnecter(cookie, { entetes: { origin } })
+    assert.equal(r.status, 403, origin)
+    assert.equal(r.headers.get("set-cookie"), null)
+  }
+  // Un lien venu d'ailleurs, ou un préchargement : une page demande confirmation, par un formulaire de la page même.
+  for (const entetes of [{ "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "same-site" }, { "sec-fetch-site": "same-origin", "sec-purpose": "prefetch" }]) {
+    const r = await deconnecter(cookie, { methode: "GET", entetes })
+    assert.equal(r.status, 200, JSON.stringify(entetes))
+    assert.equal(r.headers.get("set-cookie"), null)
+    assert.match(await r.text(), /<form method="post" action="\/_portier\/deconnexion"><button type="submit">Se déconnecter<\/button><\/form>/)
+  }
+  assert.equal((await verifier(cookie)).status, 200)
+})
+
+test("déconnexion sans session : retour à la connexion, sans erreur et sans rien noter", async () => {
+  const avant = await deconnexionsNotees()
+  const faux = "usine_session=1.1.eA.9999999999.faux"
+  for (const [cookie, methode, entetes] of [[null, "POST"], [null, "GET"], [null, "GET", { "sec-fetch-site": "cross-site" }], [faux, "POST"], ["usine_session=", "GET"], ["usine_session=n.importe.quoi", "POST"]]) {
+    const r = await deconnecter(cookie, { methode, entetes })
+    assert.equal(r.status, 303, `${cookie} ${methode}`)
+    assert.equal(r.headers.get("location"), "/_portier/connexion")
+    efface(r)
+  }
+  assert.equal(await deconnexionsNotees(), avant)
+})
+
+test("déconnexion : la redirection ne mène jamais vers une autre adresse", async () => {
+  const pieges = ["https://evil.example", "//evil.example", "/\\evil.example", "https:evil.example", "%2F%2Fevil.example", "javascript:alert(1)"]
+  const avec = (nom, p) => `/_portier/deconnexion?${nom}=${encodeURIComponent(p)}`
+  // Sans session, tous les noms de paramètre courants ; avec une session ouverte, le paramètre « retour » du portier.
+  for (const chemin of pieges.flatMap((p) => ["retour", "next", "redirect", "url", "continue"].map((nom) => avec(nom, p)))) {
+    for (const methode of ["GET", "POST"]) {
+      const r = await deconnecter(null, { methode, chemin })
+      assert.equal(r.status, 303, `${methode} ${chemin}`)
+      assert.equal(r.headers.get("location"), "/_portier/connexion", `${methode} ${chemin}`)
+    }
+  }
+  for (const p of pieges) {
+    for (const methode of ["GET", "POST"]) {
+      const cookie = await connecter("alice@exemple.fr")
+      const r = await deconnecter(cookie, { methode, chemin: avec("retour", p) })
+      assert.equal(r.status, 303, `${methode} ${p}`)
+      assert.equal(r.headers.get("location"), "/_portier/connexion", `${methode} ${p}`)
+      assert.equal((await verifier(cookie)).status, 302)
+    }
+  }
+  // Un corps de formulaire avec un retour n'est pas lu non plus.
+  const corps = await appel("/_portier/deconnexion", { methode: "POST", corps: form({ retour: "https://evil.example" }), entetes: { ...formEntetes, origin: `https://prospecta.${BASE}` } })
+  assert.equal(corps.headers.get("location"), "/_portier/connexion")
+  // Une adresse annoncée par l'en-tête ne change rien non plus : la redirection reste relative.
+  const r = await deconnecter(null, { hote: "evil.example" })
+  assert.equal(r.headers.get("location"), "/_portier/connexion")
+  // Et la page de connexion qui suit ne repart pas vers un autre site après la connexion.
+  const p = await appel("/_portier/connexion?retour=https%3A%2F%2Fevil.example")
+  assert.match(await p.text(), /name="retour" value="\/"/)
+})
+
+test("déconnexion de la console : la session d'administrateur est fermée, son cookie rejoué refusé", async () => {
+  const r = await api("utilisateurs", "POST", { email: "chef@exemple.fr", role: "admin", applis: ["*"] })
+  const jeton = new URL((await r.json()).lien).searchParams.get("jeton")
+  await appel("/_portier/invitation", { methode: "POST", corps: form({ jeton, mot_de_passe: "un mot de passe solide", confirmation: "un mot de passe solide" }), entetes: formEntetes })
+  const console_ = `console.${BASE}`
+  const cookie = await connecter("chef@exemple.fr", console_)
+  assert.equal((await verifier(cookie, console_)).status, 200)
+  assert.deepEqual(await (await qui(cookie, console_)).json(), { email: "chef@exemple.fr", role: "admin", autorise: true })
+  const d = await deconnecter(cookie, { hote: console_ })
+  assert.equal(d.status, 303)
+  assert.equal(d.headers.get("location"), "/_portier/connexion")
+  efface(d)
+  assert.equal((await verifier(cookie, console_)).status, 302)
+  assert.equal((await appel("/_portier/verifier", { hote: console_, entetes: { cookie, "x-forwarded-uri": "/api/resume" } })).status, 401)
+  assert.equal((await qui(cookie, console_)).status, 401)
+})
+
+test("se déconnecter d'une adresse ne ferme pas la session d'une autre", async () => {
+  const ici = await connecter("alice@exemple.fr")
+  const ailleurs = await connecter("alice@exemple.fr", `autre.${BASE}`)
+  // Le cookie de prospecta présenté à la déconnexion d'« autre » (un cookie posé pour tout le domaine, par exemple) n'y vaut rien.
+  await deconnecter(`${ailleurs}; ${ici}`, { hote: `autre.${BASE}` })
+  assert.equal((await verifier(ailleurs, `autre.${BASE}`)).status, 302)
+  assert.equal((await verifier(ici)).status, 200)
 })
 
 test("cinq échecs bloquent les essais", async () => {
