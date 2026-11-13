@@ -57,6 +57,7 @@ db.exec(`
   -- Les sessions fermées par une déconnexion : l'empreinte du cookie (jamais le cookie lui-même)
   -- et son expiration (secondes). Passé cette date, le cookie est refusé de toute façon : la ligne part.
   CREATE TABLE IF NOT EXISTS sessions_fermees (empreinte TEXT PRIMARY KEY, expire INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS sessions_fermees_expire ON sessions_fermees (expire);
 `)
 const noter = (email, evenement, ip) => db.prepare("INSERT INTO evenements (email, evenement, ip) VALUES (?, ?, ?)").run(email, evenement, ip)
 
@@ -85,8 +86,9 @@ function creerSession(u, hote) {
   return `${corps}.${signer(corps)}`
 }
 // Plusieurs cookies « usine_session » peuvent arriver (une application peut en poser un pour tout
-// le domaine, pour masquer la vraie session) : chacun est essayé (cinq au plus), seul un cookie signé compte.
-const cookiesSession = (req) => String(req.headers.cookie ?? "").split(/;\s*/).filter((c) => c.startsWith("usine_session=")).map((c) => c.slice("usine_session=".length)).slice(0, 5)
+// le domaine, pour masquer la vraie session) : chacun est essayé (COOKIES_MAX au plus), seul un cookie signé compte.
+const COOKIES_MAX = 5
+const cookiesSession = (req) => String(req.headers.cookie ?? "").split(/;\s*/).filter((c) => c.startsWith("usine_session=")).map((c) => c.slice("usine_session=".length)).slice(0, COOKIES_MAX)
 function lireSession(req, hote) {
   for (const valeur of cookiesSession(req)) {
     const u = lireUneSession(valeur, hote)
@@ -179,15 +181,21 @@ setInterval(() => {
 
 // --- Pages ------------------------------------------------------------------------
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
-// Un chemin de retour sûr : relatif à l'application, jamais vers un autre site.
-const retourSur = (r) => (typeof r === "string" && r.startsWith("/") && !r.startsWith("//") && !r.startsWith("/\\") && !r.startsWith("/_portier/") ? r : "/")
+// Un chemin de retour sûr : relatif à l'application, jamais vers un autre site. Seuls les caractères
+// ASCII visibles passent : le navigateur retire tabulations et retours à la ligne d'une adresse,
+// et « /<tab>/ailleurs » deviendrait « //ailleurs », un autre site.
+const retourSur = (r) => (typeof r === "string" && /^\/(?![/\\])[\x21-\x7e]*$/.test(r) && !r.startsWith("/_portier/") ? r : "/")
 // Un formulaire envoyé depuis un autre site (ou avec « Origin: null ») est refusé.
 const autreOrigine = (req, hote) => Boolean(req.headers.origin) && req.headers.origin !== `https://${hote}`
-// Une demande faite depuis l'application même, ou tapée dans la barre d'adresse, et pas un
-// préchargement du navigateur. Sans l'en-tête Sec-Fetch-Site (programme, très vieux navigateur),
-// la demande est prise comme directe.
-const demandeDirecte = (req) =>
-  ["same-origin", "none"].includes(String(req.headers["sec-fetch-site"] ?? "none")) && !/prefetch|prerender/i.test(`${req.headers["sec-purpose"] ?? ""} ${req.headers.purpose ?? ""}`)
+// Une navigation de la personne (un lien suivi, une adresse tapée) depuis l'application même : ni un
+// autre site, ni un préchargement, ni une image ou un fetch de la page (une application qui affiche
+// « /_portier/deconnexion » comme image fermerait sinon la session de chaque visiteur). Sans ces
+// en-têtes Sec-Fetch-* (programme, très vieux navigateur), la demande est prise comme directe.
+const demandeDirecte = (req) => {
+  const h = (nom, defaut) => String(req.headers[`sec-fetch-${nom}`] ?? defaut)
+  return ["same-origin", "none"].includes(h("site", "none")) && h("mode", "navigate") === "navigate" && h("dest", "document") === "document"
+    && !/prefetch|prerender/i.test(`${req.headers["sec-purpose"] ?? ""} ${req.headers.purpose ?? ""}`)
+}
 
 function page(titre, contenu, { appli } = {}) {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -199,7 +207,7 @@ function page(titre, contenu, { appli } = {}) {
 main { width: 100%; max-width: 380px } .carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 14px; padding: 28px 24px }
 .marque { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--doux); margin-bottom: 18px } h1 { font-size: 20px; margin: 0 0 4px } .sous { color: var(--doux); margin: 0 0 22px; font-size: 15px }
 label { display: block; font-size: 14px; font-weight: 550; margin: 14px 0 6px } input { width: 100%; padding: 11px 12px; border: 1px solid var(--trait); border-radius: 9px; background: transparent; color: inherit; font: inherit }
-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent } button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-texte); font: inherit; font-weight: 600; cursor: pointer }
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent } button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px } button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-texte); font: inherit; font-weight: 600; cursor: pointer }
 .erreur { background: var(--erreur-fond); color: var(--erreur); border-radius: 9px; padding: 10px 12px; font-size: 14px; margin-bottom: 4px } .pied { text-align: center; color: var(--doux); font-size: 13px; margin-top: 16px }
 ul { list-style: none; padding: 0; margin: 0 } li a { display: block; padding: 12px 14px; border: 1px solid var(--trait); border-radius: 9px; margin-top: 10px; color: inherit; text-decoration: none } li a:hover { border-color: var(--doux) } li small { color: var(--doux) }
 a { color: inherit }
@@ -251,9 +259,9 @@ ${erreur ? `<div class="erreur" role="alert">${echapper(erreur)}</div>` : ""}
 // la personne confirme, par un formulaire de la page même.
 function confirmationDeconnexion(appli) {
   return page(`Se déconnecter · ${appli.nom}`, `
-<h1>Se déconnecter ?</h1><p class="sous">Ta session sur ${echapper(appli.nom)} sera fermée.</p>
+<h1>Se déconnecter ?</h1><p class="sous">Pour revenir, il faudra te reconnecter.</p>
 <form method="post" action="/_portier/deconnexion"><button type="submit">Se déconnecter</button></form>
-<p class="pied"><a href="/">Rester connecté</a></p>`, { appli: appli.nom })
+<p class="pied"><a href="/">Annuler</a></p>`, { appli: appli.nom })
 }
 
 function portail(u) {

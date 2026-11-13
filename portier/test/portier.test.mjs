@@ -4,6 +4,7 @@ import { test, before, after } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHmac } from "node:crypto"
+import { request } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -102,7 +103,8 @@ test("retirer l'accès coupe la session existante", async () => {
 test("le retour après connexion ne peut pas mener vers un autre site", async () => {
   const [u] = await (await api("utilisateurs")).json()
   await api(`utilisateurs/${u.id}`, "PATCH", { applis: ["*"] })
-  for (const retour of ["//evil.example", "https://evil.example", "/\\evil.example"]) {
+  // Le navigateur retire tabulations et retours à la ligne : « /<tab>/evil.example » deviendrait « //evil.example ».
+  for (const retour of ["//evil.example", "https://evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "/\r\n/evil.example", "/\t\\evil.example", "/ /evil.example"]) {
     const c = await appel("/_portier/connexion", { methode: "POST", corps: form({ email: "alice@exemple.fr", mot_de_passe: "un mot de passe solide", retour }), entetes: formEntetes })
     assert.equal(c.headers.get("location"), "/")
   }
@@ -169,8 +171,17 @@ const connecter = async (email, hote = `prospecta.${BASE}`) => {
   assert.equal(c.status, 302)
   return c.headers.get("set-cookie").split(";")[0]
 }
-const deconnecter = (cookie, { hote = `prospecta.${BASE}`, methode = "POST", chemin = "/_portier/deconnexion", entetes = {} } = {}) =>
-  appel(chemin, { hote, methode, entetes: { ...(cookie ? { cookie } : {}), ...(methode === "POST" ? { origin: `https://${hote}` } : {}), ...entetes } })
+// La déconnexion passe par node:http et non fetch : fetch impose « Sec-Fetch-Mode: cors », or le portier
+// distingue une navigation (un lien suivi) d'une image ou d'un fetch de la page. Par défaut, un GET est
+// une navigation de la personne ; navigation: false n'envoie aucun en-tête Sec-Fetch (programme).
+const deconnecter = (cookie, { hote = `prospecta.${BASE}`, methode = "POST", chemin = "/_portier/deconnexion", entetes = {}, navigation = true } = {}) =>
+  new Promise((ok, ko) => {
+    const headers = { "x-forwarded-host": hote, ...(cookie ? { cookie } : {}), ...(methode === "POST" ? { origin: `https://${hote}` } : navigation ? { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } : {}), ...entetes }
+    request({ host: "127.0.0.1", port, path: chemin, method: methode, headers }, (res) => {
+      let corps = ""
+      res.setEncoding("utf8").on("data", (x) => (corps += x)).on("end", () => ok({ status: res.statusCode, headers: { get: (n) => [res.headers[n] ?? []].flat().join(", ") || null }, text: async () => corps }))
+    }).on("error", ko).end()
+  })
 const verifier = (cookie, hote = `prospecta.${BASE}`) => appel("/_portier/verifier", { hote, entetes: { cookie, "x-forwarded-uri": "/" } })
 const qui = (cookie, hote = `prospecta.${BASE}`) => appel("/_portier/qui", { hote, entetes: { cookie } })
 const deconnexionsNotees = async () => (await (await api("evenements")).json()).filter((e) => e.evenement.startsWith("déconnexion")).length
@@ -218,9 +229,10 @@ test("une session ouverte avant cette version (cookie sans aléa) reste valable,
 })
 
 test("déconnexion par un lien de l'application (GET) : la session est fermée aussi", async () => {
-  for (const entetes of [{ "sec-fetch-site": "same-origin" }, { "sec-fetch-site": "none" }, {}]) {
+  // Un lien suivi dans l'application, une adresse tapée ou ouverte depuis un email, un programme sans en-têtes Sec-Fetch.
+  for (const [entetes, navigation] of [[{ "sec-fetch-site": "same-origin" }, true], [{ "sec-fetch-site": "none" }, true], [{}, false]]) {
     const cookie = await connecter("alice@exemple.fr")
-    const r = await deconnecter(cookie, { methode: "GET", entetes })
+    const r = await deconnecter(cookie, { methode: "GET", entetes, navigation })
     assert.equal(r.status, 303)
     assert.equal(r.headers.get("location"), "/_portier/connexion")
     efface(r)
@@ -236,8 +248,10 @@ test("déconnexion : un autre site ne peut pas fermer la session à l'insu de la
     assert.equal(r.status, 403, origin)
     assert.equal(r.headers.get("set-cookie"), null)
   }
-  // Un lien venu d'ailleurs, ou un préchargement : une page demande confirmation, par un formulaire de la page même.
-  for (const entetes of [{ "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "same-site" }, { "sec-fetch-site": "same-origin", "sec-purpose": "prefetch" }]) {
+  // Un lien venu d'ailleurs, un préchargement, ou l'adresse affichée comme image ou appelée par un fetch
+  // dans une application : une page demande confirmation, par un formulaire de la page même.
+  const meme = { "sec-fetch-site": "same-origin" }
+  for (const entetes of [{ "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "same-site" }, { ...meme, "sec-purpose": "prefetch" }, { ...meme, "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" }, { ...meme, "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" }]) {
     const r = await deconnecter(cookie, { methode: "GET", entetes })
     assert.equal(r.status, 200, JSON.stringify(entetes))
     assert.equal(r.headers.get("set-cookie"), null)
