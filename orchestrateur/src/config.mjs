@@ -25,8 +25,12 @@ export function chargerConfig() {
     ...c,
     secrets: { github: secret("github_token"), worker: secret("worker_token"), coffreMaitre: secret("coffre_maitre"), slackBot: secret("slack_bot_token"), slackApp: secret("slack_app_token") },
     slack: { canal: env.SLACK_CANAL ?? c.slack?.canal ?? "", admins: (env.ADMIN_USER_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean) },
+    // Ce que dit le serveur, gardé tel quel : la console peut le remplacer (services.mjs).
+    serveur: { slackCanal: env.SLACK_CANAL ?? c.slack?.canal ?? "", slackAdmins: env.ADMIN_USER_IDS ?? "" },
     dataDir: env.DATA_DIR ?? "/app/data",
     etatDir: env.ETAT_DIR ?? "/app/etat",
+    // La boîte des clés de la console pour le déployeur (volume en mémoire, services.mjs).
+    boiteDir: env.BOITE_DIR ?? "/app/boite",
     // Chaque serveur de travaux a son propre jeton : un agent de l'atelier (qui peut lire le sien)
     // ne peut pas commander le vérificateur, qui le juge. worker_token reste dans l'orchestrateur.
     atelier: { id: "atelier-1", url: env.ATELIER_URL ?? "http://atelier-1:8080", jeton: secret("atelier_token") || secret("worker_token") },

@@ -56,6 +56,52 @@ export function notificateurConsole() {
 }
 
 // --- Slack -------------------------------------------------------------------
+// La connexion en cours : la console peut la fermer et la rouvrir (services.mjs, index.mjs).
+let appCourante = null
+export const slackConnecte = () => Boolean(appCourante)
+// Arrêter une connexion, 10 s au plus : une connexion déjà tombée peut ne jamais confirmer son arrêt,
+// et la file des relances ne doit pas rester bloquée derrière elle.
+const fermer = (app) => {
+  let attente
+  return Promise.race([app.stop().catch((e) => console.error("Slack (arrêt) :", e.message)), new Promise((r) => (attente = setTimeout(r, 10_000)))]).finally(() => clearTimeout(attente))
+}
+export async function arreterSlack(ctx) {
+  const app = appCourante
+  appCourante = null
+  ctx.notifier = notificateurConsole()
+  if (app) await fermer(app)
+}
+
+// Rouvrir la connexion avec les jetons du moment (console ou serveur). En file : une seule relance
+// à la fois ; celles demandées pendant qu'elle tourne n'en font qu'une, ensuite, avec les réglages
+// d'alors (la dernière demande l'emporte). Chaque relance arrête d'abord la connexion d'avant, qui
+// est toujours posée quand elle commence : aucune connexion ne reste ouverte sans qu'on la tienne.
+export function fileDeRelance(ctx, { demarrer = demarrerSlack, arreter = arreterSlack } = {}) {
+  let enCours = null
+  let encore = false
+  const relancer = async () => {
+    await arreter(ctx)
+    if (!ctx.config.secrets.slackBot || !ctx.config.secrets.slackApp) return console.log("Slack débranché : mode console.")
+    await demarrer(ctx).catch((e) => {
+      ctx.notifier = notificateurConsole()
+      console.error("Slack indisponible, mode console :", e.message)
+    })
+  }
+  // encore : une demande arrivée pendant la relance en cours. La file se libère (enCours = null) dans
+  // le même temps que son dernier contrôle : aucune demande ne tombe entre les deux.
+  return () => {
+    encore = true
+    enCours ??= (async () => {
+      while (encore) {
+        encore = false
+        await relancer().catch((e) => console.error("Slack (relance) :", e.message))
+      }
+      enCours = null
+    })()
+    return enCours
+  }
+}
+
 export async function demarrerSlack(ctx) {
   const { config, db } = ctx
   const app = new App({ token: config.secrets.slackBot, appToken: config.secrets.slackApp, socketMode: true })
@@ -625,7 +671,14 @@ export async function demarrerSlack(ctx) {
     }
   }
 
-  await app.start()
+  // Un démarrage qui échoue ne laisse rien derrière lui (pas de connexion qui réessaie seule).
+  try {
+    await app.start()
+  } catch (e) {
+    await fermer(app)
+    throw e
+  }
+  appCourante = app
   const canaux = new Set([config.slack.canal, ...db.prepare("SELECT DISTINCT canal FROM projets WHERE canal IS NOT NULL").all().map((p) => p.canal)].filter(Boolean))
   for (const c of canaux) await epinglerTableau(c)
   console.log("Slack connecté (Socket Mode).")

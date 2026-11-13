@@ -271,3 +271,76 @@ test("file pleine : les plus vieux éléments sont perdus, comptés", async () =
   assert.equal(o.etat().files.evenements, 0) // arreter() vide tout, lot après lot
   assert.equal(JSON.parse(f.appels[0].corps).batch[0].properties.i, 5)
 })
+
+test("reconfigurer : une clé posée en marche sert tout de suite ; retirée, l'envoi s'arrête et la file se vide", async () => {
+  const f = fauxFetch()
+  const o = creerObservabilite({ service: "usine-orchestrateur", fetch: f, signaler: silencieux })
+  assert.deepEqual(o.actif, { sentry: false, posthog: false })
+  assert.deepEqual(o.reconfigurer({ sentryDsn: DSN, posthogJeton: JETON }), { sentry: true, posthog: true })
+  assert.deepEqual(o.actif, { sentry: true, posthog: true })
+  assert.equal(o.erreur(new Error("panne après la pose")), true)
+  assert.equal(o.evenement("journal", { type: "fusion" }), true)
+  await o.vider()
+  assert.deepEqual(f.appels.map((a) => new URL(a.url).pathname).sort(), ["/api/4500000000000002/envelope/", "/batch/"])
+  assert.match(o.etat().erreurs.dernier_ok, /^\d{4}-\d\d-\d\dT/)
+  assert.match(o.etat().evenements.dernier_ok, /^\d{4}-\d\d-\d\dT/)
+  // Seuls les champs donnés changent : retirer le jeton PostHog garde Sentry.
+  o.evenement("journal", { type: "en-attente" })
+  assert.deepEqual(o.reconfigurer({ posthogJeton: "" }), { sentry: false, posthog: true })
+  assert.deepEqual(o.actif, { sentry: true, posthog: false })
+  assert.equal(o.etat().files.evenements, 0, "la file d'un service retiré est vidée")
+  assert.equal(o.etat().evenements.envoyes, 0, "les compteurs décrivent la nouvelle clé")
+  assert.equal(o.etat().erreurs.envoyes, 1, "ceux de Sentry, inchangé, restent")
+  assert.equal(o.evenement("x"), false)
+  // La même clé une deuxième fois : rien ne change.
+  assert.deepEqual(o.reconfigurer({ sentryDsn: DSN }), { sentry: false, posthog: false })
+})
+
+test("reconfigurer : sous node --test sans faux fetch, rien ne part même avec une clé posée en marche", () => {
+  const o = creerObservabilite({ service: "x", signaler: silencieux })
+  o.reconfigurer({ sentryDsn: DSN, posthogJeton: JETON })
+  assert.deepEqual(o.actif, { sentry: false, posthog: false })
+})
+
+test("etat : l'hôte PostHog (public) se lit, jamais une clé", () => {
+  const o = instance({ fetch: fauxFetch(), posthogHote: "https://ph.exemple.fr/" })
+  const e = JSON.stringify(o.etat())
+  assert.equal(o.etat().posthog_hote, "ph.exemple.fr")
+  assert.ok(!e.includes("cle0publique") && !e.includes(JETON), e)
+})
+
+test("reconfigurer : une nouvelle clé Sentry repart d'un plafond horaire vide", async () => {
+  const f = fauxFetch(() => new Response(null, { status: 403 }))
+  const o = instance({ fetch: f, erreursParHeure: 3 })
+  for (let i = 0; i < 3; i++) o.erreur(new Error(`ancienne ${"abc"[i]}`))
+  await o.vider()
+  assert.equal(o.erreur(new Error("de trop")), false, "le plafond est atteint avec l'ancienne clé")
+  o.reconfigurer({ sentryDsn: DSN.replace("cle0publique", "cle1nouvelle") })
+  assert.equal(o.erreur(new Error("avec la nouvelle clé")), true, "la nouvelle clé n'hérite pas du plafond de l'ancienne")
+})
+
+test("reconfigurer : la réponse d'un envoi parti avec l'ancienne clé ne compte pas pour la nouvelle", async () => {
+  let repondre
+  const f = fauxFetch(() => new Promise((r) => (repondre = r)))
+  const o = instance({ fetch: f })
+  const ancien = o.battement("usine-orchestrateur")
+  o.reconfigurer({ sentryDsn: DSN.replace("cle0publique", "cle1nouvelle") })
+  repondre(new Response(null, { status: 403 }))
+  await ancien
+  assert.deepEqual([o.etat().battement.joignable, o.etat().battement.echecs], [null, 0], "le refus de l'ancienne clé ne rend pas la nouvelle « à vérifier »")
+})
+
+test("une panne garde l'heure de son début, jusqu'au prochain envoi réussi", async () => {
+  let statut = 403
+  const o = instance({ fetch: fauxFetch(() => new Response(null, { status: statut })) })
+  await o.battement("usine-orchestrateur")
+  const debut = o.etat().battement.premier_echec
+  assert.ok(debut)
+  await new Promise((r) => setTimeout(r, 5))
+  await o.battement("usine-orchestrateur")
+  assert.equal(o.etat().battement.premier_echec, debut, "le début de la panne ne bouge pas")
+  assert.notEqual(o.etat().battement.dernier_echec.le, debut)
+  statut = 202
+  await o.battement("usine-orchestrateur")
+  assert.equal(o.etat().battement.premier_echec, null)
+})

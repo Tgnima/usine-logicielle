@@ -3,6 +3,7 @@
 // assistant ; il se rouvre depuis les Réglages et disparaît quand tout l'essentiel est fait.
 import { lireReglage } from "./couts.mjs"
 import { lireTests } from "./fournisseurs.mjs"
+import { obs } from "./observabilite.mjs"
 import { portier } from "./portier.mjs"
 
 let compte = { valeur: null, le: 0 }
@@ -49,8 +50,14 @@ export async function premiersPas(ctx) {
     {
       id: "courriel", obligatoire: false, fait: courrielConfigure(),
       titre: "Envoyer les invitations par email",
-      detail: courrielConfigure() ? "Les invitations partent par email." : "Sans envoi d'emails, tu copies le lien d'invitation et tu le transmets toi-même. Un technicien peut l'activer sur le serveur.",
-      aller: "#/reglages/equipe", action: "Voir les accès",
+      detail: courrielConfigure() ? "Les invitations partent par email." : "Sans envoi d'emails, tu copies le lien d'invitation et tu le transmets toi-même. Branche ton service d'envoi : quelques champs à remplir, puis un email d'essai.",
+      aller: "#/reglages/integrations", action: "Brancher l'envoi d'emails",
+    },
+    {
+      id: "surveillance", obligatoire: false, fait: obs.actif.sentry,
+      titre: "Être prévenu quand quelque chose plante",
+      detail: obs.actif.sentry ? `Sentry reçoit les erreurs de l'usine et son signal de vie${obs.actif.posthog ? ", PostHog son journal" : ""}.` : "Facultatif : Sentry t'écrit quand l'usine plante ou s'arrête. Une clé à coller, rien d'autre.",
+      aller: "#/reglages/integrations", action: "Brancher Sentry",
     },
     {
       id: "equipe", obligatoire: false, fait: utilisateurs.filter((u) => u.actif !== 0 && u.actif !== false).length > 1,

@@ -20,6 +20,14 @@ export function decisionDeploiement(actuel, souhait) {
   return (actuel.reprises ?? 0) >= REPRISES_MAX ? "abandonner" : "reprendre"
 }
 
+// Les entrées de statut.json après un déploiement. boite : la version des clés de la console que
+// le conteneur a reçue dans son fichier d'environnement, lue au début de son démarrage (jamais
+// celle du moment où l'on écrit : la console a pu changer pendant l'attente de sa santé).
+export const statutEnLigne = (s, r, le) => ({ etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", chemins_publics: r.publics ?? [], conteneur: r.conteneur, couleur: r.couleur ?? null, boite: r.boite ?? null, le })
+// L'ancienne version d'un produit, gardée dans le statut quand la nouvelle échoue : elle reste
+// servie, avec les clés qu'elle avait reçues (boite), pour que la console la compte en retard.
+export const versionServie = (actuel) => (actuel?.conteneur ? { hote: actuel.hote, hote_mails: actuel.hote_mails, conteneur: actuel.conteneur, couleur: actuel.couleur, boite: actuel.boite ?? null } : {})
+
 // La mise à jour de l'usine, avant de toucher au dépôt : chaque secret que la version CIBLE de
 // docker-compose.yml attend doit exister sur le serveur (/run/usine-secrets, écrit par
 // « bash secrets.sh dechiffrer »). Sinon la mise à jour s'arrête (code 3), avec la commande à

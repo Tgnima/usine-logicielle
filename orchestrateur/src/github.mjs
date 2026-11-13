@@ -171,12 +171,39 @@ export async function supprimerEtat(config, chemin, message) {
   return true
 }
 
+// Redemande le même état souhaité (même version du code), avec une nouvelle date : le déployeur
+// le redéploie (decisionDeploiement), par exemple avec de nouvelles clés. Lire, puis écrire sur le
+// sha lu : si le fichier a changé entre-temps (une livraison a poussé le lot suivant), GitHub refuse,
+// et on relit (4 fois au plus). Jamais un état périmé réécrit par-dessus un plus récent, jamais un
+// état retiré entre-temps recréé. Renvoie la date demandée, ou false si l'état n'existe plus.
+export async function redemanderEtat(config, chemin, message, { viaPR = false } = {}) {
+  for (let essai = 1; ; essai++) {
+    const actuel = await lireEtat(config, chemin)
+    if (!actuel?.content) return false
+    const objet = JSON.parse(Buffer.from(actuel.content, "base64").toString("utf8"))
+    const demande_le = new Date().toISOString()
+    try {
+      await ecrireEtat(config, chemin, { ...objet, demande_le }, { message, viaPR, sha: actuel.sha })
+      return demande_le
+    } catch (error) {
+      if (!(error.statut === 409 || error.conflit) || essai >= 4) throw error
+      await new Promise((r) => setTimeout(r, 1_000 * essai))
+    }
+  }
+}
+
 // Écrit un état souhaité. Direct sur main pour un aperçu ; par pull request
 // (aussitôt fusionnée, puisqu'un humain vient de valider) pour la production :
 // chaque mise en production laisse ainsi une trace relisible.
-export async function ecrireEtat(config, chemin, objet, { message, viaPR = false } = {}) {
+// sha : celui que l'appelant a lu (redemanderEtat). L'écriture ne se fait que sur ce sha ; sinon
+// une erreur « conflit » (ou le 409 de GitHub) remonte, et rien n'est écrit.
+export async function ecrireEtat(config, chemin, objet, { message, viaPR = false, sha: attendu = null } = {}) {
   const nom = config.github.depot_etat
   const contenu = Buffer.from(`${JSON.stringify(objet, null, 2)}\n`).toString("base64")
+  if (!viaPR && attendu) {
+    await gh(config, `${depot(config, nom)}/contents/${chemin}`, { method: "PUT", corps: { message, content: contenu, sha: attendu } })
+    return null
+  }
   if (!viaPR) {
     // Un 409 : le fichier a changé entre la lecture et l'écriture (ou la lecture était en retard). On relit et on réécrit.
     for (let essai = 1; ; essai++) {
@@ -194,6 +221,11 @@ export async function ecrireEtat(config, chemin, objet, { message, viaPR = false
   const branche = `mise-en-production/${chemin.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`
   await gh(config, `${depot(config, nom)}/git/refs`, { method: "POST", corps: { ref: `refs/heads/${branche}`, sha: base } })
   const actuel = await lireEtat(config, chemin, branche)
+  if (attendu && actuel?.sha !== attendu) {
+    // Le fichier a changé (ou disparu) sur main depuis la lecture de l'appelant : rien n'est écrit.
+    await gh(config, `${depot(config, nom)}/git/refs/heads/${branche}`, { method: "DELETE", accepter: [422] })
+    throw Object.assign(new Error(`L'état ${chemin} a changé entre-temps.`), { conflit: true })
+  }
   await gh(config, `${depot(config, nom)}/contents/${chemin}`, { method: "PUT", corps: { message, content: contenu, branch: branche, ...(actuel ? { sha: actuel.sha } : {}) } })
   const pr = (await gh(config, `${depot(config, nom)}/pulls`, { method: "POST", corps: { title: message, head: branche, base: "main", body: `${objet.valide_par ? `Validé par ${objet.valide_par}.` : ""}\n\n${MARQUE}` } })).json
   await gh(config, `${depot(config, nom)}/pulls/${pr.number}/merge`, { method: "PUT", corps: { merge_method: "squash" } })

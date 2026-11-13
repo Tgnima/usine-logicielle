@@ -46,8 +46,13 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 ## Règles pour modifier le code
 
 - **Toujours protéger les applications.** Toute nouvelle adresse publiée passe par le portier
-  (`blocSite()` dans le déployeur) ; tout nouveau secret va dans `SECRETS` (`secrets.sh`) et
-  dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans l'environnement.
+  (`blocSite()` dans le déployeur) ; tout nouveau secret du serveur va dans `SECRETS`
+  (`secrets.sh`) et dans `docker-compose.yml` (section `secrets:`), jamais dans `.env` ni dans
+  l'environnement. Un secret réglable dans la console va dans le coffre : les clés des IA dans
+  `IDENTIFIANTS` (`fournisseurs.mjs`, elles partent avec chaque travail de l'atelier et du
+  vérificateur), toutes les autres dans `CLES_SERVICES` (`services.mjs`), qui déclare qui la
+  reçoit. Vers le déployeur, une telle clé passe par la boîte (volume en mémoire, liste blanche
+  `CLES_BOITE` de `deployeur/boite.mjs`), jamais par un fichier sur disque ni par GitHub.
 - **Un produit ne joint jamais un autre produit.** Chacun tourne sur son réseau Docker
   (`preparerReseau()` dans le déployeur), durci (`DURCI`), ses variables passent par un fichier
   (`--env-file`), et l'image d'un produit ne touche jamais aux sauvegardes (`IMAGE_OUTILS`).

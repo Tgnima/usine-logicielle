@@ -13,6 +13,9 @@
 // Une entrée v1 est rechiffrée en v2 dès que la clé maîtresse est là (migrerCoffre).
 // Une valeur de la console passe avant celle du serveur (secrets.sh), qui reste le secours.
 // Les identifiants vont aux ateliers et au vérificateur avec chaque travail, jamais ailleurs.
+// Les clés des autres services (Sentry, PostHog…) n'entrent jamais ici : elles partiraient dans
+// l'environnement de chaque travail, où tourne le code des produits. Elles ont leur registre
+// (services.mjs), qui réutilise seulement chiffrer() et dechiffrer().
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { noter } from "./db.mjs"

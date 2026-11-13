@@ -20,7 +20,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
-import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets } from "./deploiement.mjs"
+import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets, statutEnLigne, versionServie } from "./deploiement.mjs"
+import { lireBoite, valeurBoite, variablesSmtp } from "./boite.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { canal, derniereVersion } from "./versions.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
@@ -87,6 +88,20 @@ const obs = creerObservabilite({
   signaler: (texte) => log(texte),
 })
 obs.brancherProcessus()
+
+// La boîte (boite.mjs) : les clés posées dans la console passent avant celles du serveur. Relue à
+// chaque bilan de santé (30 s) et avant chaque déploiement : une clé collée dans la console sert
+// ici en 30 s au plus, sans redémarrage.
+const BOITE = env.BOITE_DIR ?? "/boite"
+let boite = null
+function appliquerBoite() {
+  boite = lireBoite(BOITE)
+  obs.reconfigurer({
+    sentryDsn: valeurBoite(boite, "SENTRY_DSN", secret("sentry_dsn")),
+    posthogJeton: valeurBoite(boite, "POSTHOG_TOKEN", secret("posthog_token")),
+    posthogHote: valeurBoite(boite, "POSTHOG_HOTE", "") || env.POSTHOG_HOTE || "eu.i.posthog.com",
+  })
+}
 
 // Le jeton passe par la configuration git de l'environnement : jamais dans les
 // arguments (visibles dans ps) ni dans .git/config.
@@ -208,24 +223,26 @@ function valide(s) {
 }
 
 const VARIABLES = ["DEMO", "DEMO_VITESSE_HORLOGE", "PUBLIC_URL", "LLM_MODELE", "EMAIL_DESTINATAIRES_AUTORISES"]
-function variables(s) {
+// b : la boîte figée pour ce démarrage (demarrer), pas celle qu'un bilan de santé relirait entre-temps.
+function variables(s, b = boite) {
   const v = { PORT: "3000", DATA_DIR: "/app/data" }
   for (const k of VARIABLES) if (s.env?.[k] !== undefined) v[k] = String(s.env[k])
   if ((s.services ?? []).includes("mailpit")) Object.assign(v, { SMTP_HOST: "mailpit", SMTP_PORT: "1025" })
-  // Emails réels : le service d'envoi vient du .env du serveur, jamais du dépôt d'état.
-  if (s.emails === "reels") {
-    if (!env.SMTP_HOST) throw new Error("emails réels demandés mais SMTP_HOST n'est pas configuré")
-    for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "EMAIL_EXPEDITEUR"]) if (env[k]) v[k] = env[k]
-    if (secret("smtp_user")) v.SMTP_USER = secret("smtp_user")
-    if (secret("smtp_pass")) v.SMTP_PASS = secret("smtp_pass")
-  }
-  if (secret("ai_gateway_api_key")) v.AI_GATEWAY_API_KEY = secret("ai_gateway_api_key")
+  // Emails réels : le service d'envoi de la console (boîte) ou du serveur, jamais du dépôt d'état.
+  if (s.emails === "reels") Object.assign(v, variablesSmtp(b, { SMTP_HOST: env.SMTP_HOST ?? "", SMTP_PORT: env.SMTP_PORT ?? "", SMTP_SECURE: env.SMTP_SECURE ?? "", EMAIL_EXPEDITEUR: env.EMAIL_EXPEDITEUR ?? "", SMTP_USER: secret("smtp_user"), SMTP_PASS: secret("smtp_pass") }))
+  // La passerelle IA : la clé dédiée aux applications (console) d'abord, sinon la clé commune du serveur.
+  const passerelle = valeurBoite(b, "AI_GATEWAY_API_KEY_APPLIS", secret("ai_gateway_api_key"))
+  if (passerelle) v.AI_GATEWAY_API_KEY = passerelle
   // L'observabilité du produit (server/observabilite.js de la brique) : le même DSN et le même jeton
   // pour tous, des clés d'envoi seulement ; le produit et son environnement l'étiquettent.
   Object.assign(v, { USINE_PRODUIT: s.produit, USINE_ENVIRONNEMENT: s.environnement, USINE_VERSION: s.sha.slice(0, 12) })
-  if (secret("sentry_dsn")) v.SENTRY_DSN = secret("sentry_dsn")
-  if (secret("posthog_token")) v.POSTHOG_TOKEN = secret("posthog_token")
-  if (env.POSTHOG_HOTE) v.POSTHOG_HOTE = env.POSTHOG_HOTE
+  // La boîte d'abord (clés de la console ; une clé vide coupe l'envoi), puis le serveur.
+  const dsn = valeurBoite(b, "SENTRY_DSN", secret("sentry_dsn"))
+  const jeton = valeurBoite(b, "POSTHOG_TOKEN", secret("posthog_token"))
+  const hotePosthog = valeurBoite(b, "POSTHOG_HOTE", "") || env.POSTHOG_HOTE
+  if (dsn) v.SENTRY_DSN = dsn
+  if (jeton) v.POSTHOG_TOKEN = jeton
+  if (hotePosthog) v.POSTHOG_HOTE = hotePosthog
   return v
 }
 // Un fichier d'environnement privé, effacé dès que le conteneur est créé : les secrets (SMTP, clé
@@ -305,21 +322,27 @@ async function construire(s) {
 // Un produit tourne sans les privilèges dont il n'a pas besoin : pas de paquets réseau bruts
 // (usurpation sur le réseau), pas de fichiers spéciaux, pas d'élévation (setuid), processus limités.
 const DURCI = ["--cap-drop", "NET_RAW", "--cap-drop", "MKNOD", "--cap-drop", "AUDIT_WRITE", "--cap-drop", "SETFCAP", "--cap-drop", "SYS_CHROOT", "--security-opt", "no-new-privileges", "--pids-limit", "512"]
+// Renvoie la version de la boîte que ce conteneur a reçue. Les variables se calculent d'abord, avec
+// la boîte du moment, figée : une erreur (emails réels sans service d'envoi) laisse l'ancien
+// conteneur en place, et un bilan de santé qui relit la boîte pendant l'attente n'y change rien.
 async function demarrer(nom, image, volume, s) {
+  const b = boite
+  const vars = variables(s, b)
   const reseau = await preparerReseau(s.produit, { avecMailpit: (s.services ?? []).includes("mailpit") })
   await lancer("docker", ["rm", "-f", nom])
-  await avecFichierEnv(variables(s), (fichier) => ok("docker", ["run", "-d", "--name", nom, "--network", reseau, "--restart", "unless-stopped", ...DNS, ...DURCI, "--memory", MEMOIRE, "--label", "usine.produit=" + s.produit, "-v", `${volume}:/app/data`, "--env-file", fichier, image]))
+  await avecFichierEnv(vars, (fichier) => ok("docker", ["run", "-d", "--name", nom, "--network", reseau, "--restart", "unless-stopped", ...DNS, ...DURCI, "--memory", MEMOIRE, "--label", "usine.produit=" + s.produit, "-v", `${volume}:/app/data`, "--env-file", fichier, image]))
+  return b?.version ?? null
 }
 
 async function deployerApercu(s) {
   const { image, publics } = await construire(s)
   const nom = `usine-apercu-${s.produit}`
-  await demarrer(nom, image, `usine-apercu-${s.produit}-data`, s)
+  const cles = await demarrer(nom, image, `usine-apercu-${s.produit}-data`, s)
   if (!(await sante(nom))) {
     const journal = (await lancer("docker", ["logs", "--tail", "40", nom])).sortie
     throw new Error(`l'aperçu ne répond pas à /api/health :\n${journal}`)
   }
-  return { conteneur: nom, publics }
+  return { conteneur: nom, publics, boite: cles }
 }
 
 async function deployerProduction(s, precedent) {
@@ -335,13 +358,13 @@ async function deployerProduction(s, precedent) {
   }
   const couleur = precedent?.couleur === "blue" ? "green" : "blue"
   const nom = `usine-prod-${s.produit}-${couleur}`
-  await demarrer(nom, image, volume, s)
+  const cles = await demarrer(nom, image, volume, s)
   if (!(await sante(nom))) {
     const journal = (await lancer("docker", ["logs", "--tail", "40", nom])).sortie
     await lancer("docker", ["rm", "-f", nom])
     throw new Error(`la nouvelle version (${couleur}) ne répond pas ; l'ancienne reste en ligne :\n${journal}`)
   }
-  return { conteneur: nom, couleur, publics, ancien: precedent?.conteneur && precedent.conteneur !== nom ? precedent.conteneur : null }
+  return { conteneur: nom, couleur, publics, boite: cles, ancien: precedent?.conteneur && precedent.conteneur !== nom ? precedent.conteneur : null }
 }
 
 // --- Caddy ----------------------------------------------------------------------
@@ -400,11 +423,9 @@ async function regenererCaddy(statut) {
 }
 
 // --- La boucle ----------------------------------------------------------------
-// L'ancienne version d'un produit, gardée dans le statut quand la nouvelle échoue : elle reste servie.
-const versionServie = (actuel) => (actuel?.conteneur ? { hote: actuel.hote, hote_mails: actuel.hote_mails, conteneur: actuel.conteneur, couleur: actuel.couleur } : {})
-
 async function tour() {
   const souhaits = await synchroniserEtat()
+  appliquerBoite()
   const statut = lireStatut()
   for (const s of souhaits) {
     if (!valide(s)) {
@@ -431,7 +452,8 @@ async function tour() {
     ecrireStatut(statut)
     try {
       const r = s.environnement === "apercu" ? await deployerApercu(s) : await deployerProduction(s, actuel?.conteneur ? actuel : null)
-      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", chemins_publics: r.publics ?? [], conteneur: r.conteneur, couleur: r.couleur ?? null, le: horodatage() }
+      // boite : la version des clés de la console reçue par ce conteneur (jamais une empreinte des valeurs).
+      statut[cle] = statutEnLigne(s, r, horodatage())
       ecrireStatut(statut)
       await regenererCaddy(statut)
       if (r.ancien) {
@@ -504,6 +526,12 @@ async function retirer(cle, s) {
 }
 
 // --- La santé du serveur et des conteneurs ---------------------------------------------
+// Ce que le déployeur envoie vraiment à Sentry et PostHog (la console l'affiche) : jamais une clé.
+function resumeObservabilite() {
+  const e = obs.etat()
+  const canal = (c) => ({ envoyes: e[c].envoyes, echecs: e[c].echecs, joignable: e[c].joignable, dernier_ok: e[c].dernier_ok, premier_echec: e[c].premier_echec, dernier_echec: e[c].dernier_echec })
+  return { sentry: e.sentry, posthog: e.posthog, erreurs: canal("erreurs"), evenements: canal("evenements"), journaux: canal("journaux") }
+}
 const FICHIER_SANTE = join(ETAT, "sante.json")
 let placeProduits = {}
 let dernierEntretien = null
@@ -564,6 +592,8 @@ async function ecrireSante() {
     mise_a_jour: miseAJour,
     boucle_le: boucleLe, // la fin du dernier tour de déploiement : un tour bloqué se voit
     applications: etatApplications, // la sonde des produits (sonderProduits), produit par produit
+    boite: boite ? { version: boite.version, le: boite.le } : null,
+    observabilite: resumeObservabilite(),
   }
   writeFileSync(`${FICHIER_SANTE}.tmp`, JSON.stringify(sante, null, 2))
   renameSync(`${FICHIER_SANTE}.tmp`, FICHIER_SANTE)
@@ -577,6 +607,7 @@ async function bilanSante() {
   if (santeEnCours) return
   santeEnCours = true
   try {
+    appliquerBoite()
     await ecrireSante()
   } catch (e) {
     log(`Santé : ${e.message}`)
@@ -856,6 +887,10 @@ async function isolerProduits() {
 
 mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
+if (existsSync(BOITE) && !lireBoite(BOITE)) {
+  for (let i = 0; i < 30 && !lireBoite(BOITE); i++) await pause(2_000)
+  log(lireBoite(BOITE) ? "Boîte de la console lue." : "Boîte de la console absente après 60 s : les clés du serveur servent en attendant.")
+}
 await bilanSante()
 setInterval(bilanSante, 30_000)
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))
