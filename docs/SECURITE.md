@@ -106,7 +106,7 @@ tourner. Après la fusion :
 
 ```bash
 git pull
-sudo bash secrets.sh migrer      # génère et chiffre les nouveaux jetons
+bash secrets.sh migrer           # génère et chiffre les nouveaux jetons (sans sudo : .env doit rester à toi)
 docker compose build && docker compose up -d
 docker compose logs -f deployeur # « isolé sur le réseau usine-p-… » pour chaque produit
 ```
