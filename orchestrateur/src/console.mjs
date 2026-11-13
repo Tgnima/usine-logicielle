@@ -48,7 +48,7 @@ import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recev
 import { adresseTableau } from "./slack-couts.mjs"
 import { iso, visibilite } from "./visibilite.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
-import { appliquerAuxApplications, couperService, etatServices, poserService, retirerService, testerService } from "./services.mjs"
+import { appliquerAuxApplications, couperService, essaiCourriel, etatServices, poserService, retirerService, testerService } from "./services.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" }
@@ -503,7 +503,7 @@ const ROUTES = [
     const demande = demandeProduction(c)
     const p = obtenir(ctx.db, "projets", Number(id))
     if (!["livre", "en_production"].includes(p?.statut)) throw erreur(409, `Le projet est « ${p?.statut ?? "inconnu"} » : pas de mise en production possible maintenant.`)
-    if (demande.emails === "reels" && !envoiDisponible()) throw erreur(409, "Emails réels demandés, mais aucun service d'envoi n'est configuré sur le serveur.")
+    if (demande.emails === "reels" && !envoiDisponible()) throw erreur(409, "Emails réels demandés, mais aucun service d'envoi n'est branché (Réglages, Intégrations, Envoi d'emails).")
     if (productionsEnCours.has(p.id)) throw erreur(409, "Une mise en production de ce projet est déjà en cours.")
     productionsEnCours.add(p.id)
     // La mise en production prend plusieurs minutes : on répond tout de suite, le suivi arrive par le journal.
@@ -542,10 +542,11 @@ const ROUTES = [
   ["GET", /^\/api\/fournisseurs\/chatgpt$/, (ctx) => etatChatGPT(ctx)],
   // Sentry et PostHog : des clés à part de celles des IA (services.mjs), jamais renvoyées.
   ["GET", /^\/api\/services$/, (ctx) => etatServices(ctx)],
-  ["PUT", /^\/api\/services\/cles\/(SENTRY_DSN|POSTHOG_TOKEN|POSTHOG_HOTE)$/, (ctx, [nom], c, qui) => poserService(ctx, nom, c.valeur, qui.email, { confirme: c.confirme === true })],
-  ["DELETE", /^\/api\/services\/cles\/(SENTRY_DSN|POSTHOG_TOKEN|POSTHOG_HOTE)$/, (ctx, [nom], _c, qui) => retirerService(ctx, nom, qui.email)],
-  ["POST", /^\/api\/services\/(sentry|posthog)\/couper$/, (ctx, [service], _c, qui) => couperService(ctx, service, qui.email)],
-  ["POST", /^\/api\/services\/(sentry|posthog)\/tester$/, (ctx, [service]) => testerService(ctx, service)],
+  ["PUT", /^\/api\/services\/cles\/([A-Z_]{3,40})$/, (ctx, [nom], c, qui) => poserService(ctx, nom, c.valeur, qui.email, { confirme: c.confirme === true })],
+  ["DELETE", /^\/api\/services\/cles\/([A-Z_]{3,40})$/, (ctx, [nom], _c, qui) => retirerService(ctx, nom, qui.email)],
+  ["POST", /^\/api\/services\/(sentry|posthog|smtp|passerelle|slack)\/couper$/, (ctx, [service], _c, qui) => couperService(ctx, service, qui.email)],
+  ["POST", /^\/api\/services\/(sentry|posthog|smtp|passerelle|slack)\/tester$/, (ctx, [service]) => testerService(ctx, service)],
+  ["POST", /^\/api\/services\/smtp\/essai$/, (ctx, _p, _c, qui) => essaiCourriel(ctx, qui.email)],
   ["POST", /^\/api\/services\/appliquer$/, (ctx, _p, c, qui) => appliquerAuxApplications(ctx, qui.email, { confirme: c.confirme === true })],
 
   // Google Drive : le compte de service avec qui l'entreprise partage ses dossiers (google-drive.mjs).

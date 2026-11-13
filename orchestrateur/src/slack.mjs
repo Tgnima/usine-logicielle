@@ -56,6 +56,16 @@ export function notificateurConsole() {
 }
 
 // --- Slack -------------------------------------------------------------------
+// La connexion en cours : la console peut la fermer et la rouvrir (services.mjs, index.mjs).
+let appCourante = null
+export const slackConnecte = () => Boolean(appCourante)
+export async function arreterSlack(ctx) {
+  const app = appCourante
+  appCourante = null
+  ctx.notifier = notificateurConsole()
+  if (app) await app.stop().catch((e) => console.error("Slack (arrêt) :", e.message))
+}
+
 export async function demarrerSlack(ctx) {
   const { config, db } = ctx
   const app = new App({ token: config.secrets.slackBot, appToken: config.secrets.slackApp, socketMode: true })
@@ -626,6 +636,7 @@ export async function demarrerSlack(ctx) {
   }
 
   await app.start()
+  appCourante = app
   const canaux = new Set([config.slack.canal, ...db.prepare("SELECT DISTINCT canal FROM projets WHERE canal IS NOT NULL").all().map((p) => p.canal)].filter(Boolean))
   for (const c of canaux) await epinglerTableau(c)
   console.log("Slack connecté (Socket Mode).")

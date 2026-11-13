@@ -1572,10 +1572,12 @@ function integrations() {
     { id: "claude", nom: "Claude", logo: "C", couleur: "#c4603f", texte: "Construit les applications, fait le plan, relit le code.", branche: moteur("claude-code") },
     { id: "chatgpt", nom: "ChatGPT", logo: "G", couleur: "#0f7a5f", texte: "Contrôle chaque fonction, comme le ferait un visiteur.", branche: moteur("codex") },
     { id: "github", nom: "GitHub", logo: "GH", couleur: "#24292f", texte: "Range le code de chaque application et l'historique de ce qui a été fait.", branche: app.mode === "application" || r?.forge.compte?.ok ? true : app.mode === "a_installer" ? "presque" : false },
-    { id: "slack", nom: "Slack", logo: "S", couleur: "#4a154b", texte: "Facultatif : des notifications et des boutons dans un canal de ton équipe.", branche: Boolean(r?.slack?.branche), facultatif: true },
+    { id: "slack", nom: "Slack", logo: "S", couleur: "#4a154b", texte: "Facultatif : des notifications et des boutons dans un canal de ton équipe.", branche: serviceDe("slack") ? (serviceDe("slack").connecte ? true : serviceDe("slack").actif ? "a_verifier" : false) : Boolean(r?.slack?.branche), facultatif: true },
     { id: "drive", nom: "Google Drive", logo: "▲", couleur: "#1a73e8", texte: "Facultatif : lit les dossiers que tu partages avec l'usine, pour créer un public à partir de tes documents.", branche: Boolean(etat.drive?.configure), facultatif: true },
     { id: "sentry", nom: "Sentry", logo: "Se", couleur: "#362d59", texte: "Facultatif : te prévient quand l'usine plante ou ne donne plus signe de vie.", branche: etatService("sentry"), facultatif: true },
     { id: "posthog", nom: "PostHog", logo: "Ph", couleur: "#1d4aff", texte: "Facultatif : garde le journal de l'usine, pour comprendre après coup ce qui s'est passé.", branche: etatService("posthog"), facultatif: true },
+    { id: "smtp", nom: "Envoi d'emails", logo: "@", couleur: "#0b6e4f", texte: "Facultatif : les invitations partent par email, et les applications en ligne peuvent en envoyer.", branche: Boolean(serviceDe("smtp")?.actif), facultatif: true },
+    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: Boolean(serviceDe("passerelle")?.actif), facultatif: true },
   ]
 }
 const badgeIntegration = (x) => (x.branche === true ? html`<span class="badge vert">Connecté</span>`
@@ -1644,6 +1646,10 @@ function fenetreIntegration(id) {
   }
   if (id === "drive") return fenetreDrive()
   if (id === "sentry" || id === "posthog") return fenetreService(id)
+  const enAttente = (titre) => fenetre(titre, html`<div class="chargement">Chargement…</div>`)
+  if (id === "smtp") return serviceDe("smtp") ? fenetreSmtp(serviceDe("smtp")) : enAttente("Envoi d'emails")
+  if (id === "passerelle") return serviceDe("passerelle") ? fenetrePasserelle(serviceDe("passerelle")) : enAttente("Passerelle des applications")
+  if (id === "slack" && serviceDe("slack")) return fenetreSlack(serviceDe("slack"))
   if (id === "github") return fenetre("GitHub", html`<p class="aide" style="margin:0">Chaque application a son espace sur GitHub, où l'usine range son code et l'historique de ce qu'elle a fait. Tu peux y jeter un œil, mais tu n'en as pas besoin au quotidien.</p>${carteGithub(r.forge)}`)
   return fenetre("Slack", html`<div class="pile" style="gap:10px">
     <div class="barre"><strong>${r.slack?.branche ? "Connecté" : "Pas connecté"}</strong>${r.slack?.branche && r.slack.canal ? html`<span class="aide">canal ${r.slack.canal}</span>` : ""}</div>
@@ -1702,6 +1708,7 @@ function destinatairesService(s) {
   const dernier = d?.connu ? Object.values(d.envoi ?? {}).map((c) => c?.dernier_ok).filter(Boolean).sort().at(-1) : null
   const ligneDeployeur = !d?.connu ? "Le déployeur : pas encore de nouvelles."
     : !d.a_jour ? "Le déployeur : pas encore reçu la dernière clé (il la lit dans la minute)."
+    : !Object.keys(d.envoi ?? {}).length ? "Le déployeur a les derniers réglages de la console."
     : echec ? html`Le déployeur : ses envois échouent depuis ${heureParis(echec.dernier_echec.le)}. ${echec.dernier_echec.message}`
     : dernier ? `Le déployeur : dernier envoi réussi ${ilYa(dernier)}.` : "Le déployeur : clé reçue, rien d'envoyé pour l'instant."
   const ligneApplis = !ap?.total ? "Aucune application en ligne pour l'instant."
@@ -1758,6 +1765,93 @@ function fenetreService(id) {
       <div class="rangee" style="gap:8px"><button type="submit" class="btn btn-s">Enregistrer la région</button>${region?.console ? html`<button type="button" class="btn btn-s" data-action="retirer-service" data-nom="POSTHOG_HOTE">Revenir à la région du serveur</button>` : ""}</div>
     </form>
     ${boutonsService(s)}
+  </div>`)
+}
+
+// Les réglages publics d'un service (serveur d'envoi, canal…) : leur valeur et d'où elle vient.
+// Les champs secrets ont chacun leur formulaire (champService).
+function champsService(s, champs) {
+  return html`<form class="pile" style="gap:10px" data-form="service-champs">
+    <div class="grille">${champs.map(([nom, titre, type, options, aide]) => {
+      const c = cleDe(s, nom)
+      if (!c) return ""
+      const origine = c.coupe ? "coupé dans la console" : c.console ? `console, le ${dateCourte(c.console.le)}` : c.serveur ? "serveur" : ""
+      const libelle = html`<label class="aide" for="sc-${nom}">${titre}${origine ? html` <span class="aide">(${origine})</span>` : ""}</label>`
+      const valeur = c.valeur ?? ""
+      if (type === "choix") return html`<div class="pile" style="gap:6px">${libelle}<select id="sc-${nom}" name="${nom}" class="champ" data-actuel="${valeur}">
+        ${!valeur ? html`<option value="" selected>—</option>` : ""}${options.map(([v, t]) => html`<option value="${v}" ${brut(v === valeur ? "selected" : "")}>${t}</option>`)}</select>${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
+      return html`<div class="pile" style="gap:6px">${libelle}<input id="sc-${nom}" name="${nom}" class="champ mono" value="${valeur}" data-actuel="${valeur}" placeholder="${options ?? ""}" autocomplete="off" spellcheck="false">${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
+    })}</div>
+    <div><button type="submit" class="btn btn-s">Enregistrer</button></div>
+  </form>`
+}
+
+// Couper, Tester, et le dernier test : pour les services sans envoi mesuré (emails, Slack, passerelle).
+function actionsService(s, { essai = false, couper = "Couper" } = {}) {
+  const t = s.test
+  const principale = s.cles.find((c) => c.nom === { smtp: "SMTP_HOST", slack: "SLACK_BOT_TOKEN", passerelle: "AI_GATEWAY_API_KEY_APPLIS" }[s.id])
+  return html`<div class="pile" style="gap:6px">
+    ${t ? html`<div class="message ${t.ok ? "ok" : "erreur"}" style="margin:0"><span style="flex:1">${t.message} <span class="aide">(test du ${dateCourte(t.le)})</span></span></div>` : ""}
+    <div class="rangee" style="justify-content:space-between;gap:8px">
+      ${s.actif && !principale?.coupe ? html`<button type="button" class="btn btn-d btn-petit" data-action="couper-service" data-service="${s.id}" data-nom-service="${s.libelle}">${couper}</button>` : principale?.coupe ? html`<button type="button" class="btn btn-s btn-petit" data-action="retirer-service" data-nom="${principale.nom}">Ne plus couper</button>` : html`<span></span>`}
+      <span class="rangee" style="gap:8px">${essai ? html`<button type="button" class="btn btn-s" data-action="essai-courriel" ${brut(s.actif ? "" : "disabled")}>M'envoyer un email d'essai</button>` : ""}<button type="button" class="btn btn-s" data-action="tester-service" data-service="${s.id}" ${brut(s.actif ? "" : "disabled")}>Tester</button></span>
+    </div></div>`
+}
+
+function fenetreSmtp(s) {
+  const hote = cleDe(s, "SMTP_HOST")
+  return fenetre("Envoi d'emails", html`<div class="pile" style="gap:16px">
+    <p style="margin:0">Pour que les invitations partent par email, et que les applications en ligne puissent envoyer de vrais emails. Facultatif : sans lui, tu copies les liens d'invitation toi-même.</p>
+    <ol class="etapes-machine">
+      <li>Chez ton fournisseur d'emails (celui de ton domaine, ou un service d'envoi), cherche les <strong>paramètres SMTP</strong> : le serveur, le port, un identifiant et un mot de passe.</li>
+      <li>Remplis-les ici. L'expéditeur doit être une adresse que ce fournisseur t'autorise à utiliser.</li>
+      <li>Lance le test, puis envoie-toi un email d'essai.</li>
+    </ol>
+    ${champsService(s, [
+      ["SMTP_HOST", "Serveur d'envoi", "texte", "smtp.mon-fournisseur.fr"],
+      ["SMTP_PORT", "Port", "texte", "587"],
+      ["SMTP_SECURE", "Sécurité", "choix", [["0", "STARTTLS (port 587)"], ["1", "TLS direct (port 465)"]]],
+      ["EMAIL_EXPEDITEUR", "Expéditeur", "texte", "Usine <usine@mon-domaine.fr>"],
+    ])}
+    ${champService(s, "SMTP_USER", "", "Identifiant")}
+    ${champService(s, "SMTP_PASS", "", "Mot de passe")}
+    ${hote?.console ? html`<div class="aide">Le serveur d'envoi vient de la console : tout l'envoi en vient (identifiant et mot de passe compris), jamais un mélange avec le serveur.</div>` : ""}
+    ${destinatairesService(s)}
+    ${actionsService(s, { essai: true, couper: "Couper l'envoi" })}
+  </div>`)
+}
+
+function fenetreSlack(s) {
+  const admins = cleDe(s, "ADMIN_USER_IDS")?.valeur
+  return fenetre("Slack", html`<div class="pile" style="gap:16px">
+    <div class="barre"><strong>${s.connecte ? "Connecté" : s.actif ? "Pas encore connecté" : "Pas branché"}</strong>${s.connecte ? html`<span class="badge vert">connecté</span>` : ""}</div>
+    <p style="margin:0">Tout se fait dans cette console. Slack ajoute des notifications et des boutons dans un canal de ton équipe. Facultatif.</p>
+    <ol class="etapes-machine">
+      <li>Sur <span class="mono">api.slack.com/apps</span>, crée l'application de l'usine avec le manifeste du dépôt (<span class="mono">slack-manifest.yml</span>), puis installe-la dans ton espace.</li>
+      <li>Copie le <strong>jeton du bot</strong> (OAuth &amp; Permissions, il commence par <span class="mono">xoxb-</span>) et le <strong>jeton de l'application</strong> (Basic Information, App-Level Tokens, avec <span class="mono">connections:write</span> ; il commence par <span class="mono">xapp-</span>).</li>
+      <li>Indique le canal et les personnes qui pourront décider depuis Slack, puis lance le test.</li>
+    </ol>
+    ${champService(s, "SLACK_BOT_TOKEN", "", "Jeton du bot")}
+    ${champService(s, "SLACK_APP_TOKEN", "", "Jeton de l'application")}
+    ${champsService(s, [
+      ["SLACK_CANAL", "Canal (identifiant)", "texte", "C0123456789"],
+      ["ADMIN_USER_IDS", "Administrateurs (identifiants)", "texte", "U0123456789, U0987654321", "Eux seuls valident, décident et mettent en production depuis Slack."],
+    ])}
+    ${!admins ? html`<div class="message erreur" style="margin:0"><span style="flex:1">Aucun administrateur désigné : personne ne peut décider depuis Slack. C'est voulu, tant que tu n'as nommé personne.</span></div>` : ""}
+    ${actionsService(s, { couper: "Débrancher Slack" })}
+  </div>`)
+}
+
+function fenetrePasserelle(s) {
+  return fenetre("Passerelle des applications", html`<div class="pile" style="gap:16px">
+    <p style="margin:0">Les applications qui se servent de l'IA (résumés, suggestions…) passent par la passerelle Vercel. Donne-leur une clé à elles, avec un plafond de dépense : la clé des agents reste aux agents, et une application qui s'emballe ne vide pas leur crédit.</p>
+    <ol class="etapes-machine">
+      <li>Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys : crée une clé réservée aux applications et fixe-lui un plafond de dépense si ton compte le permet.</li>
+      <li>Colle-la ici, puis lance le test.</li>
+    </ol>
+    ${champService(s, "AI_GATEWAY_API_KEY_APPLIS", "Sans clé dédiée, les applications utilisent la clé commune du serveur, s'il y en a une.", "Clé des applications")}
+    ${destinatairesService(s)}
+    ${actionsService(s, { couper: "Retirer l'IA aux applications" })}
   </div>`)
 }
 
@@ -2548,8 +2642,10 @@ const ACTIONS = {
   },
   "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
   "tester-service": (el) => agir(() => api("POST", `services/${el.dataset.service}/tester`, {})),
+  "essai-courriel": () => agir(() => api("POST", "services/smtp/essai", {})),
   "couper-service": (el) => {
-    if (!confirmer(`Couper l'envoi vers ${el.dataset.service === "sentry" ? "Sentry" : "PostHog"} ? L'usine n'y enverra plus rien, même avec la clé du serveur, jusqu'à ce que tu cliques sur « Retirer ».`)) return
+    const nom = serviceDe(el.dataset.service)?.libelle ?? el.dataset.service
+    if (!confirmer(`Couper « ${nom} » ? L'usine ne s'en servira plus, même avec la valeur du serveur, jusqu'à ce que tu cliques sur « Retirer » ou « Ne plus couper ».`)) return
     return agir(() => api("POST", `services/${el.dataset.service}/couper`, {}))
   },
   "appliquer-services": () => {
@@ -3061,6 +3157,16 @@ document.addEventListener("submit", async (e) => {
     const horsUE = f.dataset.nom === "SENTRY_DSN" && Boolean(hote) && !/(^|\.)de\.sentry\.io$/.test(hote)
     if (horsUE && !confirmer("Ce projet Sentry n'est pas en région européenne : les erreurs de l'usine partiraient hors d'Europe. Mieux vaut créer un projet en région UE. Garder quand même cette clé ?")) return
     await agir(() => api("PUT", `services/cles/${f.dataset.nom}`, { valeur, confirme: horsUE }))
+  }
+  if (type === "service-champs") {
+    // Seuls les champs changés partent, un par un (chacun est vérifié par le serveur).
+    const changes = [...f.querySelectorAll("[name]")].map((el) => [el.name, String(el.value ?? "").trim(), el.dataset.actuel ?? ""]).filter(([, v, avant]) => v && v !== avant)
+    if (!changes.length) return
+    await agir(async () => {
+      let r
+      for (const [nom, valeur] of changes) r = await api("PUT", `services/cles/${nom}`, { valeur })
+      return r
+    })
   }
   if (type === "service-region") {
     const choix = String(d.get("region") ?? "")

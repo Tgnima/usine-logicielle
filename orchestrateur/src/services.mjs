@@ -23,6 +23,8 @@ import { noter } from "./db.mjs"
 import { chiffrer, dechiffrer } from "./fournisseurs.mjs"
 import { redemanderEtat } from "./github.mjs"
 import { MONITEUR, obs, reglerObservabilite } from "./observabilite.mjs"
+import { envoyerEssai, reglerCourriel, verifierCourriel } from "./courriel.mjs"
+import { PASSERELLE } from "./moteurs.mjs"
 
 const erreur = (code, message, extra = {}) => Object.assign(new Error(message), { code, ...extra })
 
@@ -53,6 +55,56 @@ export function validerHotePosthog(brut) {
   return { valeur: v, horsUE: v === "us.i.posthog.com" || v === "app.posthog.com" }
 }
 
+const ligne = (v) => String(v ?? "").trim()
+const sansEspace = (libelle, min = 8) => (brut) => {
+  const v = ligne(brut)
+  if (v.length < min || /\s/.test(v)) throw erreur(400, `${libelle} : la valeur semble incomplète (pas d'espace, au moins ${min} caractères).`)
+  return { valeur: v, horsUE: false }
+}
+export function validerHoteSmtp(brut) {
+  const v = ligne(brut).toLowerCase()
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(v)) throw erreur(400, "Serveur d'envoi : une adresse comme smtp.mon-fournisseur.fr, sans https:// ni port.")
+  return { valeur: v, horsUE: false }
+}
+export function validerPortSmtp(brut) {
+  const v = ligne(brut)
+  if (!/^\d{2,5}$/.test(v) || Number(v) > 65535) throw erreur(400, "Port : un nombre, d'habitude 587 (ou 465).")
+  return { valeur: v, horsUE: false }
+}
+export function validerSecuriteSmtp(brut) {
+  const v = ligne(brut)
+  if (!["0", "1"].includes(v)) throw erreur(400, "Sécurité : STARTTLS (port 587) ou TLS direct (port 465).")
+  return { valeur: v, horsUE: false }
+}
+export function validerExpediteur(brut) {
+  const v = ligne(brut)
+  if (v.length > 200 || /[\r\n]/.test(v) || !/^([^<>@]{0,100}<)?[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>?$/.test(v)) throw erreur(400, "Expéditeur : une adresse, ou « Nom <adresse> ».")
+  return { valeur: v, horsUE: false }
+}
+export function validerJetonBot(brut) {
+  const v = ligne(brut)
+  if (/^xapp-/.test(v)) throw erreur(400, "C'est le jeton de l'application (xapp-). Ici, il faut le jeton du bot, qui commence par xoxb-.")
+  if (!/^xoxb-[A-Za-z0-9-]{20,}$/.test(v)) throw erreur(400, "Jeton du bot Slack : il commence par xoxb- (OAuth & Permissions, Bot User OAuth Token).")
+  return { valeur: v, horsUE: false }
+}
+export function validerJetonApp(brut) {
+  const v = ligne(brut)
+  if (/^xoxb-/.test(v)) throw erreur(400, "C'est le jeton du bot (xoxb-). Ici, il faut le jeton de l'application, qui commence par xapp-.")
+  if (!/^xapp-[A-Za-z0-9-]{20,}$/.test(v)) throw erreur(400, "Jeton de l'application Slack : il commence par xapp- (Basic Information, App-Level Tokens, avec connections:write).")
+  return { valeur: v, horsUE: false }
+}
+export function validerCanal(brut) {
+  const v = ligne(brut)
+  if (!/^[CG][A-Z0-9]{8,12}$/.test(v)) throw erreur(400, "Canal : son identifiant, qui commence par C (dans Slack : clic droit sur le canal, Copier le lien, la fin de l'adresse).")
+  return { valeur: v, horsUE: false }
+}
+export function validerAdmins(brut) {
+  const ids = ligne(brut).split(/[\s,]+/).filter(Boolean)
+  if (ids.includes("*")) throw erreur(400, "« * » donnerait les droits à tout l'espace Slack : nomme plutôt les personnes.")
+  if (!ids.length || ids.some((x) => !/^[UW][A-Z0-9]{8,12}$/.test(x))) throw erreur(400, "Administrateurs : leurs identifiants Slack, qui commencent par U, séparés par des virgules (profil, ⋮, Copier l'identifiant du membre).")
+  return { valeur: [...new Set(ids)].join(","), horsUE: false }
+}
+
 // --- Le registre ------------------------------------------------------------------------------
 // destinataires : qui reçoit la clé (orchestrateur, deployeur, applications). Seules celles qui vont
 // au déployeur ou aux applications entrent dans la boîte.
@@ -61,11 +113,30 @@ export const CLES_SERVICES = {
   SENTRY_DSN: { service: "sentry", libelle: "Clé d'envoi Sentry (DSN)", secret: true, serveur: () => secret("sentry_dsn"), valider: validerDsn, destinataires: TOUS },
   POSTHOG_TOKEN: { service: "posthog", libelle: "Jeton de projet PostHog", secret: true, serveur: () => secret("posthog_token"), valider: validerJetonPosthog, destinataires: TOUS },
   POSTHOG_HOTE: { service: "posthog", libelle: "Région PostHog", secret: false, serveur: () => process.env.POSTHOG_HOTE ?? "", defaut: "eu.i.posthog.com", valider: validerHotePosthog, destinataires: TOUS },
+  // L'envoi d'emails : un bloc. Si le serveur d'envoi est posé dans la console, tout le bloc vient
+  // de la console (un champ absent y est vide) : jamais l'hôte de l'une avec le mot de passe de l'autre.
+  SMTP_HOST: { service: "smtp", libelle: "Serveur d'envoi", secret: false, serveur: () => process.env.SMTP_HOST ?? "", valider: validerHoteSmtp, destinataires: TOUS },
+  SMTP_PORT: { service: "smtp", libelle: "Port", secret: false, serveur: () => process.env.SMTP_PORT ?? "", valider: validerPortSmtp, destinataires: TOUS },
+  SMTP_SECURE: { service: "smtp", libelle: "Sécurité", secret: false, serveur: () => process.env.SMTP_SECURE ?? "", valider: validerSecuriteSmtp, destinataires: TOUS },
+  EMAIL_EXPEDITEUR: { service: "smtp", libelle: "Expéditeur", secret: false, serveur: () => process.env.EMAIL_EXPEDITEUR ?? "", valider: validerExpediteur, destinataires: TOUS },
+  SMTP_USER: { service: "smtp", libelle: "Identifiant", secret: true, serveur: () => secret("smtp_user"), valider: sansEspace("Identifiant", 3), destinataires: TOUS },
+  SMTP_PASS: { service: "smtp", libelle: "Mot de passe", secret: true, serveur: () => secret("smtp_pass"), valider: sansEspace("Mot de passe", 6), destinataires: TOUS },
+  // La passerelle IA des applications : une clé à elles, jamais celle des agents. Sans elle, les
+  // applications gardent la clé commune du serveur (comme avant).
+  AI_GATEWAY_API_KEY_APPLIS: { service: "passerelle", libelle: "Clé de passerelle des applications", secret: true, serveur: () => "", valider: sansEspace("Clé de passerelle", 20), destinataires: ["applications"] },
+  // Slack : pour l'orchestrateur seul, jamais dans la boîte.
+  SLACK_BOT_TOKEN: { service: "slack", libelle: "Jeton du bot (xoxb-)", secret: true, serveur: () => secret("slack_bot_token"), valider: validerJetonBot, destinataires: ["orchestrateur"] },
+  SLACK_APP_TOKEN: { service: "slack", libelle: "Jeton de l'application (xapp-)", secret: true, serveur: () => secret("slack_app_token"), valider: validerJetonApp, destinataires: ["orchestrateur"] },
+  SLACK_CANAL: { service: "slack", libelle: "Canal", secret: false, serveur: (ctx) => ctx?.config?.serveur?.slackCanal ?? "", valider: validerCanal, destinataires: ["orchestrateur"] },
+  ADMIN_USER_IDS: { service: "slack", libelle: "Administrateurs", secret: false, serveur: (ctx) => ctx?.config?.serveur?.slackAdmins ?? "", valider: validerAdmins, destinataires: ["orchestrateur"] },
 }
 // La clé principale de chaque service : celle que « Couper l'envoi » vide.
 export const SERVICES = {
   sentry: { libelle: "Sentry", principale: "SENTRY_DSN" },
   posthog: { libelle: "PostHog", principale: "POSTHOG_TOKEN" },
+  smtp: { libelle: "L'envoi d'emails", principale: "SMTP_HOST" },
+  passerelle: { libelle: "La passerelle des applications", principale: "AI_GATEWAY_API_KEY_APPLIS" },
+  slack: { libelle: "Slack", principale: "SLACK_BOT_TOKEN" },
 }
 
 const cleReglage = (nom) => `service_${nom}`
@@ -92,10 +163,30 @@ export function valeurService(ctx, nom) {
       illisible = true
     }
   } else if (e && !def.secret && typeof e.valeur === "string") return { valeur: e.valeur, source: "console" }
-  const serveur = String(def.serveur() ?? "").trim()
+  const serveur = String(def.serveur(ctx) ?? "").trim()
   if (serveur) return { valeur: serveur, source: "serveur", illisible }
   if (def.defaut) return { valeur: def.defaut, source: "defaut", illisible }
   return { valeur: "", source: "aucune", illisible }
+}
+
+// L'envoi d'emails en un bloc : celui de la console si son serveur d'envoi y est posé (ou coupé),
+// sinon null (le serveur). Un champ que la console n'a pas posé y est vide.
+export function blocCourriel(ctx) {
+  const hote = valeurService(ctx, "SMTP_HOST")
+  if (hote.source !== "console" && hote.source !== "coupe") return null
+  const c = (nom) => {
+    const r = valeurService(ctx, nom)
+    return r.source === "console" ? r.valeur : ""
+  }
+  return { hote: hote.valeur, port: c("SMTP_PORT"), securite: c("SMTP_SECURE"), expediteur: c("EMAIL_EXPEDITEUR"), utilisateur: c("SMTP_USER"), motDePasse: c("SMTP_PASS") }
+}
+
+// Slack : les valeurs qui servent, dans la configuration de l'orchestrateur (lue à chaque message).
+function reglerSlackConfig(ctx) {
+  if (!ctx.config?.secrets) return
+  ctx.config.secrets.slackBot = valeurService(ctx, "SLACK_BOT_TOKEN").valeur
+  ctx.config.secrets.slackApp = valeurService(ctx, "SLACK_APP_TOKEN").valeur
+  ctx.config.slack = { ...(ctx.config.slack ?? {}), canal: valeurService(ctx, "SLACK_CANAL").valeur, admins: valeurService(ctx, "ADMIN_USER_IDS").valeur.split(",").map((s) => s.trim()).filter(Boolean) }
 }
 
 // --- La boîte vers le déployeur -----------------------------------------------------------------
@@ -144,6 +235,8 @@ export function appliquerServices(ctx, regler = reglerObservabilite, { boite = t
     return r.valeur
   }
   const change = regler({ sentryDsn: v("SENTRY_DSN"), posthogJeton: v("POSTHOG_TOKEN"), posthogHote: v("POSTHOG_HOTE") })
+  reglerCourriel(blocCourriel(ctx))
+  reglerSlackConfig(ctx)
   if (boite) ecrireBoite(ctx)
   return change
 }
@@ -159,7 +252,21 @@ export function poserService(ctx, nom, valeur, par, { confirme = false } = {}, r
   noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} posée dans la console par ${par}${horsUE ? " (hors d'Europe, confirmé)" : ""}` })
   changerVersion(ctx)
   appliquerServices(ctx, regler)
-  return { ok: true, message: `${def.libelle} enregistrée : l'usine s'en sert dès maintenant, le déployeur dans la minute. Les applications la recevront à leur prochaine mise en ligne, ou par « Appliquer ».` }
+  apresChangement(ctx, nom)
+  return { ok: true, message: messagePose(def) }
+}
+
+// Ce que dit la console après une pose : qui s'en sert, et quand.
+function messagePose(def) {
+  const d = def.destinataires
+  if (def.service === "slack") return `${def.libelle} enregistré${def.secret ? "" : "(s)"} : Slack se reconnecte avec les réglages de la console.`
+  if (!d.includes("orchestrateur")) return `${def.libelle} enregistrée : les applications la recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
+  return `${def.libelle} enregistré(e) : l'usine s'en sert dès maintenant, le déployeur dans la minute. Les applications le recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
+}
+// Slack ne relit pas ses jetons en marche : sa connexion se rouvre (index.mjs, ctx.relancerSlack).
+function apresChangement(ctx, nom) {
+  if (CLES_SERVICES[nom]?.service !== "slack" || !["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"].includes(nom)) return
+  Promise.resolve(ctx.relancerSlack?.()).catch((e) => console.error("Slack (relance) :", e.message))
 }
 
 // Retirer ce que la console a posé (valeur ou coupure) : la valeur du serveur reprend.
@@ -170,6 +277,7 @@ export function retirerService(ctx, nom, par, regler = reglerObservabilite) {
   noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} retirée de la console par ${par}` })
   changerVersion(ctx)
   appliquerServices(ctx, regler)
+  apresChangement(ctx, nom)
   const reprend = valeurService(ctx, nom).source === "serveur"
   return { ok: true, message: reprend ? `${def.libelle} retirée : la valeur du serveur reprend.` : `${def.libelle} retirée.` }
 }
@@ -179,10 +287,11 @@ export function couperService(ctx, service, par, regler = reglerObservabilite) {
   const s = SERVICES[service]
   if (!s) throw erreur(400, "Service inconnu.")
   ecrireReglage(ctx.db, cleReglage(s.principale), JSON.stringify({ coupe: true, le: new Date().toISOString(), par }))
-  noter(ctx.db, { projet: null, type: "reglage", message: `${s.libelle} : envoi coupé dans la console par ${par}` })
+  noter(ctx.db, { projet: null, type: "reglage", message: `${s.libelle} : coupé dans la console par ${par}` })
   changerVersion(ctx)
   appliquerServices(ctx, regler)
-  return { ok: true, message: `${s.libelle} : plus rien n'est envoyé par l'usine. « Retirer » rend la main à la valeur du serveur.` }
+  apresChangement(ctx, s.principale)
+  return { ok: true, message: `${s.libelle} : coupé, même avec la valeur du serveur. « Retirer » rend la main au serveur.` }
 }
 
 // --- Tester -----------------------------------------------------------------------------------
@@ -211,7 +320,29 @@ function lireTest(ctx, service) {
   }
 }
 
-export async function testerService(ctx, service, { instance = obs, fetch: envoyer = globalThis.fetch, delaiMs = 8_000 } = {}) {
+// Une erreur d'envoi d'email en clair (codes de nodemailer).
+export function traduireEchecSmtp(e) {
+  const code = e?.code ?? ""
+  if (code === "EAUTH" || e?.responseCode === 535) return "Le serveur d'envoi refuse l'identifiant ou le mot de passe."
+  if (["ECONNECTION", "ECONNREFUSED", "EDNS", "ENOTFOUND"].includes(code)) return "Le serveur d'envoi est introuvable ou refuse la connexion : vérifie son adresse et son port."
+  if (code === "ETIMEDOUT" || /timeout/i.test(e?.message ?? "")) return "Le serveur d'envoi ne répond pas (délai dépassé) : vérifie le port (587 ou 465) et la sécurité."
+  if (code === "ETLS" || /ssl|tls|wrong version/i.test(e?.message ?? "")) return "La sécurité ne correspond pas au port : STARTTLS va avec 587, TLS direct avec 465."
+  return `L'envoi d'emails ne marche pas (${String(e?.message ?? e).slice(0, 120)}).`
+}
+
+// Un email d'essai, à l'administrateur qui le demande.
+export async function essaiCourriel(ctx, email, envoyerEmail = envoyerEssai) {
+  try {
+    await envoyerEmail(email)
+    noter(ctx.db, { projet: null, type: "reglage", message: `Email d'essai envoyé à ${email}` })
+    return { ok: true, message: `Email d'essai envoyé à ${email} : vérifie ta boîte (et les indésirables).` }
+  } catch (e) {
+    return { ok: false, message: traduireEchecSmtp(e) }
+  }
+}
+
+export async function testerService(ctx, service, options = {}) {
+  const { instance = obs, fetch: envoyer = globalThis.fetch, delaiMs = 8_000 } = options
   if (!SERVICES[service]) throw erreur(400, "Service inconnu.")
   let r
   if (service === "sentry") {
@@ -220,6 +351,43 @@ export async function testerService(ctx, service, { instance = obs, fetch: envoy
       await instance.battement(MONITEUR).catch(() => false)
       const b = instance.etat().battement
       r = b.joignable ? { ok: true, message: `Sentry a bien reçu le signal de l'usine (moniteur ${MONITEUR}).` } : { ok: false, message: traduireEchec("sentry", b.dernier_echec?.detail) }
+    }
+  } else if (service === "smtp") {
+    try {
+      if (!valeurService(ctx, "SMTP_HOST").valeur) r = { ok: false, message: "Aucun serveur d'envoi : renseigne d'abord le serveur, le port et l'expéditeur." }
+      else {
+        await (options.verifier ?? verifierCourriel)()
+        r = { ok: true, message: "Le serveur d'envoi accepte la connexion et les identifiants. Tu peux t'envoyer un email d'essai." }
+      }
+    } catch (e) {
+      r = { ok: false, message: traduireEchecSmtp(e) }
+    }
+  } else if (service === "slack") {
+    const bot = valeurService(ctx, "SLACK_BOT_TOKEN").valeur
+    if (!bot) r = { ok: false, message: "Aucun jeton de bot : colle d'abord le jeton xoxb-." }
+    else if (process.env.NODE_TEST_CONTEXT && envoyer === globalThis.fetch) r = { ok: false, message: "Hors réseau (tests)." }
+    else {
+      try {
+        const res = await envoyer("https://slack.com/api/auth.test", { method: "POST", headers: { authorization: `Bearer ${bot}` }, signal: AbortSignal.timeout(delaiMs) })
+        const j = await res.json().catch(() => ({}))
+        const admins = valeurService(ctx, "ADMIN_USER_IDS").valeur
+        r = j.ok ? { ok: true, message: `Slack reconnaît le bot dans l'espace « ${String(j.team ?? "").slice(0, 80)} ».${admins ? "" : " Attention : aucun administrateur n'est désigné, personne ne peut décider depuis Slack."}` } : { ok: false, message: j.error === "invalid_auth" || j.error === "token_revoked" ? "Slack refuse ce jeton de bot : il a été révoqué, ou l'application a été réinstallée." : `Slack a répondu : ${String(j.error ?? res.status).slice(0, 80)}.` }
+      } catch (e) {
+        r = { ok: false, message: traduireEchec("slack", e?.name === "TimeoutError" ? "pas de réponse" : e?.message) }
+      }
+    }
+  } else if (service === "passerelle") {
+    const cle = valeurService(ctx, "AI_GATEWAY_API_KEY_APPLIS").valeur
+    if (!cle) r = { ok: false, message: "Aucune clé dédiée : les applications utilisent la clé commune du serveur, s'il y en a une." }
+    else if (process.env.NODE_TEST_CONTEXT && envoyer === globalThis.fetch) r = { ok: false, message: "Hors réseau (tests)." }
+    else {
+      try {
+        const res = await envoyer(`${PASSERELLE}/v1/models`, { headers: { authorization: `Bearer ${cle}` }, signal: AbortSignal.timeout(delaiMs) })
+        await res.body?.cancel?.().catch(() => {})
+        r = res.ok ? { ok: true, message: "La passerelle accepte cette clé." } : { ok: false, message: res.status === 401 || res.status === 403 ? "La passerelle refuse cette clé : elle a été supprimée, ou copiée incomplète." : `La passerelle a répondu HTTP ${res.status}.` }
+      } catch (e) {
+        r = { ok: false, message: traduireEchec("passerelle", e?.name === "TimeoutError" ? "pas de réponse" : e?.message) }
+      }
     }
   } else {
     const jeton = valeurService(ctx, "POSTHOG_TOKEN").valeur
@@ -286,6 +454,12 @@ export async function appliquerAuxApplications(ctx, par, { confirme = false, red
 }
 
 // --- Ce que la console affiche (jamais une valeur secrète) ------------------------------------
+function actifService(ctx, id, instance) {
+  if (id === "sentry" || id === "posthog") return Boolean(instance.actif[id])
+  if (id === "smtp") return Boolean(valeurService(ctx, "SMTP_HOST").valeur)
+  if (id === "slack") return Boolean(valeurService(ctx, "SLACK_BOT_TOKEN").valeur && valeurService(ctx, "SLACK_APP_TOKEN").valeur)
+  return Boolean(valeurService(ctx, "AI_GATEWAY_API_KEY_APPLIS").valeur)
+}
 const CANAUX = { sentry: ["battement", "erreurs"], posthog: ["evenements", "journaux"] }
 const CANAUX_DEPLOYEUR = { sentry: ["erreurs"], posthog: ["evenements", "journaux"] }
 export function etatServices(ctx, instance = obs) {
@@ -298,7 +472,7 @@ export function etatServices(ctx, instance = obs) {
     const o = sante?.observabilite
     if (!o) return { connu: false }
     const a_jour = version === 0 || sante.boite?.version === version
-    const envoi = Object.fromEntries(CANAUX_DEPLOYEUR[id].map((c) => [c, o[c] ? { ...o[c], dernier_echec: o[c].dernier_echec ? { le: o[c].dernier_echec.le, message: traduireEchec(id, o[c].dernier_echec.detail) } : null } : null]))
+    const envoi = Object.fromEntries((CANAUX_DEPLOYEUR[id] ?? []).map((c) => [c, o[c] ? { ...o[c], dernier_echec: o[c].dernier_echec ? { le: o[c].dernier_echec.le, message: traduireEchec(id, o[c].dernier_echec.detail) } : null } : null]))
     return { connu: true, a_jour, actif: Boolean(o[id]), envoi, le: sante.le }
   }
   return {
@@ -307,7 +481,7 @@ export function etatServices(ctx, instance = obs) {
     services: Object.entries(SERVICES).map(([id, s]) => ({
       id,
       libelle: s.libelle,
-      actif: Boolean(instance.actif[id]),
+      actif: actifService(ctx, id, instance),
       cles: Object.entries(CLES_SERVICES).filter(([, d]) => d.service === id).map(([nom, d]) => {
         const e = entree(ctx, nom)
         const { valeur, source, illisible } = valeurService(ctx, nom)
@@ -322,14 +496,15 @@ export function etatServices(ctx, instance = obs) {
           nom, libelle: d.libelle, secret: d.secret, source, illisible: Boolean(illisible), hors_ue: horsUE,
           console: e && !e.coupe ? { fin: d.secret ? e.fin : null, le: e.le, par: e.par } : null,
           coupe: e?.coupe ? { le: e.le, par: e.par } : null,
-          serveur: Boolean(String(d.serveur() ?? "").trim()),
+          serveur: Boolean(String(d.serveur(ctx) ?? "").trim()),
           // Une valeur publique (la région) se montre ; une valeur secrète, jamais.
           valeur: d.secret ? null : valeur,
           destinataires: d.destinataires,
         }
       }),
-      envoi: Object.fromEntries(CANAUX[id].map((c) => [c, { envoyes: etat[c].envoyes, echecs: etat[c].echecs, joignable: etat[c].joignable, dernier_ok: etat[c].dernier_ok, dernier_echec: etat[c].dernier_echec ? { le: etat[c].dernier_echec.le, message: traduireEchec(id, etat[c].dernier_echec.detail) } : null }])),
-      deployeur: deployeur(id),
+      envoi: Object.fromEntries((CANAUX[id] ?? []).map((c) => [c, { envoyes: etat[c].envoyes, echecs: etat[c].echecs, joignable: etat[c].joignable, dernier_ok: etat[c].dernier_ok, dernier_echec: etat[c].dernier_echec ? { le: etat[c].dernier_echec.le, message: traduireEchec(id, etat[c].dernier_echec.detail) } : null }])),
+      deployeur: id === "slack" ? null : deployeur(id),
+      ...(id === "slack" ? { connecte: Boolean(ctx.slackConnecte?.()) } : {}),
       test: lireTest(ctx, id),
     })),
   }

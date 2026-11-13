@@ -17,7 +17,7 @@ import { demarrerFabrique } from "./fabrique.mjs"
 import { resoudre, surveillerEscalades } from "./escalade.mjs"
 import * as livraison from "./livraison.mjs"
 import * as actions from "./pipeline.mjs"
-import { demarrerSlack, notificateurConsole } from "./slack.mjs"
+import { arreterSlack, demarrerSlack, notificateurConsole, slackConnecte } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
 import { demarrerConsole } from "./console.mjs"
@@ -52,6 +52,16 @@ brancherJetons(config)
 brancherEnvCommun((serveur) => ({ ...envFournisseurs(ctx, serveur === config.verificateur.url ? null : "claude-code"), ...envConnecteurs(ctx) }))
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
+// Slack se branche et se débranche aussi depuis la console (services.mjs) : la connexion se rouvre.
+ctx.slackConnecte = slackConnecte
+ctx.relancerSlack = async () => {
+  await arreterSlack(ctx)
+  if (!config.secrets.slackBot || !config.secrets.slackApp) return console.log("Slack débranché : mode console.")
+  await demarrerSlack(ctx).catch((e) => {
+    ctx.notifier = notificateurConsole()
+    console.error("Slack indisponible, mode console :", e.message)
+  })
+}
 if (config.secrets.slackBot && config.secrets.slackApp) {
   await demarrerSlack(ctx).catch((e) => console.error("Slack indisponible, mode console :", e.message))
 } else {

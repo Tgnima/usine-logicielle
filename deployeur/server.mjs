@@ -21,7 +21,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets } from "./deploiement.mjs"
-import { lireBoite, valeurBoite } from "./boite.mjs"
+import { blocSmtp, lireBoite, valeurBoite } from "./boite.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
 import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
@@ -223,14 +223,16 @@ function variables(s) {
   const v = { PORT: "3000", DATA_DIR: "/app/data" }
   for (const k of VARIABLES) if (s.env?.[k] !== undefined) v[k] = String(s.env[k])
   if ((s.services ?? []).includes("mailpit")) Object.assign(v, { SMTP_HOST: "mailpit", SMTP_PORT: "1025" })
-  // Emails réels : le service d'envoi vient du .env du serveur, jamais du dépôt d'état.
+  // Emails réels : le service d'envoi de la console (boîte) ou du serveur, jamais du dépôt d'état.
   if (s.emails === "reels") {
-    if (!env.SMTP_HOST) throw new Error("emails réels demandés mais SMTP_HOST n'est pas configuré")
-    for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "EMAIL_EXPEDITEUR"]) if (env[k]) v[k] = env[k]
-    if (secret("smtp_user")) v.SMTP_USER = secret("smtp_user")
-    if (secret("smtp_pass")) v.SMTP_PASS = secret("smtp_pass")
+    const smtp = blocSmtp(boite, { SMTP_HOST: env.SMTP_HOST ?? "", SMTP_PORT: env.SMTP_PORT ?? "", SMTP_SECURE: env.SMTP_SECURE ?? "", EMAIL_EXPEDITEUR: env.EMAIL_EXPEDITEUR ?? "", SMTP_USER: secret("smtp_user"), SMTP_PASS: secret("smtp_pass") })
+    if (!smtp.SMTP_HOST) throw new Error("emails réels demandés mais aucun service d'envoi n'est branché (console ou serveur)")
+    // SMTP_SECURE : « 1 » pour TLS direct ; la console écrit « 0 » pour STARTTLS, qui n'est pas transmis.
+    for (const [k, val] of Object.entries(smtp)) if (val && !(k === "SMTP_SECURE" && val !== "1")) v[k] = val
   }
-  if (secret("ai_gateway_api_key")) v.AI_GATEWAY_API_KEY = secret("ai_gateway_api_key")
+  // La passerelle IA : la clé dédiée aux applications (console) d'abord, sinon la clé commune du serveur.
+  const passerelle = valeurBoite(boite, "AI_GATEWAY_API_KEY_APPLIS", secret("ai_gateway_api_key"))
+  if (passerelle) v.AI_GATEWAY_API_KEY = passerelle
   // L'observabilité du produit (server/observabilite.js de la brique) : le même DSN et le même jeton
   // pour tous, des clés d'envoi seulement ; le produit et son environnement l'étiquettent.
   Object.assign(v, { USINE_PRODUIT: s.produit, USINE_ENVIRONNEMENT: s.environnement, USINE_VERSION: s.sha.slice(0, 12) })

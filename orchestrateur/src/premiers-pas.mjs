@@ -50,8 +50,8 @@ export async function premiersPas(ctx) {
     {
       id: "courriel", obligatoire: false, fait: courrielConfigure(),
       titre: "Envoyer les invitations par email",
-      detail: courrielConfigure() ? "Les invitations partent par email." : "Sans envoi d'emails, tu copies le lien d'invitation et tu le transmets toi-même. Un technicien peut l'activer sur le serveur.",
-      aller: "#/reglages/equipe", action: "Voir les accès",
+      detail: courrielConfigure() ? "Les invitations partent par email." : "Sans envoi d'emails, tu copies le lien d'invitation et tu le transmets toi-même. Branche ton service d'envoi : quelques champs à remplir, puis un email d'essai.",
+      aller: "#/reglages/integrations", action: "Brancher l'envoi d'emails",
     },
     {
       id: "surveillance", obligatoire: false, fait: obs.actif.sentry,
