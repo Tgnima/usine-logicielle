@@ -2652,6 +2652,10 @@ function decisionsDifferees(envoyer, { minuterie = setTimeout, arreter = clearTi
   }
 }
 const decisionsEnCours = decisionsDifferees(envoyerDecision)
+// La consigne d'une décision : gardée dans l'état, elle survit à chaque nouveau rendu.
+document.addEventListener("input", (e) => {
+  if (e.target.matches?.("textarea[data-consigne]")) etat.brouillons.set(Number(e.target.dataset.consigne), e.target.value)
+})
 
 async function envoyerDecision(id, d) {
   const cle = `decision:${id}`
@@ -3218,8 +3222,6 @@ document.addEventListener("keydown", (e) => {
 })
 
 document.addEventListener("input", (e) => {
-  // La consigne d'une décision : gardée dans l'état, elle survit à chaque nouveau rendu.
-  if (e.target.matches?.("textarea[data-consigne]")) etat.brouillons.set(Number(e.target.dataset.consigne), e.target.value)
   if (e.target.closest("[data-form=plan]") && e.target.matches("[data-lot]") && !etat.planModifie) {
     etat.planEdition = syncPlan(planCourant())
     etat.planEditionId = etat.projet.id
