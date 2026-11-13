@@ -22,6 +22,7 @@ import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets } from "./deploiement.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
+import { canal, derniereVersion } from "./versions.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
 import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
 import { creerObservabilite } from "../commun/observabilite.mjs"
@@ -62,6 +63,9 @@ const DNS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"].flatMap((d) => ["--dns", d])
 // Le dossier de l'usine sur le serveur, monté au même chemin (mise à jour de l'usine).
 const USINE_DIR = env.USINE_DIR ?? ""
 const DEPOT_USINE = env.DEPOT_USINE ?? ""
+// Ce que propose « Mettre à jour l'usine » : la dernière version publiée (stable) ou chaque fusion (main).
+const CANAL = canal(env.CANAL_USINE)
+const VERSION_TEXTE = /^v\d+\.\d+\.\d+$/
 // Sans jeton ni dépôt d'état (usine neuve, GitHub pas encore connecté dans la console) :
 // le déployeur attend ; il reprend dès que l'orchestrateur dépose le jeton de l'application.
 
@@ -717,7 +721,8 @@ async function verifierMiseAJour() {
   const sources = { console: jetonConsole(), serveur: JETON }
   let f
   for (const jeton of jetonsMiseAJour(sources)) {
-    f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "main:refs/remotes/github/main"], { git: { jeton }, minutes: 3 })
+    // main, et les étiquettes des versions publiées (vX.Y.Z).
+    f = await git(["fetch", "-q", "--prune", `https://github.com/${DEPOT_USINE}.git`, "+main:refs/remotes/github/main", "+refs/tags/v*:refs/tags/v*"], { git: { jeton }, minutes: 3 })
     if (f.code === 0) {
       if (miseAJour.source !== origineJeton(jeton, sources)) log(`Mise à jour de l'usine : dépôt lu avec ${origineJeton(jeton, sources)}.`)
       miseAJour = { ...miseAJour, source: origineJeton(jeton, sources) }
@@ -732,8 +737,16 @@ async function verifierMiseAJour() {
   }
   if (miseAJour.erreur) log(`Vérification de mise à jour rétablie (en échec depuis ${miseAJour.erreur.depuis}).`)
   await lancer("chown", ["-R", "1000:1000", join(USINE_DIR, ".git")])
-  const commits = (await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/main"])).sortie.split("\n").filter(Boolean)
-  miseAJour = { ...miseAJour, erreur: null, disponible: commits.length, commits: commits.slice(0, 15), version: (await git(["rev-parse", "--short", "HEAD"])).sortie.trim(), verifie_le: horodatage() }
+  // La cible : refs/remotes/github/cible, que la mise à jour applique. En stable, la dernière
+  // version publiée ; sans version publiée, rien n'est proposé (jamais main par défaut).
+  const version = CANAL === "stable" ? derniereVersion((await git(["tag", "-l", "v*"])).sortie.split("\n")) : null
+  const cible = CANAL === "main" ? "refs/remotes/github/main" : version ? `refs/tags/${version}` : null
+  if (cible) await git(["update-ref", "refs/remotes/github/cible", `${cible}^{commit}`])
+  else await git(["update-ref", "-d", "refs/remotes/github/cible"])
+  // HEAD..cible : rien de proposé si le serveur est déjà au-delà (jamais de retour en arrière).
+  const commits = cible ? (await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/cible"])).sortie.split("\n").filter(Boolean) : []
+  const actuelle = (await git(["describe", "--tags", "--exact-match", "--match", "v*", "HEAD"])).sortie.trim()
+  miseAJour = { ...miseAJour, erreur: null, canal: CANAL, cible: CANAL === "main" ? "main" : version, disponible: commits.length, commits: commits.slice(0, 15), version: VERSION_TEXTE.test(actuelle) ? actuelle : (await git(["rev-parse", "--short", "HEAD"])).sortie.trim(), verifie_le: horodatage() }
 }
 
 // Appliquer : un conteneur d'aide (il survit au redémarrage du déployeur) remet le dépôt
@@ -751,7 +764,9 @@ async function appliquerMiseAJour(demande) {
     "set -eo pipefail",
     // Les secrets que la nouvelle version attend existent sur le serveur, sinon rien ne change.
     ...scriptVerifierSecrets(USINE_DIR, IMAGE_OUTILS),
-    `git -c safe.directory=${USINE_DIR} reset -q --hard refs/remotes/github/main`,
+    // La cible choisie par verifierMiseAJour() : la dernière version publiée, ou main.
+    `git -c safe.directory=${USINE_DIR} rev-parse -q --verify refs/remotes/github/cible > /dev/null || { echo "Aucune version à appliquer sur le canal ${CANAL}."; exit 1; }`,
+    `git -c safe.directory=${USINE_DIR} reset -q --hard refs/remotes/github/cible`,
     "for essai in 1 2 3; do if docker compose build --pull > /tmp/construction.log 2>&1; then break; fi; tail -3 /tmp/construction.log; [ $essai = 3 ] && exit 1; sleep 30; done",
     "grep -E 'Built|ERROR' /tmp/construction.log | tail -10 || true",
     "docker compose up -d --remove-orphans",

@@ -1,0 +1,58 @@
+# Les tests de l'usine, sur chaque pull request et sur main. Une PR rouge ne se fusionne pas.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Orchestrateur
+        working-directory: orchestrateur
+        run: npm ci --no-audit --no-fund && npm test
+      - name: Portier
+        working-directory: portier
+        run: npm test
+      - name: Déployeur
+        working-directory: deployeur
+        run: node --test --test-reporter=spec test/*.test.mjs
+      # Les dépendances de la brique sont dans brique.json : l'usine les installe à la création
+      # d'un produit (creation.mjs), la CI fait de même.
+      - name: Brique webapp
+        working-directory: briques/webapp
+        run: |
+          npm install --no-audit --no-fund $(node -p "require('./brique.json').dependances.join(' ')")
+          npm test
+
+  configuration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scripts shell (syntaxe)
+        run: for f in install.sh update.sh secrets.sh commun/entree.sh; do bash -n "$f"; done
+      - name: Scripts shell (shellcheck, erreurs seulement)
+        run: shellcheck -S error install.sh update.sh secrets.sh commun/entree.sh
+      - name: docker-compose.yml
+        run: |
+          cp .env.example .env
+          sed -i 's/^DOMAINE_BASE=.*/DOMAINE_BASE=exemple.test/' .env
+          docker compose config --quiet
+      - name: Chaque secret de secrets.sh est déclaré dans docker-compose.yml
+        run: |
+          source <(grep -E '^SECRETS=' secrets.sh)
+          for s in "${SECRETS[@]}"; do
+            l=$(echo "$s" | tr 'A-Z' 'a-z')
+            grep -q "^  $l: { file: /run/usine-secrets/$l }" docker-compose.yml || { echo "::error::$l manque dans docker-compose.yml"; exit 1; }
+          done
