@@ -1669,8 +1669,8 @@ function fenetreIntegration(id) {
 // Ce qui est montré vient de ce que l'usine a vraiment envoyé (dernier envoi réussi, échecs).
 const ilYa = (le) => (le ? `il y a ${duree((Date.now() - new Date(le)) / 1000)}` : "")
 const serviceDe = (id) => etat.services?.services?.find((s) => s.id === id) ?? null
-const cleDe = (s, nom) => s?.cles.find((c) => c.nom === nom) ?? null
-const principaleDe = (s) => cleDe(s, s?.id === "sentry" ? "SENTRY_DSN" : "POSTHOG_TOKEN")
+const cleService = (s, nom) => s?.cles.find((c) => c.nom === nom) ?? null
+const principaleDe = (s) => cleService(s, s?.id === "sentry" ? "SENTRY_DSN" : "POSTHOG_TOKEN")
 // Le message de la dernière action, dans la fenêtre : la zone des messages est derrière le voile.
 // Pas deux fois le résultat d'un test, déjà affiché avec sa date.
 const messageDansFenetre = (s) => (etat.message && etat.message.texte !== s?.test?.message ? html`<div class="message ${etat.message.type}" style="margin:0" role="${etat.message.type === "erreur" ? "alert" : "status"}"><span style="flex:1">${etat.message.texte}</span></div>` : "")
@@ -1690,7 +1690,7 @@ function etatService(id) {
 
 // Une clé : d'où elle vient (console, serveur, coupée), jamais la valeur elle-même.
 function champService(s, nom, aide, titre) {
-  const c = cleDe(s, nom)
+  const c = cleService(s, nom)
   if (!c) return ""
   const source = c.illisible ? html`<span class="badge rouge">verrouillée</span> <span class="aide">la valeur du serveur sert</span>`
     : c.coupe ? html`<span class="badge orange">envoi coupé</span> <span class="aide">le ${dateCourte(c.coupe.le)} par ${c.coupe.par}</span>`
@@ -1760,7 +1760,7 @@ function fenetreService(id) {
     ${boutonsService(s)}
     <p class="aide" style="margin:0">Pour que les IA lisent aussi les erreurs pendant leur travail, ajoute le connecteur Sentry dans <a href="#/reglages/connecteurs">Réglages, Connecteurs</a>. C'est un autre jeton, qui ne sert qu'à lire.</p>
   </div>`)
-  const region = cleDe(s, "POSTHOG_HOTE")
+  const region = cleService(s, "POSTHOG_HOTE")
   const hote = region?.valeur || "eu.i.posthog.com"
   const autre = !["eu.i.posthog.com", "us.i.posthog.com"].includes(hote)
   return fenetre("PostHog", html`<div class="pile" style="gap:16px">
@@ -1791,7 +1791,7 @@ function fenetreService(id) {
 function champsService(s, champs) {
   return html`<form class="pile" style="gap:10px" data-form="service-champs">
     <div class="grille">${champs.map(([nom, titre, type, options, aide]) => {
-      const c = cleDe(s, nom)
+      const c = cleService(s, nom)
       if (!c) return ""
       const origine = c.coupe ? "coupé dans la console" : c.console ? `console, le ${dateCourte(c.console.le)}` : c.serveur ? "serveur" : ""
       const libelle = html`<label class="aide" for="sc-${nom}">${titre}${origine ? html` <span class="aide">(${origine})</span>` : ""}</label>`
@@ -1817,7 +1817,7 @@ function actionsService(s, { essai = false, couper = "Couper" } = {}) {
 }
 
 function fenetreSmtp(s) {
-  const hote = cleDe(s, "SMTP_HOST")
+  const hote = cleService(s, "SMTP_HOST")
   return fenetre("Envoi d'emails", html`<div class="pile" style="gap:16px">
     ${messageDansFenetre(s)}
     <p style="margin:0">Pour que les invitations partent par email, et que les applications en ligne puissent envoyer de vrais emails. Facultatif : sans lui, tu copies les liens d'invitation toi-même.</p>
@@ -1841,7 +1841,7 @@ function fenetreSmtp(s) {
 }
 
 function fenetreSlack(s) {
-  const admins = cleDe(s, "ADMIN_USER_IDS")?.valeur
+  const admins = cleService(s, "ADMIN_USER_IDS")?.valeur
   return fenetre("Slack", html`<div class="pile" style="gap:16px">
     ${messageDansFenetre(s)}
     <div class="barre"><strong>${s.connecte ? "Connecté" : s.actif ? "Pas encore connecté" : "Pas branché"}</strong>${s.connecte ? html`<span class="badge vert">connecté</span>` : ""}</div>
