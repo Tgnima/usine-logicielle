@@ -1948,8 +1948,8 @@ function jaugeServeur(titre, m, pct, detail) {
   </div>`
 }
 
-// Un nom de modèle ne se coupe pas entre le nom et la version (« Claude Opus 5.5 », « ChatGPT (gpt-6.1-sol) »).
-const insecable = (nom) => String(nom ?? "").replace(/ (?=[\d(])/g, " ")
+// Un nom de modèle ne se coupe jamais (« Claude Opus 5.5 », « ChatGPT (gpt-6.1-sol) ») : une cellule passe à la ligne entre deux modèles.
+const insecable = (nom) => String(nom ?? "").replace(/ /g, " ").replace(/-/g, "‑")
 // Une liste de juges dans l'ordre du relais : « ChatGPT (gpt-6.1-sol), puis Claude Opus 5.5 en relais ».
 const relaisEnClair = (noms) => (noms.length > 1 ? `${insecable(noms[0])}, puis ${noms.slice(1).map(insecable).join(", puis ")} en relais` : insecable(noms[0] ?? "—"))
 // Les accès à un modèle, dits simplement (MODES de moteurs.mjs).
@@ -2033,13 +2033,13 @@ const TRAVAUX_COLONNES = [["construction", "Construction"], ["securite", "Relect
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`
 function celluleTravail(t) {
   if (!t?.passages) return html`<span class="aide">—</span>`
-  return html`${t.modeles.map((m, i) => html`${i ? html`<br>` : ""}${insecable(m.nom)} <span class="aide">× ${m.passages}</span>`)}
+  return html`${t.modeles.map((m, i) => html`${i ? html`<br>` : ""}<span class="modele-passages">${insecable(m.nom)} <span class="aide">× ${m.passages}</span></span>`)}
     ${t.dans_le_passage.length ? html`<div class="sous">avec ${t.dans_le_passage.map(insecable).join(", ")} dans le même passage</div>` : ""}`
 }
 function celluleSousAgents(s) {
   if (!s.passages_notes) return html`<span class="aide">non noté</span>`
-  if (!s.liste.length) return html`aucun <span class="aide">(${pluriel(s.passages_notes, "passage noté")})</span>`
-  return html`${s.liste.map((x, i) => html`${i ? html`<br>` : ""}<span title="${x.description}">${x.type}</span> <span class="aide">× ${x.fois}</span>${x.modeles.length ? html`<div class="sous">${x.modeles.map(insecable).join(", ")}</div>` : x.modele_demande ? html`<div class="sous">demandé : ${x.modele_demande}</div>` : ""}`)}`
+  if (!s.liste.length) return html`aucun<div class="sous">${pluriel(s.passages_notes, "passage noté")}</div>`
+  return html`${s.liste.map((x, i) => html`${i ? html`<br>` : ""}<span class="modele-passages"><span title="${x.description}">${insecable(x.type)}</span> <span class="aide">× ${x.fois}</span></span>${x.modeles.length ? html`<div class="sous">${x.modeles.map(insecable).join(", ")}</div>` : x.modele_demande ? html`<div class="sous">demandé : ${x.modele_demande}</div>` : ""}`)}`
 }
 function blocModelesProjet(v) {
   const projets = v.projets_taches ?? []
@@ -2056,13 +2056,13 @@ function blocModelesProjet(v) {
       : "Les sous-agents de l'agent qui construit seront notés à partir de sa prochaine tâche ; avant, l'usine ne gardait que les modèles."}</p>
     ${!m ? html`<div class="carte chargement">Chargement…</div>` : !m.lots.length ? html`<div class="carte vide">Ce projet n'a pas encore de tâche.</div>`
       : m.lots.map((lot) => html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">${lot.nom}</h3>
-        <div class="tableau" tabindex="0" role="region" aria-label="${lot.nom} : les modèles de chaque tâche" data-quoi="tableau-lot-${lot.numero}"><table style="min-width:900px">
-          <thead><tr><th scope="col">Tâche</th>${TRAVAUX_COLONNES.map(([, nom]) => html`<th scope="col">${nom}</th>`)}<th scope="col">Sous-agents</th><th scope="col">Où elle en est</th></tr></thead>
+        <div class="tableau" tabindex="0" role="region" aria-label="${lot.nom} : les modèles de chaque tâche" data-quoi="tableau-lot-${lot.numero}"><table class="table-taches" style="min-width:820px">
+          <thead><tr><th scope="col">Tâche</th>${TRAVAUX_COLONNES.map(([, nom]) => html`<th scope="col">${nom}</th>`)}<th scope="col">Sous-agents</th></tr></thead>
           <tbody>${lot.taches.map((t) => html`<tr>
-            <th scope="row" style="min-width:200px;font-size:14px;color:var(--encre);font-weight:600;white-space:normal"><span class="mono aide">${t.cle}</span> ${t.titre}${t.approche ? html`<div class="sous">${pluriel(t.approche, "changement")} d'approche</div>` : ""}</th>
+            <th scope="row" class="tache-modeles"><span class="mono aide">${t.cle}</span> ${t.titre}
+              <div class="rangee" style="margin-top:4px;gap:6px"><span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span>${t.approche ? html`<span class="aide">${pluriel(t.approche, "changement")} d'approche</span>` : ""}</div></th>
             ${TRAVAUX_COLONNES.map(([cle]) => html`<td class="modeles-fonction">${celluleTravail(t.travaux[cle])}</td>`)}
-            <td class="modeles-fonction">${celluleSousAgents(t.sous_agents)}</td>
-            <td><span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span></td></tr>`)}</tbody></table></div>
+            <td class="modeles-fonction">${celluleSousAgents(t.sous_agents)}</td></tr>`)}</tbody></table></div>
       </div>`)}
   </section>`
 }
