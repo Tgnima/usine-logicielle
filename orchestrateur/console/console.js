@@ -204,7 +204,7 @@ function barreHaut() {
 function fenetre(titre, contenu, { large = false } = {}) {
   return html`<div class="voile" data-action="fermer-fenetre"></div>
   <div class="fenetre${large ? " fenetre-large" : ""}" role="dialog" aria-modal="true" aria-labelledby="fenetre-titre">
-    <div class="barre"><h2 id="fenetre-titre">${titre}</h2><button type="button" class="btn-icone" data-action="fermer-fenetre" aria-label="Fermer">✕</button></div>
+    <div class="barre" style="flex-wrap:nowrap;align-items:flex-start"><h2 id="fenetre-titre" tabindex="-1" style="flex:1;min-width:0">${titre}</h2><button type="button" class="btn-icone" data-action="fermer-fenetre" aria-label="Fermer">✕</button></div>
     ${contenu}
   </div>`
 }
@@ -984,7 +984,9 @@ function fenetreCapture(i) {
   const p = etat.projet
   const caps = p ? capturesFiltrees(p) : []
   const c = caps[i]
-  if (!c) return ""
+  // Jamais rien : etat.fenetre resterait rempli, et la page ne se rafraîchirait plus.
+  if (!c) return fenetre("Capture introuvable", html`<p style="margin:0">Cette capture n'est plus là.</p>
+    <div class="rangee" style="justify-content:flex-end"><button type="button" class="btn btn-s" data-action="fermer-fenetre">Fermer</button></div>`)
   const n = caps.length
   return fenetre(c.titre, html`<figure class="visionneuse"><img src="${c.url}" alt="${c.titre}${c.mobile ? ", sur téléphone" : ""}">
       <figcaption class="aide">${c.lot ? `Lot ${c.lot} · ` : ""}${c.mobile ? "Téléphone" : "Ordinateur"} · ${i + 1} sur ${n}</figcaption></figure>
@@ -1794,6 +1796,7 @@ function dessinerFenetre() {
   if (q.startsWith("integration-")) return fenetreIntegration(q.slice(12))
   if (q === "connecteur-ajouter") return fenetreAjoutConnecteur()
   if (q.startsWith("connecteur-")) return fenetreConnecteur(q.slice(11))
+  if (q.startsWith("tache-")) return fenetreTache(q.slice(6))
   return ""
 }
 
@@ -2027,57 +2030,107 @@ function blocModelesSemaine(w) {
     </div>`
 }
 
-// Les modèles, tâche par tâche : un projet, ses lots, et pour chaque tâche tous les modèles qui y
-// ont travaillé (avec le nombre de passages), plus les sous-agents de l'agent quand ils sont notés.
-// Les colonnes portent les mots du tableau « Les modèles au travail » (TRAVAUX de visibilite.mjs).
+// Les modèles, tâche par tâche (proposition de l'agent UX de l'usine, 13 nov.). Dans la page : une
+// liste courte par lot, une ligne par tâche (qui l'a construite, ses sous-agents). Une ligne ouvre une
+// fenêtre : tous les modèles qui ont travaillé sur la tâche, ses sous-agents, la tâche d'avant ou d'après.
+// Les mots des travaux sont ceux du tableau « Les modèles au travail » (TRAVAUX de visibilite.mjs).
 const TRAVAUX_COLONNES = [["construction", "Construire"], ["securite", "Relire la sécurité"], ["controle", "Contrôler"], ["design", "Relire le design"]]
 // Les sous-agents de Claude Code, dits simplement ; un type inconnu de cette liste garde son nom.
 const TYPES_SOUS_AGENT = { Explore: "Exploration du code", "general-purpose": "Agent généraliste", Plan: "Préparation d'un plan", inconnu: "Sous-agent" }
 const MODELES_DEMANDES = { haiku: "Claude Haiku", sonnet: "Claude Sonnet", opus: "Claude Opus", inherit: "le modèle de l'agent" }
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`
-// Un modèle et son nombre de passages, insécables ; seule coupure possible, avant la parenthèse d'un nom de ChatGPT.
-const avecPassages = (nom, n) => html`${insecable(nom).replace(" (", " (")} <span class="aide">× ${n}</span>`
-function celluleTravail(t, sousAgentsNotes) {
-  if (!t?.passages) return html`<span class="aide">—</span>`
-  return html`${t.modeles.map((m, i) => html`${i ? html`<br>` : ""}${avecPassages(m.nom, m.passages)}`)}
-    ${t.dans_le_passage.length && !sousAgentsNotes ? html`<div class="sous">avec ${t.dans_le_passage.map(insecable).join(", ")} dans le même passage</div>` : ""}`
+// « X », « X et Y », « X, Y et Z ».
+const enumerer = (l) => (l.length > 1 ? `${l.slice(0, -1).join(", ")} et ${l.at(-1)}` : l[0] ?? "")
+const idTache = (lot, t) => `${lot.numero}:${t.cle}`
+// La clé de focus d'une ligne de tâche (celle de rendre()) : la fenêtre y rend le focus en se fermant.
+const cleLigneTache = (id) => `voir-tache|${id}||||`
+// Toutes les tâches du projet affiché, dans l'ordre des lots : la fenêtre passe de l'une à l'autre.
+const tachesAplaties = () => (etat.modelesProjet?.lots ?? []).flatMap((lot) => lot.taches.map((t) => ({ lot, t, id: idTache(lot, t) })))
+const badgeTache = (t) => html`<span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span>`
+
+// La ligne d'une tâche dans la page : qui l'a construite, et ses sous-agents quand ils sont notés.
+function resumeTache(t) {
+  const noms = t.travaux.construction.modeles.map((m) => m.nom)
+  const qui = t.statut === "en_cours" ? (noms.length ? `En construction : ${enumerer(noms)}` : "En construction")
+    : noms.length ? `Construite par ${enumerer(noms)}` : "Pas encore construite"
+  const s = t.sous_agents
+  const n = s.liste.reduce((x, a) => x + a.fois, 0)
+  return s.passages_notes ? `${qui} · ${n ? pluriel(n, "sous-agent") : "sans sous-agent"}` : qui
 }
-function celluleSousAgents(s) {
-  if (!s.passages_notes) return html`<span class="aide">non noté</span>`
-  if (!s.liste.length) return html`aucun<div class="sous">${pluriel(s.passages_notes, "passage noté")}</div>`
-  return html`${s.liste.map((x, i) => html`<div style="${i ? "margin-top:8px" : ""}">${avecPassages(TYPES_SOUS_AGENT[x.type] ?? x.type, x.fois)}
-    <div class="sous">${x.modeles.length ? x.modeles.map(insecable).join(", ") : x.modele_demande ? `demandé : ${MODELES_DEMANDES[x.modele_demande] ?? x.modele_demande}` : "modèle non noté"}</div>
-    ${x.description ? html`<div class="sous">« ${x.description} »</div>` : ""}</div>`)}`
-}
+
 function blocModelesProjet(v) {
   const projets = v.projets_taches ?? []
   if (!projets.length) return ""
   const id = etat.visibiliteProjet ?? projets[0].id
-  // Pendant le chargement d'un autre projet, les tableaux du précédent restent, atténués : la page ne saute pas.
+  // Pendant le chargement d'un autre projet, les lignes du précédent restent, atténuées et inertes : la page ne saute pas.
   const m = etat.modelesProjet
   const enCours = Boolean(m) && m.projet.id !== id
   const erreur = etat.modelesErreur?.id === id ? etat.modelesErreur.texte : null
   const connu = projets.some((p) => p.id === id)
-  const depuis = m?.sous_agents_depuis
   return html`<section class="pile" aria-labelledby="v-taches">
     <div class="barre"><h2 id="v-taches">Les modèles, tâche par tâche</h2>
       <div class="rangee"><label class="aide" for="v-projet">Projet</label>
         <select id="v-projet" class="champ champ-petit" data-choix="projet-modeles">${connu ? "" : html`<option value="" selected>Choisir un projet</option>`}${projets.map((p) => html`<option value="${p.id}" ${p.id === id ? "selected" : ""}>${p.nom}</option>`)}</select></div></div>
-    <p class="aide" style="margin:0">Pour chaque tâche, chaque modèle qui y a travaillé et son nombre de passages (une correction en ajoute un). ${depuis
-      ? `Les sous-agents de l'agent qui construit sont notés depuis le ${momentParis(depuis)} ; avant, l'usine ne gardait que les modèles.`
-      : "Les sous-agents de l'agent qui construit seront notés à partir de sa prochaine tâche ; avant, l'usine ne gardait que les modèles."}</p>
+    <p class="aide" style="margin:0">Pour chaque tâche, le modèle qui l'a construite. Ouvre une tâche pour voir tous les modèles qui y ont travaillé, et ses sous-agents.</p>
     ${erreur ? html`<div class="carte vide">Ce projet n'a pas de tâche à montrer (${erreur}). Choisis un projet dans la liste.</div>`
       : !m ? html`<div class="carte chargement">Chargement…</div>` : !m.lots.length ? html`<div class="carte vide">Ce projet n'a pas encore de tâche.</div>`
-      : html`<div class="pile${enCours ? " en-chargement" : ""}" aria-busy="${String(enCours)}">${m.lots.map((lot) => html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">${lot.nom}</h3>
-        <div class="tableau" tabindex="0" role="region" aria-label="${lot.nom} : les modèles de chaque tâche" data-quoi="tableau-lot-${lot.numero}"><table class="table-taches" style="min-width:760px">
-          <thead><tr><th scope="col">Tâche</th>${TRAVAUX_COLONNES.map(([, nom]) => html`<th scope="col">${nom}</th>`)}<th scope="col">Sous-agents</th></tr></thead>
-          <tbody>${lot.taches.map((t) => html`<tr>
-            <th scope="row" class="tache-modeles"><span class="mono aide">${t.cle}</span> ${t.titre}
-              <div class="rangee" style="margin-top:4px;gap:6px"><span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span>${t.approche ? html`<span class="aide">${pluriel(t.approche, "changement")} d'approche</span>` : ""}</div></th>
-            ${TRAVAUX_COLONNES.map(([cle]) => html`<td class="modeles-fonction">${celluleTravail(t.travaux[cle], t.sous_agents.liste.length > 0)}</td>`)}
-            <td class="modeles-fonction">${celluleSousAgents(t.sous_agents)}</td></tr>`)}</tbody></table></div>
+      : html`<div class="pile${enCours ? " en-chargement" : ""}" ${brut(enCours ? 'aria-busy="true" inert' : 'aria-busy="false"')}>${m.lots.map((lot) => html`<div class="carte">
+        <h3 class="surtitre" style="padding:14px 16px 0">${lot.nom}</h3>
+        <ol class="fil lignes-taches" aria-label="${lot.nom}">${lot.taches.map((t) => html`<li><button type="button" class="ligne-tache" data-action="voir-tache" data-id="${idTache(lot, t)}" aria-haspopup="dialog">
+          <span style="flex:1;min-width:0"><span class="mono aide">${t.cle}</span> <strong>${t.titre}</strong><span class="aide" style="display:block;margin-top:2px">${resumeTache(t)}</span></span>
+          ${badgeTache(t)}<span class="aide" aria-hidden="true">›</span></button></li>`)}</ol>
       </div>`)}</div>`}
   </section>`
+}
+
+// La fenêtre d'une tâche. Introuvable (projet changé entre-temps) : une fenêtre qui le dit et se ferme,
+// jamais rien (etat.fenetre resterait rempli et la page ne se rafraîchirait plus).
+function fenetreTache(id) {
+  const liste = tachesAplaties()
+  const i = liste.findIndex((x) => x.id === id)
+  if (i < 0) return fenetre("Tâche introuvable", html`<p style="margin:0">Cette tâche n'est plus dans ce projet.</p>
+    <div class="rangee" style="justify-content:flex-end"><button type="button" class="btn btn-s" data-action="fermer-fenetre">Fermer</button></div>`)
+  const { lot, t } = liste[i]
+  const fini = ["fusionnee", "abandonnee"].includes(t.statut)
+  const s = t.sous_agents
+  const construite = t.travaux.construction.passages
+  const depuis = etat.modelesProjet?.sous_agents_depuis
+  // data-quoi="nav" : une clé de focus distincte de la ligne de la même tâche, derrière la fenêtre.
+  const nav = (x, sens) => (x ? html`<button type="button" class="btn btn-s" data-action="voir-tache" data-id="${x.id}" data-quoi="nav" aria-label="${sens < 0 ? "Tâche précédente" : "Tâche suivante"} : ${x.t.cle} ${x.t.titre}">${sens < 0 ? `← ${x.t.cle}` : `${x.t.cle} →`}</button>` : html`<span></span>`)
+  return fenetre(`${t.cle} · ${t.titre}`, html`
+    <div class="rangee" style="margin-top:-8px">${badgeTache(t)}<span class="aide">${lot.nom}${t.approche ? ` · ${pluriel(t.approche, "changement")} d'approche` : ""}</span></div>
+    <section class="pile" aria-labelledby="ft-qui"><h3 class="surtitre" id="ft-qui">Qui a travaillé dessus</h3>
+      <dl class="qui-fait-quoi">${TRAVAUX_COLONNES.map(([cle, nom]) => {
+        const tr = t.travaux[cle]
+        return html`<div><dt>${nom}</dt><dd>${tr.passages
+          ? tr.modeles.map((x, k) => html`${k ? html`<br>` : ""}${insecable(x.nom)} <span class="aide">· ${x.passages} fois</span>`)
+          : html`<span class="aide">${fini ? "Pas fait pour cette tâche" : "Pas encore"}</span>`}
+          ${tr.dans_le_passage.length && !s.liste.length ? html`<span class="aide" style="display:block">Aussi appelé en cours de route : ${tr.dans_le_passage.map(insecable).join(", ")}</span>` : ""}</dd></div>`
+      })}</dl>
+    </section>
+    <section class="pile separe" aria-labelledby="ft-sous"><h3 class="surtitre" id="ft-sous">Sous-agents</h3>
+      ${!s.passages_notes ? html`<p class="aide" style="margin:0">Pas noté pour cette tâche.</p>`
+        : !s.liste.length ? html`<p style="margin:0">Aucun : l'agent a tout fait seul.</p>`
+        : html`<ul class="lignes-usine">${s.liste.map((a) => html`<li>
+            <div><strong>${TYPES_SOUS_AGENT[a.type] ?? a.type}</strong> <span class="aide">· ${a.fois} fois</span></div>
+            <div>${a.modeles.length ? a.modeles.map(insecable).join(", ") : a.modele_demande ? `${MODELES_DEMANDES[a.modele_demande] ?? a.modele_demande} (demandé)` : html`<span class="aide">modèle non noté</span>`}</div>
+            ${a.description ? html`<div class="aide">« ${a.description} »</div>` : ""}</li>`)}</ul>`}
+      ${s.passages_notes && s.passages_notes < construite ? html`<p class="aide" style="margin:0">Noté sur ${s.passages_notes} des ${construite} fois où elle a été construite.</p>` : ""}
+    </section>
+    <details class="technique" id="ft-calcul" ${etat.calculOuvert ? "open" : ""}><summary>Comment c'est compté</summary>
+      <p class="aide" style="margin:8px 0 0">Une fois, c'est un passage complet de ce travail sur la tâche : chaque correction en ajoute une. Quand plusieurs modèles servent dans le même passage, l'usine compte celui qui a le plus travaillé ; les autres sont « aussi appelés ». Après un changement d'approche, la construction passe au modèle de renfort. ${depuis
+        ? `Les sous-agents sont notés depuis le ${momentParis(depuis)} ; avant, l'usine ne gardait que les modèles.`
+        : "Les sous-agents seront notés à partir de la prochaine tâche ; avant, l'usine ne gardait que les modèles."}</p></details>
+    <div class="barre separe">${nav(liste[i - 1], -1)}<span class="aide">${i + 1} sur ${liste.length}</span>${nav(liste[i + 1], 1)}</div>`)
+}
+
+// Ouvrir une tâche, ou passer à une autre : le focus va sur le titre (un lecteur d'écran le lit) ; à la
+// fermeture, il revient sur la ligne de la dernière tâche vue.
+function voirTache(id) {
+  etat.fenetre = `tache-${id}`
+  etat.ouvreur = cleLigneTache(id)
+  rendre()
+  $("#fenetre-titre")?.focus()
 }
 
 function blocSemaine(v) {
@@ -2136,6 +2189,8 @@ function vueVisibilite() {
 }
 
 // --- Rendu et chargement ------------------------------------------------------------------
+// La clé qui retrouve un élément après un nouveau rendu : ses data-action, data-id, data-quoi, data-choix, data-hote et son id.
+const cleDe = (x) => ["action", "id", "quoi", "choix", "hote"].map((k) => x.dataset?.[k] ?? "").join("|") + "|" + (x.id ?? "")
 let dernierCote = ""
 function rendre() {
   const vue = { accueil: vueAccueil, projets: vueProjets, projet: vueProjet, reglages: vueReglages, personas: vuePersonas, persona: vuePersona, demarrer: vueDemarrer, visibilite: vueVisibilite }[etat.route.vue]
@@ -2144,7 +2199,7 @@ function rendre() {
   const j = $("#journal")
   const enBas = !j || j.scrollTop + j.clientHeight >= j.scrollHeight - 20
   const a = document.activeElement
-  const cleFocus = a && m.contains(a) && a !== m ? ["action", "id", "quoi", "choix", "hote"].map((k) => a.dataset?.[k] ?? "").join("|") + "|" + (a.id ?? "") : null
+  const cleFocus = a && m.contains(a) && a !== m ? cleDe(a) : null
   // La taille donnée à la main à un champ (poignée en bas à droite) survit au rafraîchissement.
   const tailles = new Map([...document.querySelectorAll("#vue textarea[id]")].filter((t) => t.style.height).map((t) => [t.id, t.style.height]))
   // Le défilement horizontal d'un tableau qui porte un data-quoi aussi.
@@ -2156,7 +2211,7 @@ function rendre() {
   afficherMessages()
   // Un élément sans clé (ni data-*, ni id) ne se retrouve pas : on ne donne pas le focus au premier venu.
   if (cleFocus && cleFocus !== "|||||") {
-    const cible = [...m.querySelectorAll("button, a, input, select, textarea, [tabindex]")].find((x) => ["action", "id", "quoi", "choix", "hote"].map((k) => x.dataset?.[k] ?? "").join("|") + "|" + (x.id ?? "") === cleFocus)
+    const cible = [...m.querySelectorAll("button, a, input, select, textarea, [tabindex]")].find((x) => cleDe(x) === cleFocus)
     cible?.focus({ preventScroll: true })
   }
   const j2 = $("#journal")
@@ -2665,6 +2720,7 @@ const ACTIONS = {
   },
   "voir-archives": () => { etat.filtre = "archives"; if (location.hash === "#/projets") rendre(); else location.hash = "#/projets" },
   fenetre: (el) => {
+    etat.ouvreur = cleDe(el)
     etat.fenetre = el.dataset.quoi
     if (el.dataset.quoi === "public") etat.departPublic = null
     if (el.dataset.quoi === "machine") { etat.jetonCree = null; chargerJetons() }
@@ -2675,7 +2731,15 @@ const ACTIONS = {
     // Le premier champ à remplir, sinon le premier bouton du contenu (pas « Fermer »).
     ;($(".fenetre form :is(input:not([type=hidden]), textarea)") ?? $(".fenetre > :not(.barre) button"))?.focus()
   },
-  "fermer-fenetre": () => { etat.fenetre = null; etat.invites = []; etat.jetonCree = null; etat.departPublic = null; rendre() },
+  // En se fermant, une fenêtre rend le focus à ce qui l'a ouverte (sinon il retomberait sur la page entière).
+  "fermer-fenetre": () => {
+    etat.fenetre = null; etat.invites = []; etat.jetonCree = null; etat.departPublic = null
+    const ouvreur = etat.ouvreur
+    etat.ouvreur = null
+    rendre()
+    if (ouvreur) [...document.querySelectorAll("#vue :is(button, a, [tabindex])")].find((x) => cleDe(x) === ouvreur)?.focus()
+  },
+  "voir-tache": (el) => voirTache(el.dataset.id),
   "retirer-invite": (el) => { etat.invites.splice(Number(el.dataset.id), 1); rendre(); $("#inv-email")?.focus() },
   "fermer-invitations": () => { etat.invitation = null; rendre() },
   "depart-public": (el) => {
@@ -2753,7 +2817,7 @@ const ACTIONS = {
   "onglet-projet": (el) => { etat.ongletProjet = { projet: etat.projet?.id, id: el.dataset.id }; etat.menuProjet = false; rendre(); $(`#op-${el.dataset.id}`)?.focus() },
   "filtre-captures": (el) => { etat.filtreCaptures.ecran = el.dataset.id; rendre() },
   // La visionneuse prend le focus, comme les autres fenêtres : Tab ne parcourt plus la page derrière.
-  "voir-capture": (el) => { etat.fenetre = `capture-${el.dataset.id}`; rendre(); ($(".fenetre .barre button[data-action=voir-capture]:last-of-type") ?? $(".fenetre .btn-icone"))?.focus() },
+  "voir-capture": (el) => { if (!etat.fenetre) etat.ouvreur = cleDe(el); etat.fenetre = `capture-${el.dataset.id}`; rendre(); ($(".fenetre .barre button[data-action=voir-capture]:last-of-type") ?? $(".fenetre .btn-icone"))?.focus() },
   "voir-zone-sensible": () => { etat.menuProjet = false; etat.detailsOuvert = true; rendre(); $("#zone-sensible")?.scrollIntoView({ behavior: "smooth" }) },
   copier: async (el) => {
     try {
@@ -3015,6 +3079,25 @@ document.addEventListener("submit", async (e) => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && etat.fenetre && !$("#palette").open) { ACTIONS["fermer-fenetre"](); return }
+  // Dans une fenêtre, Tab et Maj+Tab tournent dans la fenêtre : ils ne partent pas sur la page derrière le voile.
+  if (e.key === "Tab" && etat.fenetre && !$("#palette").open) {
+    const f = $(".fenetre")
+    const elements = f ? [...f.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])")].filter((x) => x.getClientRects().length) : []
+    if (elements.length) {
+      const [premier, dernier] = [elements[0], elements.at(-1)]
+      const ici = document.activeElement
+      if (!f.contains(ici)) { e.preventDefault(); (e.shiftKey ? dernier : premier).focus(); return }
+      if (e.shiftKey && (ici === premier || ici === $("#fenetre-titre"))) { e.preventDefault(); dernier.focus(); return }
+      if (!e.shiftKey && ici === dernier) { e.preventDefault(); premier.focus(); return }
+    }
+  }
+  // Dans la fenêtre d'une tâche, les flèches passent à la tâche d'avant ou d'après (sans boucler : l'ordre a un sens).
+  if (etat.fenetre?.startsWith("tache-") && ["ArrowLeft", "ArrowRight"].includes(e.key) && !e.target.closest?.("input, select, textarea")) {
+    const liste = tachesAplaties()
+    const x = liste[liste.findIndex((y) => `tache-${y.id}` === etat.fenetre) + (e.key === "ArrowRight" ? 1 : -1)]
+    if (x) voirTache(x.id)
+    return
+  }
   // Échap ferme le menu ⋯ et rend le focus à son bouton.
   if (e.key === "Escape" && etat.menuProjet) { etat.menuProjet = false; rendre(); $("#menu-projet summary")?.focus(); return }
   if (e.target.matches?.("[data-saisie-invites]") && ["Enter", ","].includes(e.key) && e.target.value.trim()) {
@@ -3044,6 +3127,7 @@ document.addEventListener("toggle", (e) => {
   if (e.target.id === "reorienter") etat.reorienterOuvert = e.target.open
   if (e.target.id === "technique") etat.techniqueOuvert = e.target.open
   if (e.target.id === "lot-detail") etat.lotOuvert = e.target.open
+  if (e.target.id === "ft-calcul") etat.calculOuvert = e.target.open
   if (e.target.id === "menu-projet") etat.menuProjet = e.target.open
 }, true)
 
