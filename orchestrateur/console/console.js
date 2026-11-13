@@ -2048,14 +2048,19 @@ const cleLigneTache = (id) => `voir-tache|${id}||||`
 const tachesAplaties = () => (etat.modelesProjet?.lots ?? []).flatMap((lot) => lot.taches.map((t) => ({ lot, t, id: idTache(lot, t) })))
 const badgeTache = (t) => html`<span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span>`
 
+// Les sous-agents sont-ils notés pour toutes les fois où la tâche a été construite ? Sinon, « aucun »
+// ne vaut que pour les fois notées : la page ne doit pas affirmer plus que ce que l'usine a gardé.
+const sousAgentsComplets = (t) => t.sous_agents.passages_notes >= t.travaux.construction.passages
+
 // La ligne d'une tâche dans la page : qui l'a construite, et ses sous-agents quand ils sont notés.
 function resumeTache(t) {
-  const noms = t.travaux.construction.modeles.map((m) => m.nom)
+  const noms = t.travaux.construction.modeles.map((m) => insecable(m.nom))
   const qui = t.statut === "en_cours" ? (noms.length ? `En construction : ${enumerer(noms)}` : "En construction")
     : noms.length ? `Construite par ${enumerer(noms)}` : "Pas encore construite"
   const s = t.sous_agents
   const n = s.liste.reduce((x, a) => x + a.fois, 0)
-  return s.passages_notes ? `${qui} · ${n ? pluriel(n, "sous-agent") : "sans sous-agent"}` : qui
+  if (n) return `${qui} · ${pluriel(n, "sous-agent")}`
+  return s.passages_notes && sousAgentsComplets(t) ? `${qui} · sans sous-agent` : qui
 }
 
 function blocModelesProjet(v) {
@@ -2110,12 +2115,13 @@ function fenetreTache(id) {
     </section>
     <section class="pile separe" aria-labelledby="ft-sous"><h3 class="surtitre" id="ft-sous">Sous-agents</h3>
       ${!s.passages_notes ? html`<p class="aide" style="margin:0">Pas noté pour cette tâche.</p>`
-        : !s.liste.length ? html`<p style="margin:0">Aucun : l'agent a tout fait seul.</p>`
+        : !s.liste.length ? (sousAgentsComplets(t) ? html`<p style="margin:0">Aucun : l'agent a tout fait seul.</p>`
+          : html`<p style="margin:0">Aucun les fois où c'était noté : ${s.passages_notes} des ${construite} fois où elle a été construite.</p>`)
         : html`<ul class="lignes-usine">${s.liste.map((a) => html`<li>
             <div><strong>${TYPES_SOUS_AGENT[a.type] ?? a.type}</strong> <span class="aide">· ${a.fois} fois</span></div>
             <div>${a.modeles.length ? a.modeles.map(insecable).join(", ") : a.modele_demande ? `${MODELES_DEMANDES[a.modele_demande] ?? a.modele_demande} (demandé)` : html`<span class="aide">modèle non noté</span>`}</div>
             ${a.description ? html`<div class="aide">« ${a.description} »</div>` : ""}</li>`)}</ul>`}
-      ${s.passages_notes && s.passages_notes < construite ? html`<p class="aide" style="margin:0">Noté sur ${s.passages_notes} des ${construite} fois où elle a été construite.</p>` : ""}
+      ${s.liste.length && !sousAgentsComplets(t) ? html`<p class="aide" style="margin:0">Noté sur ${s.passages_notes} des ${construite} fois où elle a été construite.</p>` : ""}
     </section>
     <details class="technique" id="ft-calcul" ${etat.calculOuvert ? "open" : ""}><summary>Comment c'est compté</summary>
       <p class="aide" style="margin:8px 0 0">Une fois, c'est un passage complet de ce travail sur la tâche : chaque correction en ajoute une. Quand plusieurs modèles servent dans le même passage, l'usine compte celui qui a le plus travaillé ; les autres sont « aussi appelés ». Après un changement d'approche, la construction passe au modèle de renfort. ${depuis
@@ -2720,7 +2726,8 @@ const ACTIONS = {
   },
   "voir-archives": () => { etat.filtre = "archives"; if (location.hash === "#/projets") rendre(); else location.hash = "#/projets" },
   fenetre: (el) => {
-    etat.ouvreur = cleDe(el)
+    // Une fenêtre ouverte depuis une autre garde l'ouvreur de la première : c'est là que le focus revient.
+    if (!etat.fenetre) etat.ouvreur = cleDe(el)
     etat.fenetre = el.dataset.quoi
     if (el.dataset.quoi === "public") etat.departPublic = null
     if (el.dataset.quoi === "machine") { etat.jetonCree = null; chargerJetons() }
@@ -3091,8 +3098,10 @@ document.addEventListener("keydown", (e) => {
       if (!e.shiftKey && ici === dernier) { e.preventDefault(); premier.focus(); return }
     }
   }
+  // Alt+←, Ctrl+→… restent au navigateur (retour, mot suivant) : seules les flèches seules changent de tâche ou de capture.
+  const flecheSeule = ["ArrowLeft", "ArrowRight"].includes(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey
   // Dans la fenêtre d'une tâche, les flèches passent à la tâche d'avant ou d'après (sans boucler : l'ordre a un sens).
-  if (etat.fenetre?.startsWith("tache-") && ["ArrowLeft", "ArrowRight"].includes(e.key) && !e.target.closest?.("input, select, textarea")) {
+  if (etat.fenetre?.startsWith("tache-") && flecheSeule && !e.target.closest?.("input, select, textarea")) {
     const liste = tachesAplaties()
     const x = liste[liste.findIndex((y) => `tache-${y.id}` === etat.fenetre) + (e.key === "ArrowRight" ? 1 : -1)]
     if (x) voirTache(x.id)
@@ -3105,7 +3114,7 @@ document.addEventListener("keydown", (e) => {
     return ajouterInvites(e.target)
   }
   // Dans la visionneuse des captures, les flèches passent d'une capture à l'autre.
-  if (etat.fenetre?.startsWith("capture-") && ["ArrowLeft", "ArrowRight"].includes(e.key) && etat.projet) {
+  if (etat.fenetre?.startsWith("capture-") && flecheSeule && etat.projet) {
     const n = capturesFiltrees(etat.projet).length
     const i = Number(etat.fenetre.slice(8))
     etat.fenetre = `capture-${(i + (e.key === "ArrowRight" ? 1 : -1) + n) % n}`

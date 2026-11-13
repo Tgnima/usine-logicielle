@@ -463,7 +463,7 @@ td.modeles-fonction .sous { max-width: 200px }
 /* Les modèles, tâche par tâche : une ligne par tâche, qui ouvre sa fenêtre (comme .onglets-projet button). */
 .fil.lignes-taches li { padding: 0 }
 .ligne-tache { all: unset; box-sizing: border-box; width: 100%; display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; cursor: pointer; border-radius: var(--rayon-m) }
-.ligne-tache:hover { background: var(--surface-2) }
+.ligne-tache:hover { background: var(--fond) }
 .ligne-tache:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
 /* Les lignes du projet précédent, pendant le chargement du suivant. */
 .en-chargement { opacity: .55; transition: opacity .2s }
