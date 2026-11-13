@@ -464,6 +464,7 @@ td.modeles-fonction .sous { max-width: 200px }
 .en-chargement { opacity: .55; transition: opacity .2s }
 @media (prefers-reduced-motion: reduce) { .en-chargement { transition: none } }
 th.tache-modeles { min-width: 190px; max-width: 280px; font-size: 14px; font-weight: 600; color: var(--encre); white-space: normal; vertical-align: top }
+@media (max-width: 720px) { th.tache-modeles { min-width: 120px; max-width: 150px; font-size: 13px } }
 .lignes-usine { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; font-size: 14px }
 .mesure-serveur { display: flex; flex-direction: column; gap: 4px; font-size: 14px }
 .jauge.rouge > div { background: var(--danger) }
