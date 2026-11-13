@@ -72,7 +72,7 @@ services:
     build: { context: ., dockerfile: deployeur/Dockerfile }
     restart: unless-stopped
     environment:
-      DEPOT_ETAT: ${DEPOT_ETAT}
+      DEPOT_ETAT: ${DEPOT_ETAT:-}
       HTTPS: ${HTTPS:-1}
       CADDY_EMAIL: ${CADDY_EMAIL:-}
       MEMOIRE_PRODUIT: ${MEMOIRE_PRODUIT:-384m}
@@ -86,6 +86,8 @@ services:
       # La mise à jour de l'usine : son dossier, monté au même chemin, et son dépôt GitHub.
       USINE_DIR: ${USINE_DIR:-}
       DEPOT_USINE: ${DEPOT_USINE:-}
+      # stable : la dernière version publiée (vX.Y.Z) ; main : chaque fusion (serveur de test).
+      CANAL_USINE: ${CANAL_USINE:-stable}
       # L'hôte de PostHog (région européenne par défaut), pour le déployeur et les produits.
       POSTHOG_HOTE: ${POSTHOG_HOTE:-}
     # sentry_dsn, posthog_token : l'état, les déploiements et les journaux des produits ; transmis

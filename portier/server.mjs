@@ -6,7 +6,7 @@
 //   /_portier/verifier      (Caddy)  200 si la session est valide pour cette application, sinon redirection
 //   /_portier/connexion     la page de connexion, servie sur l'adresse même de l'application
 //   /_portier/invitation    choisir son mot de passe à partir d'un lien d'invitation
-//   /_portier/deconnexion   fermer la session
+//   /_portier/deconnexion   fermer la session (côté serveur aussi), puis revenir à la connexion
 //   /_portier/qui           (interne) qui est connecté, pour le tableau de bord
 //   /_portier/api/…         (interne, jeton) comptes, clés d'API et applications, gérés depuis Slack
 //
@@ -14,7 +14,8 @@
 // « Authorization: Bearer usk_… », valable pour les applications choisies.
 //
 // Une session est un cookie signé (HMAC), propre à une adresse : se connecter à
-// une application n'ouvre pas les autres. Aucune dépendance.
+// une application n'ouvre pas les autres. Se déconnecter la note comme fermée :
+// le même cookie, rejoué ensuite, est refusé jusqu'à son expiration. Aucune dépendance.
 import { createServer } from "node:http"
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto"
 import { readFileSync, mkdirSync } from "node:fs"
@@ -53,6 +54,10 @@ db.exec(`
     applis TEXT NOT NULL DEFAULT '[]', actif INTEGER NOT NULL DEFAULT 1, cree_par TEXT,
     cree_le TEXT NOT NULL DEFAULT (datetime('now')), utilisee_le TEXT
   );
+  -- Les sessions fermées par une déconnexion : l'empreinte du cookie (jamais le cookie lui-même)
+  -- et son expiration (secondes). Passé cette date, le cookie est refusé de toute façon : la ligne part.
+  CREATE TABLE IF NOT EXISTS sessions_fermees (empreinte TEXT PRIMARY KEY, expire INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS sessions_fermees_expire ON sessions_fermees (expire);
 `)
 const noter = (email, evenement, ip) => db.prepare("INSERT INTO evenements (email, evenement, ip) VALUES (?, ?, ?)").run(email, evenement, ip)
 
@@ -73,30 +78,54 @@ const HASH_FICTIF = hacher(randomBytes(16).toString("hex"))
 const signer = (texte) => createHmac("sha256", CLE).update(texte).digest("base64url")
 const egal = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
-// Session : id.version.hôte.expiration.signature — la version change si l'accès est retiré.
+// Session : id.version.hôte.expiration.aléa.signature — la version change si l'accès est retiré.
+// L'aléa rend chaque connexion unique : deux connexions du même compte dans la même seconde n'ont
+// pas le même cookie, et fermer l'une ne ferme pas l'autre.
 function creerSession(u, hote) {
-  const corps = `${u.id}.${u.version}.${Buffer.from(hote).toString("base64url")}.${Math.floor(Date.now() / 1000) + DUREE_SESSION}`
+  const corps = `${u.id}.${u.version}.${Buffer.from(hote).toString("base64url")}.${Math.floor(Date.now() / 1000) + DUREE_SESSION}.${randomBytes(12).toString("base64url")}`
   return `${corps}.${signer(corps)}`
 }
 // Plusieurs cookies « usine_session » peuvent arriver (une application peut en poser un pour tout
-// le domaine, pour masquer la vraie session) : chacun est essayé, seul un cookie signé compte.
+// le domaine, pour masquer la vraie session) : chacun est essayé (COOKIES_MAX au plus), seul un cookie signé compte.
+const COOKIES_MAX = 5
+const cookiesSession = (req) => String(req.headers.cookie ?? "").split(/;\s*/).filter((c) => c.startsWith("usine_session=")).map((c) => c.slice("usine_session=".length)).slice(0, COOKIES_MAX)
 function lireSession(req, hote) {
-  const valeurs = String(req.headers.cookie ?? "").split(/;\s*/).filter((c) => c.startsWith("usine_session=")).map((c) => c.slice("usine_session=".length))
-  for (const valeur of valeurs.slice(0, 5)) {
+  for (const valeur of cookiesSession(req)) {
     const u = lireUneSession(valeur, hote)
     if (u) return u
   }
   return null
 }
+// L'empreinte d'un cookie de session, gardée à sa fermeture. La signature couvre tout le cookie :
+// seule cette chaîne exacte est valable, et c'est elle qui est refusée ensuite.
+const empreinteSession = (valeur) => createHmac("sha256", CLE).update(`session:${valeur}`).digest("hex")
 function lireUneSession(valeur, hote) {
   if (!valeur) return null
   const parties = valeur.split(".")
-  if (parties.length !== 5) return null
-  const [id, version, h, exp, sig] = parties
-  if (!egal(sig, signer(`${id}.${version}.${h}.${exp}`))) return null
+  // Cinq parties : une session ouverte avant l'aléa, valable jusqu'à son expiration (7 jours au plus).
+  if (parties.length !== 6 && parties.length !== 5) return null
+  const sig = parties.pop()
+  const [id, version, h, exp] = parties
+  if (!egal(sig, signer(parties.join(".")))) return null
   if (Number(exp) < Date.now() / 1000 || Buffer.from(h, "base64url").toString() !== hote) return null
+  // Une session fermée par une déconnexion reste refusée, même si le cookie est rejoué.
+  if (db.prepare("SELECT 1 FROM sessions_fermees WHERE empreinte = ?").get(empreinteSession(valeur))) return null
   const u = db.prepare("SELECT * FROM utilisateurs WHERE id = ? AND actif = 1").get(Number(id))
   return u && String(u.version) === version ? u : null
+}
+// La déconnexion : chaque session valable pour cette adresse, parmi les cookies présentés, est notée
+// fermée. Un cookie faux, expiré ou d'une autre adresse n'écrit rien : la table ne grossit qu'avec de
+// vraies connexions, et perd ses lignes à leur expiration.
+function fermerSessions(req, hote) {
+  db.prepare("DELETE FROM sessions_fermees WHERE expire < ?").run(Math.floor(Date.now() / 1000))
+  const fermees = []
+  for (const valeur of cookiesSession(req)) {
+    const u = lireUneSession(valeur, hote)
+    if (!u) continue
+    db.prepare("INSERT OR IGNORE INTO sessions_fermees (empreinte, expire) VALUES (?, ?)").run(empreinteSession(valeur), Number(valeur.split(".")[3]))
+    fermees.push(u)
+  }
+  return fermees
 }
 
 // L'application derrière une adresse : <slug>.apercu.<base>, <slug>.<base>, ou une adresse de l'usine.
@@ -152,8 +181,21 @@ setInterval(() => {
 
 // --- Pages ------------------------------------------------------------------------
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
-// Un chemin de retour sûr : relatif à l'application, jamais vers un autre site.
-const retourSur = (r) => (typeof r === "string" && r.startsWith("/") && !r.startsWith("//") && !r.startsWith("/\\") && !r.startsWith("/_portier/") ? r : "/")
+// Un chemin de retour sûr : relatif à l'application, jamais vers un autre site. Seuls les caractères
+// ASCII visibles passent : le navigateur retire tabulations et retours à la ligne d'une adresse,
+// et « /<tab>/ailleurs » deviendrait « //ailleurs », un autre site.
+const retourSur = (r) => (typeof r === "string" && /^\/(?![/\\])[\x21-\x7e]*$/.test(r) && !r.startsWith("/_portier/") ? r : "/")
+// Un formulaire envoyé depuis un autre site (ou avec « Origin: null ») est refusé.
+const autreOrigine = (req, hote) => Boolean(req.headers.origin) && req.headers.origin !== `https://${hote}`
+// Une navigation de la personne (un lien suivi, une adresse tapée) depuis l'application même : ni un
+// autre site, ni un préchargement, ni une image ou un fetch de la page (une application qui affiche
+// « /_portier/deconnexion » comme image fermerait sinon la session de chaque visiteur). Sans ces
+// en-têtes Sec-Fetch-* (programme, très vieux navigateur), la demande est prise comme directe.
+const demandeDirecte = (req) => {
+  const h = (nom, defaut) => String(req.headers[`sec-fetch-${nom}`] ?? defaut)
+  return ["same-origin", "none"].includes(h("site", "none")) && h("mode", "navigate") === "navigate" && h("dest", "document") === "document"
+    && !/prefetch|prerender/i.test(`${req.headers["sec-purpose"] ?? ""} ${req.headers.purpose ?? ""}`)
+}
 
 function page(titre, contenu, { appli } = {}) {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -165,7 +207,7 @@ function page(titre, contenu, { appli } = {}) {
 main { width: 100%; max-width: 380px } .carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 14px; padding: 28px 24px }
 .marque { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--doux); margin-bottom: 18px } h1 { font-size: 20px; margin: 0 0 4px } .sous { color: var(--doux); margin: 0 0 22px; font-size: 15px }
 label { display: block; font-size: 14px; font-weight: 550; margin: 14px 0 6px } input { width: 100%; padding: 11px 12px; border: 1px solid var(--trait); border-radius: 9px; background: transparent; color: inherit; font: inherit }
-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent } button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-texte); font: inherit; font-weight: 600; cursor: pointer }
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent } button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px } button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-texte); font: inherit; font-weight: 600; cursor: pointer }
 .erreur { background: var(--erreur-fond); color: var(--erreur); border-radius: 9px; padding: 10px 12px; font-size: 14px; margin-bottom: 4px } .pied { text-align: center; color: var(--doux); font-size: 13px; margin-top: 16px }
 ul { list-style: none; padding: 0; margin: 0 } li a { display: block; padding: 12px 14px; border: 1px solid var(--trait); border-radius: 9px; margin-top: 10px; color: inherit; text-decoration: none } li a:hover { border-color: var(--doux) } li small { color: var(--doux) }
 a { color: inherit }
@@ -182,8 +224,8 @@ const envoyerJson = (res, statut, corps) => {
   res.writeHead(statut, { "content-type": "application/json", "cache-control": "no-store" })
   res.end(JSON.stringify(corps))
 }
-const rediriger = (res, ou, entetes = {}) => {
-  res.writeHead(302, { location: ou, "cache-control": "no-store", ...entetes })
+const rediriger = (res, ou, entetes = {}, statut = 302) => {
+  res.writeHead(statut, { location: ou, "cache-control": "no-store", ...entetes })
   res.end()
 }
 const cookieSession = (valeur, maxAge) => `usine_session=${valeur}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
@@ -211,6 +253,15 @@ ${erreur ? `<div class="erreur" role="alert">${echapper(erreur)}</div>` : ""}
   <label for="mdp2">Le même, une seconde fois</label><input id="mdp2" name="confirmation" type="password" autocomplete="new-password" minlength="12" required>
   <button type="submit">Enregistrer et entrer</button>
 </form>`)
+}
+
+// Un lien de déconnexion venu d'un autre site (ou un préchargement) ne ferme rien tout seul :
+// la personne confirme, par un formulaire de la page même.
+function confirmationDeconnexion(appli) {
+  return page(`Se déconnecter · ${appli.nom}`, `
+<h1>Se déconnecter ?</h1><p class="sous">Pour revenir, il faudra te reconnecter.</p>
+<form method="post" action="/_portier/deconnexion"><button type="submit">Se déconnecter</button></form>
+<p class="pied"><a href="/">Annuler</a></p>`, { appli: appli.nom })
 }
 
 function portail(u) {
@@ -287,7 +338,7 @@ createServer(async (req, res) => {
     }
     if (url.pathname === "/_portier/connexion" && req.method === "POST") {
       // Un formulaire envoyé depuis un autre site est refusé.
-      if (req.headers.origin && req.headers.origin !== `https://${hote}`) return envoyerHtml(res, 403, page("Refusé", "<h1>Requête refusée</h1>"))
+      if (autreOrigine(req, hote)) return envoyerHtml(res, 403, page("Refusé", "<h1>Requête refusée</h1>"))
       const f = await formulaire(req)
       const email = String(f.email ?? "").trim().toLowerCase()
       const retour = retourSur(f.retour)
@@ -305,11 +356,24 @@ createServer(async (req, res) => {
       noter(email, `connexion à ${appli.slug ?? hote}`, ip)
       return rediriger(res, appli.slug === "portail" ? "/_portier/connexion" : retour, { "set-cookie": cookieSession(creerSession(u, hote), DUREE_SESSION) })
     }
-    if (url.pathname === "/_portier/deconnexion") return rediriger(res, "/_portier/connexion", { "set-cookie": cookieSession("", 0) })
+    // Déconnexion : la session est fermée côté serveur (le même cookie, rejoué, sera refusé), le cookie
+    // est effacé, puis retour à la page de connexion de cette adresse. La redirection est fixe et
+    // relative : aucun paramètre de la demande ne peut mener vers un autre site.
+    //   POST  le bouton de la console ou d'une application : origine contrôlée, comme la connexion ;
+    //   GET   un lien : tout de suite s'il vient de l'application même, sinon une page de confirmation.
+    if (url.pathname === "/_portier/deconnexion") {
+      if (req.method === "POST") {
+        if (autreOrigine(req, hote)) return envoyerHtml(res, 403, page("Refusé", "<h1>Requête refusée</h1>"))
+      } else if (!demandeDirecte(req) && lireSession(req, hote)) {
+        return envoyerHtml(res, 200, confirmationDeconnexion(appli))
+      }
+      for (const u of fermerSessions(req, hote)) noter(u.email, `déconnexion de ${appli.slug ?? hote}`, ip)
+      return rediriger(res, "/_portier/connexion", { "set-cookie": cookieSession("", 0) }, 303)
+    }
 
     // 3. Invitation : la personne choisit son mot de passe.
     if (url.pathname === "/_portier/invitation") {
-      if (req.method === "POST" && req.headers.origin && req.headers.origin !== `https://${hote}`) return envoyerHtml(res, 403, page("Refusé", "<h1>Requête refusée</h1>"))
+      if (req.method === "POST" && autreOrigine(req, hote)) return envoyerHtml(res, 403, page("Refusé", "<h1>Requête refusée</h1>"))
       const jeton = req.method === "POST" ? null : url.searchParams.get("jeton")
       const f = req.method === "POST" ? await formulaire(req) : {}
       const j = String(jeton ?? f.jeton ?? "")

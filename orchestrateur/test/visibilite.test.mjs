@@ -6,6 +6,7 @@ import { createServer } from "node:http"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { noterPassage, ouvrirAgentsTache } from "../src/sous-agents.mjs"
 
 const racine = mkdtempSync(join(tmpdir(), "visibilite-test-"))
 let mod, portier, serveur, base, fixe, api
@@ -29,6 +30,7 @@ async function ouvrir(nom) {
   const { ouvrirCouts } = await import("../src/couts.mjs")
   const db = ouvrirDb(join(dossier, "usine.db"))
   ouvrirCouts(db)
+  ouvrirAgentsTache(db)
   return { db, config: configEssai(dossier), dossier }
 }
 
@@ -304,9 +306,8 @@ test("les modèles : bornes, secrets, limites, projets supprimés, coût inconnu
   assert.deepEqual(q.roles.find((r) => r.role === "plan").modeles.map((x) => [x.modele, x.nom]), [[null, "Claude, modèle par défaut"]])
   assert.deepEqual(q.roles.find((r) => r.role === "verification").modeles.map((x) => x.moteur), ["codex"])
   assert.deepEqual(q.limites.map((l) => [l.nom, l.mode]), [["ChatGPT", "clé API"]])
-  // Les 8 fonctions travaillées le plus récemment (T2 et T1 ont été contrôlées et relues après T10), la
-  // plus récente d'abord ; celle du projet supprimé n'y est pas, et ne prend la place d'aucune autre.
-  assert.deepEqual(v.semaine.fonctions.map((f) => f.cle), ["T2", "T1", "T10", "T9", "T8", "T7", "T6", "T5"])
+  // Le choix de la vue « tâche par tâche » : le projet supprimé n'y est pas.
+  assert.deepEqual(v.projets_taches.map((p) => p.id), [1])
   const m = v.semaine.modeles
   const codex = m.find((x) => x.role === "verificateur")
   assert.deepEqual([codex.cout_api, codex.cout_api_texte, codex.prix_inconnu], [null, null, true])
@@ -340,7 +341,7 @@ test("qui fait quoi : le modèle de chaque travail, le relais, les limites d'usa
   }
 })
 
-test("7 derniers jours : quel modèle a fait quel travail, et les dernières fonctions", () => {
+test("7 derniers jours : quel modèle a fait quel travail", () => {
   const w = calcul().semaine
   assert.deepEqual([...new Set(w.modeles.map((m) => m.travail))], ["Construire", "Relire la sécurité", "Contrôler", "Relire le design"])
   const trouve = (role, moteur, modele) => w.modeles.find((m) => m.role === role && m.moteur === moteur && m.modele === modele)
@@ -349,11 +350,86 @@ test("7 derniers jours : quel modèle a fait quel travail, et les dernières fon
   assert.equal(trouve("verificateur", "claude-code", "claude-opus-5-5").nom, "Claude Opus 5.5")
   const passerelle = trouve("agent", "passerelle", "claude-opus-5-5")
   assert.deepEqual([passerelle.nom, passerelle.paye_a_l_usage, passerelle.fonctions], ["Claude Opus 5.5", true, 1])
-  // La plus récente d'abord ; un modèle « non noté » s'efface derrière le modèle connu.
-  assert.deepEqual(w.fonctions.map((f) => [f.cle, f.statut]), [["T10", "en_cours"], ["T5", "verification"], ["T6", "prete"]])
-  const t5 = w.fonctions[1]
-  assert.deepEqual([t5.projet, t5.construite, t5.controlee, t5.design, t5.securite], ["Vigie Copro", ["Claude Sonnet 5.5"], ["ChatGPT (gpt-6.1-sol)", "Claude Opus 5.5"], ["ChatGPT (gpt-6.1-sol)"], []])
-  assert.deepEqual(w.fonctions[2].securite, ["Claude Sonnet 5.5"])
+})
+
+test("les modèles, tâche par tâche : lots, passages, modèles d'un même passage, sous-agents", async () => {
+  const b = await ouvrir("taches")
+  const plan = { lots: [{ nom: "Lot 1 : le socle", taches: [] }, { nom: "Lot 2 : les prêts", taches: [] }] }
+  b.db.prepare("INSERT INTO projets (id, prompt, statut, nom, slug, plan) VALUES (1, 'p', 'livre', 'Prêt''Asso', 'pret-asso', ?), (2, 'p', 'supprime', 'Retiré', 'retire', NULL)").run(JSON.stringify(plan))
+  const t = b.db.prepare("INSERT INTO taches (id, projet_id, cle, lot, titre, description, criteres, statut, tentative, approche) VALUES (?, ?, ?, ?, ?, 'd', '[]', ?, ?, ?)")
+  t.run(1, 1, "T1", 1, "Le kit", "fusionnee", 0, 1)
+  t.run(2, 1, "T2", 1, "La liste", "fusionnee", 1, 0)
+  t.run(3, 1, "T3", 2, "Prêter", "en_cours", 0, 0)
+  t.run(4, 2, "T1", 1, "Retirée", "fusionnee", 0, 0)
+  const c = b.db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, cout_api_usd, duree_s, le) VALUES (1, ?, ?, ?, ?, 0, ?, ?)")
+  // T1 : construite par Sonnet, refusée, puis par Opus (changement d'approche) ; contrôlée deux fois par ChatGPT, une fois par Claude en relais.
+  c.run(1, "agent", "claude-code", "claude-sonnet-5-5", 60, "2026-11-10 10:00:00")
+  c.run(1, "relecteur-securite", "claude-code", "claude-sonnet-5-5", 5, "2026-11-10 10:01:00")
+  c.run(1, "verificateur", "codex", "gpt-6.1-sol", 300, "2026-11-10 10:06:00")
+  c.run(1, "agent", "claude-code", "claude-opus-5-5", 90, "2026-11-10 10:10:00")
+  c.run(1, "agent", "claude-code", "claude-haiku-4-5", 0, "2026-11-10 10:10:00") // dans le même passage qu'Opus
+  c.run(1, "verificateur", "claude-code", "claude-opus-5-5", 200, "2026-11-10 10:15:00")
+  c.run(1, "designer", "codex", "gpt-6.1-sol", 0, "2026-11-10 10:15:00")
+  c.run(2, "agent", "claude-code", "claude-sonnet-5-5", 40, "2026-11-10 11:00:00")
+  // Les sous-agents : T1 (passage noté, deux sous-agents Explore et un général), T2 (noté, aucun), T3 (rien de noté).
+  noterPassage(b.db, { projet: 1, tache: 1, tentative: 0, approche: 1, resume: { modele: "claude-opus-5-5", principal: { modeles: ["claude-opus-5-5"], tours: 12, outils: 30 }, sous_agents: [
+    { type: "Explore", description: "Trouver les routes", modeles: ["claude-haiku-4-5"], tours: 3, outils: 5 },
+    { type: "Explore", description: "Lire les tests", modeles: ["claude-haiku-4-5"], tours: 2, outils: 4 },
+    { type: "general-purpose", description: "Écrire la migration", modele_demande: "sonnet", modeles: [], tours: 0, outils: 0 },
+  ] } })
+  noterPassage(b.db, { projet: 1, tache: 2, resume: { modele: "claude-sonnet-5-5", principal: { modeles: ["claude-sonnet-5-5"], tours: 4, outils: 9 }, sous_agents: [] } })
+  const m = mod.modelesDuProjet(b, 1)
+  assert.deepEqual(m.projet, { id: 1, nom: "Prêt'Asso" })
+  assert.ok(m.sous_agents_depuis)
+  assert.deepEqual(m.lots.map((l) => [l.numero, l.nom, l.taches.map((x) => x.cle)]), [[1, "Lot 1 : le socle", ["T1", "T2"]], [2, "Lot 2 : les prêts", ["T3"]]])
+  const [t1, t2] = m.lots[0].taches
+  // Tous les modèles de chaque travail, avec leurs passages ; Haiku a servi dans le passage d'Opus.
+  assert.deepEqual(t1.travaux.construction, { passages: 2, modeles: [{ nom: "Claude Sonnet 5.5", passages: 1 }, { nom: "Claude Opus 5.5", passages: 1 }], dans_le_passage: ["Claude Haiku 4.5"] })
+  assert.deepEqual(t1.travaux.controle.modeles, [{ nom: "ChatGPT (gpt-6.1-sol)", passages: 1 }, { nom: "Claude Opus 5.5", passages: 1 }])
+  assert.deepEqual([t1.travaux.securite.passages, t1.travaux.design.modeles], [1, [{ nom: "ChatGPT (gpt-6.1-sol)", passages: 1 }]])
+  assert.deepEqual([t1.approche, t2.tentative], [1, 1])
+  assert.deepEqual(t1.sous_agents, { passages_notes: 1, liste: [
+    { type: "Explore", modeles: ["Claude Haiku 4.5"], modele_demande: null, fois: 2, description: "Lire les tests" },
+    { type: "general-purpose", modeles: [], modele_demande: "sonnet", fois: 1, description: "Écrire la migration" },
+  ] })
+  assert.deepEqual(t2.sous_agents, { passages_notes: 1, liste: [] }, "noté, aucun sous-agent")
+  const t3 = m.lots[1].taches[0]
+  assert.deepEqual([t3.sous_agents.passages_notes, t3.travaux.construction.passages], [0, 0], "rien de noté pour T3")
+  // Le modèle d'un passage est celui qui a produit le plus de jetons, pas le premier noté ni celui qui porte
+  // la durée (0 pour le design) : Haiku, noté d'abord avec peu de jetons, sert dans le passage de Sonnet.
+  const j = b.db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, entree, sortie, cout_api_usd, duree_s, le) VALUES (1, 3, 'designer', 'claude-code', ?, ?, ?, 0, 0, '2026-11-10 13:00:00')")
+  j.run("claude-haiku-4-5", 100, 10)
+  j.run("claude-sonnet-5-5", 9000, 900)
+  assert.deepEqual(mod.modelesDuProjet(b, 1).lots[1].taches[0].travaux.design, { passages: 1, modeles: [{ nom: "Claude Sonnet 5.5", passages: 1 }], dans_le_passage: ["Claude Haiku 4.5"] })
+  // Un projet supprimé ou inconnu : rien.
+  assert.equal(mod.modelesDuProjet(b, 2), null)
+  assert.equal(mod.modelesDuProjet(b, 999), null)
+  // Sans la table des sous-agents (une base plus ancienne) : les modèles quand même.
+  b.db.exec("DROP TABLE agents_tache")
+  assert.deepEqual(mod.modelesDuProjet(b, 1).lots[0].taches[0].sous_agents, { passages_notes: 0, liste: [] })
+  assert.equal(mod.modelesDuProjet(b, 1).sous_agents_depuis, null)
+})
+
+test("API : GET /api/visibilite/projets/:id, réservé aux administrateurs", async () => {
+  api.db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, statut) VALUES (1, 'T1', 1, 'Liste', 'd', '[]', 'fusionnee')").run()
+  const compter = () => ["journal", "reglages", "consommations", "agents_tache", "taches"].map((x) => api.db.prepare(`SELECT COUNT(*) AS n FROM ${x}`).get().n)
+  const avant = compter()
+  const r = await fetch(`${base}/api/visibilite/projets/1`, { headers: { cookie: "s=admin" } })
+  assert.equal(r.status, 200)
+  const texte = await r.text()
+  for (const secret of Object.values(api.config.secrets)) assert.ok(!texte.includes(secret), "aucun secret dans la réponse")
+  const m = JSON.parse(texte)
+  assert.deepEqual([m.projet.nom, m.lots[0].taches[0].cle], ["Relais", "T1"])
+  assert.deepEqual(compter(), avant, "un GET n'écrit rien")
+  for (const id of ["999", "9999999999"]) assert.equal((await fetch(`${base}/api/visibilite/projets/${id}`, { headers: { cookie: "s=admin" } })).status, 404)
+  assert.equal((await fetch(`${base}/api/visibilite/projets/abc`, { headers: { cookie: "s=admin" } })).status, 404)
+  assert.equal((await fetch(`${base}/api/visibilite/projets/1`, { headers: { cookie: "s=membre" } })).status, 403)
+  assert.equal((await fetch(`${base}/api/visibilite/projets/1`)).status, 403)
+  const post = await fetch(`${base}/api/visibilite/projets/1`, { method: "POST", headers: { cookie: "s=admin", "content-type": "application/json", origin: base }, body: "{}" })
+  assert.equal(post.status, 404, "une seule méthode : GET")
+  // La liste des projets de la page la propose.
+  const v = await (await fetch(`${base}/api/visibilite`, { headers: { cookie: "s=admin" } })).json()
+  assert.deepEqual(v.projets_taches, [{ id: 1, nom: "Relais" }])
 })
 
 test("rien des fichiers du déployeur au-delà de ce que la page montre", () => {
@@ -422,7 +498,7 @@ test("API : GET /api/visibilite, réservé aux administrateurs, sans secret, san
   const texte = await r.text()
   for (const secret of Object.values(api.config.secrets)) assert.ok(!texte.includes(secret), "aucun secret dans la réponse")
   const v = JSON.parse(texte)
-  assert.deepEqual(Object.keys(v), ["le", "fuseau", "attend", "sonde", "productions", "apercus", "usine", "semaine"])
+  assert.deepEqual(Object.keys(v), ["le", "fuseau", "attend", "sonde", "productions", "apercus", "usine", "semaine", "projets_taches"])
   assert.equal(v.fuseau, "Europe/Paris")
   assert.equal(v.attend[0].type, "decision")
   assert.equal(v.attend[0].titre, "Relais · décision attendue")
