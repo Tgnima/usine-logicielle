@@ -22,6 +22,8 @@ export function ouvrirCouts(db) {
       le TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS consommations_mois ON consommations (le);
+    CREATE INDEX IF NOT EXISTS consommations_projet ON consommations (projet_id);
+    CREATE INDEX IF NOT EXISTS consommations_tache ON consommations (tache_id);
     CREATE TABLE IF NOT EXISTS alertes_budget (cle TEXT PRIMARY KEY, le TEXT NOT NULL DEFAULT (datetime('now')));
     CREATE TABLE IF NOT EXISTS reglages (cle TEXT PRIMARY KEY, valeur TEXT NOT NULL);
   `)
@@ -77,10 +79,13 @@ export function prixApi(config, modele, u) {
 }
 
 export function enregistrer(db, { projet = null, tache = null, role, moteur, usages, duree_s = 0 }) {
-  const ins = db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, entree, sortie, cache_lecture, cache_ecriture, cout_api_usd, duree_s) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+  const ins = db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, entree, sortie, cache_lecture, cache_ecriture, cout_api_usd, duree_s, le) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+  // Toutes les lignes d'un appel portent la même heure (au format de datetime('now')) : c'est elle
+  // qui regroupe les modèles d'un même passage (visibilite.mjs).
+  const le = new Date().toISOString().slice(0, 19).replace("T", " ")
   // La durée est comptée une fois, sur la première ligne de l'appel.
-  usages.forEach((u, i) => ins.run(projet, tache, role, moteur, u.modele, u.entree, u.sortie, u.cache_lecture, u.cache_ecriture, u.cout_api_usd, i === 0 ? duree_s : 0))
-  if (!usages.length && duree_s) ins.run(projet, tache, role, moteur, "inconnu", 0, 0, 0, 0, null, duree_s)
+  usages.forEach((u, i) => ins.run(projet, tache, role, moteur, u.modele, u.entree, u.sortie, u.cache_lecture, u.cache_ecriture, u.cout_api_usd, i === 0 ? duree_s : 0, le))
+  if (!usages.length && duree_s) ins.run(projet, tache, role, moteur, "inconnu", 0, 0, 0, 0, null, duree_s, le)
 }
 
 // --- Monnaie ------------------------------------------------------------------------

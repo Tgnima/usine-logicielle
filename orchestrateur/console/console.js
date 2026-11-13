@@ -956,7 +956,7 @@ function ongletAvancement(p) {
     </section>
     ${tachesLot.length ? html`<details class="carte carte-p" id="lot-detail" ${etat.lotOuvert ? "open" : ""}><summary class="barre" style="cursor:pointer"><strong>Lot ${lotCourant} · ${plan.lots[lotCourant - 1]?.nom ?? ""}</strong><span class="aide">${tachesLot.filter((t) => t.statut === "fusionnee").length} sur ${tachesLot.length} · voir</span></summary>
       <ul class="taches" style="margin-top:10px">${tachesLot.map((t) => html`<li><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></details>` : ""}
-    ${p.taches.length ? html`<a class="aide" href="#/visibilite/projets/${p.id}" data-quoi="modeles-du-projet">Quel modèle a fait chaque tâche, lot par lot →</a>` : ""}`
+    ${p.taches.length ? html`<a class="aide" style="align-self:flex-start" href="#/visibilite/projets/${p.id}" data-quoi="modeles-du-projet">Quel modèle a fait chaque tâche, lot par lot →</a>` : ""}`
 }
 
 // L'aperçu : une galerie sobre ; un clic agrandit.
@@ -2029,41 +2029,54 @@ function blocModelesSemaine(w) {
 
 // Les modèles, tâche par tâche : un projet, ses lots, et pour chaque tâche tous les modèles qui y
 // ont travaillé (avec le nombre de passages), plus les sous-agents de l'agent quand ils sont notés.
-const TRAVAUX_COLONNES = [["construction", "Construction"], ["securite", "Relecture sécurité"], ["controle", "Contrôle"], ["design", "Design"]]
+// Les colonnes portent les mots du tableau « Les modèles au travail » (TRAVAUX de visibilite.mjs).
+const TRAVAUX_COLONNES = [["construction", "Construire"], ["securite", "Relire la sécurité"], ["controle", "Contrôler"], ["design", "Relire le design"]]
+// Les sous-agents de Claude Code, dits simplement ; un type inconnu de cette liste garde son nom.
+const TYPES_SOUS_AGENT = { Explore: "Exploration du code", "general-purpose": "Agent généraliste", Plan: "Préparation d'un plan", inconnu: "Sous-agent" }
+const MODELES_DEMANDES = { haiku: "Claude Haiku", sonnet: "Claude Sonnet", opus: "Claude Opus", inherit: "le modèle de l'agent" }
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`
-function celluleTravail(t) {
+// Un modèle et son nombre de passages, insécables ; seule coupure possible, avant la parenthèse d'un nom de ChatGPT.
+const avecPassages = (nom, n) => html`${insecable(nom).replace(" (", " (")} <span class="aide">× ${n}</span>`
+function celluleTravail(t, sousAgentsNotes) {
   if (!t?.passages) return html`<span class="aide">—</span>`
-  return html`${t.modeles.map((m, i) => html`${i ? html`<br>` : ""}<span class="modele-passages">${insecable(m.nom)} <span class="aide">× ${m.passages}</span></span>`)}
-    ${t.dans_le_passage.length ? html`<div class="sous">avec ${t.dans_le_passage.map(insecable).join(", ")} dans le même passage</div>` : ""}`
+  return html`${t.modeles.map((m, i) => html`${i ? html`<br>` : ""}${avecPassages(m.nom, m.passages)}`)}
+    ${t.dans_le_passage.length && !sousAgentsNotes ? html`<div class="sous">avec ${t.dans_le_passage.map(insecable).join(", ")} dans le même passage</div>` : ""}`
 }
 function celluleSousAgents(s) {
   if (!s.passages_notes) return html`<span class="aide">non noté</span>`
   if (!s.liste.length) return html`aucun<div class="sous">${pluriel(s.passages_notes, "passage noté")}</div>`
-  return html`${s.liste.map((x, i) => html`${i ? html`<br>` : ""}<span class="modele-passages"><span title="${x.description}">${insecable(x.type)}</span> <span class="aide">× ${x.fois}</span></span>${x.modeles.length ? html`<div class="sous">${x.modeles.map(insecable).join(", ")}</div>` : x.modele_demande ? html`<div class="sous">demandé : ${x.modele_demande}</div>` : ""}`)}`
+  return html`${s.liste.map((x, i) => html`<div style="${i ? "margin-top:8px" : ""}">${avecPassages(TYPES_SOUS_AGENT[x.type] ?? x.type, x.fois)}
+    <div class="sous">${x.modeles.length ? x.modeles.map(insecable).join(", ") : x.modele_demande ? `demandé : ${MODELES_DEMANDES[x.modele_demande] ?? x.modele_demande}` : "modèle non noté"}</div>
+    ${x.description ? html`<div class="sous">« ${x.description} »</div>` : ""}</div>`)}`
 }
 function blocModelesProjet(v) {
   const projets = v.projets_taches ?? []
   if (!projets.length) return ""
   const id = etat.visibiliteProjet ?? projets[0].id
-  const m = etat.modelesProjet?.projet?.id === id ? etat.modelesProjet : null
+  // Pendant le chargement d'un autre projet, les tableaux du précédent restent, atténués : la page ne saute pas.
+  const m = etat.modelesProjet
+  const enCours = Boolean(m) && m.projet.id !== id
+  const erreur = etat.modelesErreur?.id === id ? etat.modelesErreur.texte : null
+  const connu = projets.some((p) => p.id === id)
   const depuis = m?.sous_agents_depuis
   return html`<section class="pile" aria-labelledby="v-taches">
     <div class="barre"><h2 id="v-taches">Les modèles, tâche par tâche</h2>
       <div class="rangee"><label class="aide" for="v-projet">Projet</label>
-        <select id="v-projet" class="champ champ-petit" data-choix="projet-modeles">${projets.map((p) => html`<option value="${p.id}" ${p.id === id ? "selected" : ""}>${p.nom}</option>`)}</select></div></div>
+        <select id="v-projet" class="champ champ-petit" data-choix="projet-modeles">${connu ? "" : html`<option value="" selected>Choisir un projet</option>`}${projets.map((p) => html`<option value="${p.id}" ${p.id === id ? "selected" : ""}>${p.nom}</option>`)}</select></div></div>
     <p class="aide" style="margin:0">Pour chaque tâche, chaque modèle qui y a travaillé et son nombre de passages (une correction en ajoute un). ${depuis
       ? `Les sous-agents de l'agent qui construit sont notés depuis le ${momentParis(depuis)} ; avant, l'usine ne gardait que les modèles.`
       : "Les sous-agents de l'agent qui construit seront notés à partir de sa prochaine tâche ; avant, l'usine ne gardait que les modèles."}</p>
-    ${!m ? html`<div class="carte chargement">Chargement…</div>` : !m.lots.length ? html`<div class="carte vide">Ce projet n'a pas encore de tâche.</div>`
-      : m.lots.map((lot) => html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">${lot.nom}</h3>
-        <div class="tableau" tabindex="0" role="region" aria-label="${lot.nom} : les modèles de chaque tâche" data-quoi="tableau-lot-${lot.numero}"><table class="table-taches" style="min-width:820px">
+    ${erreur ? html`<div class="carte vide">Ce projet n'a pas de tâche à montrer (${erreur}). Choisis un projet dans la liste.</div>`
+      : !m ? html`<div class="carte chargement">Chargement…</div>` : !m.lots.length ? html`<div class="carte vide">Ce projet n'a pas encore de tâche.</div>`
+      : html`<div class="pile${enCours ? " en-chargement" : ""}" aria-busy="${String(enCours)}">${m.lots.map((lot) => html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">${lot.nom}</h3>
+        <div class="tableau" tabindex="0" role="region" aria-label="${lot.nom} : les modèles de chaque tâche" data-quoi="tableau-lot-${lot.numero}"><table class="table-taches" style="min-width:760px">
           <thead><tr><th scope="col">Tâche</th>${TRAVAUX_COLONNES.map(([, nom]) => html`<th scope="col">${nom}</th>`)}<th scope="col">Sous-agents</th></tr></thead>
           <tbody>${lot.taches.map((t) => html`<tr>
             <th scope="row" class="tache-modeles"><span class="mono aide">${t.cle}</span> ${t.titre}
               <div class="rangee" style="margin-top:4px;gap:6px"><span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span>${t.approche ? html`<span class="aide">${pluriel(t.approche, "changement")} d'approche</span>` : ""}</div></th>
-            ${TRAVAUX_COLONNES.map(([cle]) => html`<td class="modeles-fonction">${celluleTravail(t.travaux[cle])}</td>`)}
+            ${TRAVAUX_COLONNES.map(([cle]) => html`<td class="modeles-fonction">${celluleTravail(t.travaux[cle], t.sous_agents.liste.length > 0)}</td>`)}
             <td class="modeles-fonction">${celluleSousAgents(t.sous_agents)}</td></tr>`)}</tbody></table></div>
-      </div>`)}
+      </div>`)}</div>`}
   </section>`
 }
 
@@ -2201,12 +2214,13 @@ async function charger({ silencieux = false } = {}) {
         if (id) return api("GET", `visibilite/projets/${Number(id)}`).then((m) => {
           if (!frais()) return
           etat.modelesProjet = m
+          etat.modelesErreur = null
           rendre()
           if (etat.allerAuxTaches) {
             etat.allerAuxTaches = false
             $("#v-taches")?.scrollIntoView()
           }
-        }, () => {})
+        }, (e) => { if (frais()) { etat.modelesErreur = { id: Number(id), texte: e.message }; rendre() } })
       }, (e) => { if (frais()) { etat.visibiliteErreur = e.message; rendre() } }))
     }
     // Le bilan de santé nourrit la pastille du haut : une fois par minute suffit, hors des pages qui le détaillent.
@@ -2799,20 +2813,20 @@ document.addEventListener("input", (e) => {
   }
 })
 
-// Le lot des captures se choisit dans une liste.
 // Visibilité : le projet de la vue « tâche par tâche ». L'adresse suit, sans recharger ni remonter la page.
 document.addEventListener("change", (e) => {
   if (e.target.dataset?.choix !== "projet-modeles") return
   const id = Number(e.target.value)
   if (!Number.isInteger(id) || id <= 0) return
   etat.visibiliteProjet = id
-  etat.modelesProjet = null
+  etat.modelesErreur = null
   history.replaceState(null, "", `#/visibilite/projets/${id}`)
   etat.route = lireRoute()
   rendre()
   charger({ silencieux: true })
 })
 
+// Le lot des captures se choisit dans une liste.
 document.addEventListener("change", (e) => {
   const cle = e.target.dataset?.filtreCaptures
   if (cle && etat.filtreCaptures) { etat.filtreCaptures[cle] = e.target.value; rendre() }
@@ -3121,6 +3135,8 @@ window.addEventListener("hashchange", () => {
   if (etat.route.nouveau) $("#demande")?.focus()
 })
 etat.route = lireRoute()
+// Une adresse ouverte directement (favori, lien partagé, rechargement) descend aussi aux tâches du projet.
+etat.allerAuxTaches = etat.route.vue === "visibilite" && Boolean(etat.route.projet)
 api("GET", "moi").then((m) => { etat.moi = m; rendre() }).catch(() => {})
 charger()
 // La page se met à jour toute seule (toutes les 5 s sur un projet, 15 s ailleurs), sauf pendant une saisie.

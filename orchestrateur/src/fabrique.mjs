@@ -25,6 +25,9 @@ import { REGLE_PYRAMIDE } from "./pyramide.mjs"
 import { SCRIPT_CONTROLE_UI, decrireDefautUi, lireDefautsUi } from "./controle-ui.mjs"
 import { noterPassage, scriptResume } from "./sous-agents.mjs"
 
+// Un résumé des sous-agents d'un passage fait moins de 60 Ko (sous-agents.mjs) : au-delà, il est suspect.
+const RESUME_AGENTS_MAX = 200_000
+
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
 // Une tâche en attente devient prête quand toutes ses dépendances sont finies.
@@ -231,11 +234,16 @@ async function fabriquer(ctx, projet, tache) {
   } catch {
     resume = "(pas de résumé de l'agent)"
   }
-  // Qui a travaillé dans ce passage : l'agent et ses sous-agents. Un résumé absent ou illisible n'empêche rien.
-  try {
-    noterPassage(db, { projet: projet.id, tache: tache.id, role: "agent", tentative: tache.tentative, approche: tache.approche, resume: JSON.parse((await lireFichier(atelier, jeton, "/tmp/sorties/tache/agents.json")) ?? "null") })
-  } catch (e) {
-    console.error(`Sous-agents de ${tache.cle} non notés :`, e.message)
+  // Qui a travaillé dans ce passage : l'agent et ses sous-agents. Un résumé absent ou illisible n'empêche
+  // rien ; sans accès à Claude (limite), il n'y a pas eu de travail à noter. Le fichier est dans le bac à
+  // sable de l'agent : lu sur ses 200 derniers Ko au plus (au-delà, le JSON coupé est rejeté).
+  if (!limite) {
+    try {
+      const brut = await lireFichier(atelier, jeton, "/tmp/sorties/tache/agents.json", { fin: RESUME_AGENTS_MAX })
+      noterPassage(db, { projet: projet.id, tache: tache.id, role: "agent", tentative: tache.tentative, approche: tache.approche, resume: JSON.parse(brut ?? "null"), secrets: Object.values(config.secrets ?? {}) })
+    } catch (e) {
+      console.error(`Sous-agents de ${tache.cle} non notés :`, e.message)
+    }
   }
   if ("DELAI_DEPASSE" in agent.marqueurs) resume = `(arrêté au bout de ${minutes} min) ${resume}`
   if (limite) {

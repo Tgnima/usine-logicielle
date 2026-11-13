@@ -61,6 +61,56 @@ test("le script de l'atelier : le même résumé, calculé par un vrai Node", ()
   assert.match(s, /node '\/tmp\/sorties\/tache\/resume-agents\.cjs' < '\/tmp\/sorties\/tache\/agent\.jsonl' > '\/tmp\/sorties\/tache\/agents\.json' 2>\/dev\/null \|\| true$/)
 })
 
+// Un vrai bash, comme le serveur de travaux (bash -s) : présent sous Linux, et sous Windows avec Git Bash.
+const bash = spawnSync("bash", ["-c", "command -v base64 node >/dev/null && echo oui"], { encoding: "utf8" })
+const avecBash = bash.status === 0 && bash.stdout.trim() === "oui"
+
+test("le script dans bash : la suite du travail s'exécute toujours, les marqueurs ne changent pas", { skip: !avecBash && "bash, base64 ou node absent" }, async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, existsSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const d = mkdtempSync(join(tmpdir(), "sous-agents-")).replace(/\\/g, "/")
+  const lancer = (flux) => {
+    if (flux !== null) writeFileSync(`${d}/agent.jsonl`, flux)
+    // Le script arrive par l'entrée standard, comme dans l'atelier : la ligne d'après doit s'exécuter.
+    const script = [scriptResume(`${d}/agent.jsonl`, `${d}/agents.json`, `${d}/resume.cjs`), "echo '@@ APRES_OK'"].join("\n")
+    return spawnSync("bash", ["-s"], { input: script, encoding: "utf8" })
+  }
+  const r = lancer(FLUX)
+  assert.equal(r.status, 0)
+  assert.equal(r.stdout.trim(), "@@ APRES_OK", "rien d'autre sur la sortie : aucun marqueur ajouté")
+  assert.deepEqual(JSON.parse(readFileSync(`${d}/agents.json`, "utf8")), ATTENDU)
+  // Un flux absent ou illisible : le travail continue, le résumé est vide ou absent, jamais une erreur.
+  const sans = spawnSync("bash", ["-s"], { input: [scriptResume(`${d}/absent.jsonl`, `${d}/vide.json`, `${d}/resume.cjs`), "echo '@@ APRES_OK'"].join("\n"), encoding: "utf8" })
+  assert.equal(sans.status, 0)
+  assert.match(sans.stdout, /@@ APRES_OK/)
+  assert.ok(!existsSync(`${d}/vide.json`) || !readFileSync(`${d}/vide.json`, "utf8").trim())
+  assert.equal(lancer("pas du json\n{coupé").stdout.trim(), "@@ APRES_OK")
+})
+
+test("les textes écrits par le modèle sont masqués avant d'être rangés", () => {
+  const db = new DatabaseSync(":memory:")
+  ouvrirAgentsTache(db)
+  noterPassage(db, { projet: 1, tache: 3, secrets: ["secret-de-l-usine-1234"], resume: { modele: "m", sous_agents: [
+    { type: "Explore", description: "Tester avec sk-ant-api03-ABCDEFGHIJKLMNOP et secret-de-l-usine-1234", modeles: [] },
+    { type: "ghp_ABCDEFGHIJKLMNOPQRSTUVWX", description: "token=abcdefghijkl", modele_demande: "sk-proj-ABCDEFGHIJKLMNOP" },
+  ] } })
+  const texte = JSON.stringify(db.prepare("SELECT type, description, modele_demande FROM agents_tache").all())
+  for (const fuite of ["sk-ant-api03-ABCD", "secret-de-l-usine-1234", "ghp_ABCD", "abcdefghijkl", "sk-proj-ABCD"]) assert.ok(!texte.includes(fuite), `${fuite} masqué`)
+  assert.match(texte, /•••/)
+})
+
+test("un passage porte une seule heure, pour tous ses modèles", async () => {
+  const { ouvrirCouts, enregistrer } = await import("../src/couts.mjs")
+  const { ouvrirDb } = await import("../src/db.mjs")
+  const db = ouvrirDb(":memory:")
+  ouvrirCouts(db)
+  enregistrer(db, { projet: 1, tache: 2, role: "agent", moteur: "claude-code", duree_s: 60, usages: [1, 2, 3].map((i) => ({ modele: `m${i}`, entree: i, sortie: i, cache_lecture: 0, cache_ecriture: 0, cout_api_usd: 0 })) })
+  const heures = db.prepare("SELECT DISTINCT le FROM consommations").all().map((x) => x.le)
+  assert.equal(heures.length, 1)
+  assert.match(heures[0], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/, "le format de datetime('now')")
+})
+
 test("la table agents_tache : une ligne pour l'agent, une par sous-agent, tout borné", () => {
   const db = new DatabaseSync(":memory:")
   ouvrirAgentsTache(db)

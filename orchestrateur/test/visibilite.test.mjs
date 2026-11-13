@@ -395,6 +395,12 @@ test("les modèles, tâche par tâche : lots, passages, modèles d'un même pass
   assert.deepEqual(t2.sous_agents, { passages_notes: 1, liste: [] }, "noté, aucun sous-agent")
   const t3 = m.lots[1].taches[0]
   assert.deepEqual([t3.sous_agents.passages_notes, t3.travaux.construction.passages], [0, 0], "rien de noté pour T3")
+  // Le modèle d'un passage est celui qui a produit le plus de jetons, pas le premier noté ni celui qui porte
+  // la durée (0 pour le design) : Haiku, noté d'abord avec peu de jetons, sert dans le passage de Sonnet.
+  const j = b.db.prepare("INSERT INTO consommations (projet_id, tache_id, role, moteur, modele, entree, sortie, cout_api_usd, duree_s, le) VALUES (1, 3, 'designer', 'claude-code', ?, ?, ?, 0, 0, '2026-11-10 13:00:00')")
+  j.run("claude-haiku-4-5", 100, 10)
+  j.run("claude-sonnet-5-5", 9000, 900)
+  assert.deepEqual(mod.modelesDuProjet(b, 1).lots[1].taches[0].travaux.design, { passages: 1, modeles: [{ nom: "Claude Sonnet 5.5", passages: 1 }], dans_le_passage: ["Claude Haiku 4.5"] })
   // Un projet supprimé ou inconnu : rien.
   assert.equal(mod.modelesDuProjet(b, 2), null)
   assert.equal(mod.modelesDuProjet(b, 999), null)
@@ -406,13 +412,21 @@ test("les modèles, tâche par tâche : lots, passages, modèles d'un même pass
 
 test("API : GET /api/visibilite/projets/:id, réservé aux administrateurs", async () => {
   api.db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, statut) VALUES (1, 'T1', 1, 'Liste', 'd', '[]', 'fusionnee')").run()
+  const compter = () => ["journal", "reglages", "consommations", "agents_tache", "taches"].map((x) => api.db.prepare(`SELECT COUNT(*) AS n FROM ${x}`).get().n)
+  const avant = compter()
   const r = await fetch(`${base}/api/visibilite/projets/1`, { headers: { cookie: "s=admin" } })
   assert.equal(r.status, 200)
-  const m = await r.json()
+  const texte = await r.text()
+  for (const secret of Object.values(api.config.secrets)) assert.ok(!texte.includes(secret), "aucun secret dans la réponse")
+  const m = JSON.parse(texte)
   assert.deepEqual([m.projet.nom, m.lots[0].taches[0].cle], ["Relais", "T1"])
-  assert.equal((await fetch(`${base}/api/visibilite/projets/999`, { headers: { cookie: "s=admin" } })).status, 404)
+  assert.deepEqual(compter(), avant, "un GET n'écrit rien")
+  for (const id of ["999", "9999999999"]) assert.equal((await fetch(`${base}/api/visibilite/projets/${id}`, { headers: { cookie: "s=admin" } })).status, 404)
   assert.equal((await fetch(`${base}/api/visibilite/projets/abc`, { headers: { cookie: "s=admin" } })).status, 404)
   assert.equal((await fetch(`${base}/api/visibilite/projets/1`, { headers: { cookie: "s=membre" } })).status, 403)
+  assert.equal((await fetch(`${base}/api/visibilite/projets/1`)).status, 403)
+  const post = await fetch(`${base}/api/visibilite/projets/1`, { method: "POST", headers: { cookie: "s=admin", "content-type": "application/json", origin: base }, body: "{}" })
+  assert.equal(post.status, 404, "une seule méthode : GET")
   // La liste des projets de la page la propose.
   const v = await (await fetch(`${base}/api/visibilite`, { headers: { cookie: "s=admin" } })).json()
   assert.deepEqual(v.projets_taches, [{ id: 1, nom: "Relais" }])

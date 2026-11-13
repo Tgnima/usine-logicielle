@@ -457,9 +457,12 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .qui-fait-quoi dd { margin: 1px 0 0; font-weight: 600 }
 td.modeles-fonction { min-width: 120px }
 td.modeles-fonction .sous { max-width: 200px }
-.modele-passages { white-space: nowrap }
 .table-taches th, .table-taches td { padding: 12px 12px }
-.table-taches th:first-child, .table-taches td:first-child { padding-left: 16px }
+/* La tâche reste visible quand on fait défiler le tableau en largeur (téléphone, écran étroit). */
+.table-taches th:first-child { padding-left: 16px; position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--trait-2) }
+/* Les tableaux du projet précédent, pendant le chargement du suivant. */
+.en-chargement { opacity: .55; transition: opacity .2s }
+@media (prefers-reduced-motion: reduce) { .en-chargement { transition: none } }
 th.tache-modeles { min-width: 190px; max-width: 280px; font-size: 14px; font-weight: 600; color: var(--encre); white-space: normal; vertical-align: top }
 .lignes-usine { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; font-size: 14px }
 .mesure-serveur { display: flex; flex-direction: column; gap: 4px; font-size: 14px }

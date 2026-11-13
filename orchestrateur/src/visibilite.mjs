@@ -429,10 +429,13 @@ const ordreTravail = (role) => (ORDRE_TRAVAUX.includes(role) ? ORDRE_TRAVAUX.ind
 // Pour un projet, lot par lot : chaque tâche, tous les modèles qui y ont travaillé (par travail,
 // avec le nombre de passages), et les sous-agents de l'agent quand ils ont été notés.
 //   Un passage : les lignes d'un même travail notées à la même seconde (enregistrer() note un
-//   passage d'un coup, une ligne par modèle). Le modèle qui porte la durée est celui du passage ;
-//   un autre modèle du même passage a servi dedans (un sous-agent ou un appel interne).
+//   passage d'un coup, une ligne par modèle, à la même heure). Le modèle du passage est celui qui a
+//   produit le plus de jetons ; un autre modèle du même passage a servi dedans (un sous-agent ou un
+//   appel interne). Ce n'est pas l'ordre des modèles, ni la durée (0 pour le design), qui décide.
 const TRAVAUX_TACHE = [["construction", "agent"], ["securite", "relecteur-securite"], ["controle", "verificateur"], ["design", "designer"]]
 const SOUS_AGENTS_TACHE_MAX = 20
+const MODELES_TACHE_MAX = 10
+const jetons = (c) => (c.sortie ?? 0) + (c.entree ?? 0) + (c.cache_lecture ?? 0) + (c.cache_ecriture ?? 0)
 const tableExiste = (db, nom) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(nom))
 
 export function modelesDuProjet(ctx, projetId) {
@@ -446,7 +449,7 @@ export function modelesDuProjet(ctx, projetId) {
   const taches = db.prepare("SELECT id, cle, lot, titre, statut, tentative, approche FROM taches WHERE projet_id = ? ORDER BY lot, id").all(p.id)
   // Les passages de chaque tâche, par travail : tache -> role -> le -> lignes.
   const passages = new Map()
-  for (const c of db.prepare("SELECT tache_id, role, moteur, modele, duree_s, le FROM consommations WHERE projet_id = ? AND tache_id IS NOT NULL ORDER BY id").all(p.id)) {
+  for (const c of db.prepare("SELECT tache_id, role, moteur, modele, duree_s, entree, sortie, cache_lecture, cache_ecriture, le FROM consommations WHERE projet_id = ? AND tache_id IS NOT NULL ORDER BY id").all(p.id)) {
     const t = passages.get(c.tache_id) ?? passages.set(c.tache_id, new Map()).get(c.tache_id)
     const r = t.get(c.role) ?? t.set(c.role, new Map()).get(c.role)
     const l = r.get(c.le) ?? r.set(c.le, []).get(c.le)
@@ -470,8 +473,8 @@ export function modelesDuProjet(ctx, projetId) {
       const internes = new Set()
       const liste = [...(roles.get(role) ?? new Map()).values()]
       for (const lignes of liste) {
-        // Le modèle du passage : celui qui porte la durée (la première ligne de l'appel).
-        const tri = [...lignes].sort((a, b) => (b.duree_s ?? 0) - (a.duree_s ?? 0))
+        // Le modèle du passage : celui qui a produit le plus de jetons (à égalité, celui qui porte la durée).
+        const tri = [...lignes].sort((a, b) => jetons(b) - jetons(a) || (b.duree_s ?? 0) - (a.duree_s ?? 0))
         const nom = nomModele(tri[0].moteur, tri[0].modele)
         parModele.set(nom, (parModele.get(nom) ?? 0) + 1)
         for (const autre of tri.slice(1)) {
@@ -479,7 +482,7 @@ export function modelesDuProjet(ctx, projetId) {
           if (n !== nom) internes.add(n)
         }
       }
-      return [cle, { passages: liste.length, modeles: [...parModele].map(([nom, n]) => ({ nom, passages: n })), dans_le_passage: [...internes] }]
+      return [cle, { passages: liste.length, modeles: [...parModele].slice(0, MODELES_TACHE_MAX).map(([nom, n]) => ({ nom, passages: n })), dans_le_passage: [...internes].slice(0, MODELES_TACHE_MAX) }]
     }))
   }
   const sousAgentsDe = (tacheId) => {
@@ -488,7 +491,7 @@ export function modelesDuProjet(ctx, projetId) {
     const groupes = new Map()
     for (const a of lignes.filter((x) => x.principal !== 1)) {
       const modeles = lireModeles(a.modeles).map((m) => nomModele("claude-code", m))
-      const cle = `${a.type}|${modeles.join(",")}`
+      const cle = `${a.type}|${modeles.join(",")}|${a.modele_demande ?? ""}`
       const g = groupes.get(cle) ?? groupes.set(cle, { type: texte(a.type, MODELE_MAX), modeles, modele_demande: a.modele_demande ? texte(a.modele_demande, MODELE_MAX) : null, fois: 0, description: "" }).get(cle)
       g.fois += 1
       g.description = texte(a.description, TITRE_MAX)

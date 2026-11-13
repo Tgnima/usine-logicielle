@@ -7,14 +7,20 @@
 // resumerFlux() tire du flux un résumé court. Il est calculé dans l'atelier, à la fin du passage
 // (le flux peut peser plusieurs Mo, et il est effacé au passage suivant), puis noté ici, dans
 // la table agents_tache : une ligne pour l'agent lui-même, une par sous-agent.
+import { masquer } from "./direct.mjs"
 import { ecrireFichier, q } from "./travaux.mjs"
 
 // Le résumé d'un flux stream-json. Autonome (sans rien du module) : il est recopié tel quel dans
 // le script de l'atelier par scriptResume().
 //   { modele, principal: { modeles, tours, outils }, sous_agents: [{ type, description, modele_demande, lance_par, modeles, tours, outils }] }
 export function resumerFlux(texte) {
+  // Les constantes sont ici, dans la fonction : elle doit rester autonome (recopiée dans l'atelier).
   const OUTILS_SOUS_AGENT = ["Task", "Agent"]
   const MAX_SOUS_AGENTS = 50
+  const MODELE_MAX = 60
+  const TYPE_MAX = 60
+  const DESCRIPTION_MAX = 120
+  const DEMANDE_MAX = 30
   const coupe = (t, n) => String(t ?? "").replace(/\s+/g, " ").trim().slice(0, n)
   const nouveau = () => ({ type: null, description: "", modele_demande: null, lance_par: null, modeles: {}, messages: new Set(), sansId: 0, outils: 0 })
   const principal = nouveau()
@@ -32,7 +38,7 @@ export function resumerFlux(texte) {
     } catch {
       continue
     }
-    if (e?.type === "system" && e.subtype === "init" && typeof e.model === "string") init = coupe(e.model, 60)
+    if (e?.type === "system" && e.subtype === "init" && typeof e.model === "string") init = coupe(e.model, MODELE_MAX)
     if (e?.type !== "assistant") continue
     const parent = typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id ? e.parent_tool_use_id : null
     const qui = parent ? sousAgent(parent) : principal
@@ -41,7 +47,7 @@ export function resumerFlux(texte) {
     if (typeof e.message?.id === "string") qui.messages.add(e.message.id)
     else qui.sansId += 1
     if (typeof e.message?.model === "string" && e.message.model) {
-      const m = coupe(e.message.model, 60)
+      const m = coupe(e.message.model, MODELE_MAX)
       qui.modeles[m] = (qui.modeles[m] ?? 0) + 1
     }
     for (const c of Array.isArray(e.message?.content) ? e.message.content : []) {
@@ -50,9 +56,9 @@ export function resumerFlux(texte) {
       if (!OUTILS_SOUS_AGENT.includes(c.name) || typeof c.id !== "string") continue
       const s = sousAgent(c.id)
       if (!s) continue
-      s.type = coupe(c.input?.subagent_type || "general-purpose", 60)
-      s.description = coupe(c.input?.description, 120)
-      s.modele_demande = c.input?.model ? coupe(c.input.model, 30) : null
+      s.type = coupe(c.input?.subagent_type || "general-purpose", TYPE_MAX)
+      s.description = coupe(c.input?.description, DESCRIPTION_MAX)
+      s.modele_demande = c.input?.model ? coupe(c.input.model, DEMANDE_MAX) : null
       s.lance_par = parent ? "sous-agent" : "agent"
     }
   }
@@ -88,6 +94,7 @@ export function ouvrirAgentsTache(db) {
       le TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS agents_tache_tache ON agents_tache (tache_id);
+    CREATE INDEX IF NOT EXISTS agents_tache_projet ON agents_tache (projet_id);
   `)
 }
 
@@ -95,21 +102,35 @@ export function ouvrirAgentsTache(db) {
 const MODELE_MAX = 60
 const TYPE_MAX = 60
 const DESCRIPTION_MAX = 120
+const DEMANDE_MAX = 30
 const SOUS_AGENTS_MAX = 50
-const entier = (x) => (Number.isFinite(Number(x)) ? Math.max(0, Math.min(1e6, Math.round(Number(x)))) : 0)
-const listeModeles = (l) => JSON.stringify((Array.isArray(l) ? l : []).filter((x) => typeof x === "string" && x).map((x) => x.slice(0, MODELE_MAX)).slice(0, 10))
+const MODELES_MAX = 10
+const ENTIER_MAX = 1e6
+const entier = (x) => (Number.isFinite(Number(x)) ? Math.max(0, Math.min(ENTIER_MAX, Math.round(Number(x)))) : 0)
+const listeModeles = (l) => JSON.stringify((Array.isArray(l) ? l : []).filter((x) => typeof x === "string" && x).map((x) => x.slice(0, MODELE_MAX)).slice(0, MODELES_MAX))
 
-export function noterPassage(db, { projet = null, tache = null, role = "agent", tentative = 0, approche = 0, resume }) {
+// secrets : les secrets de l'usine. Un texte écrit par le modèle (le type, la mission d'un sous-agent)
+// peut contenir une clé : il est masqué comme le direct (masquer(), direct.mjs) avant d'être rangé.
+export function noterPassage(db, { projet = null, tache = null, role = "agent", tentative = 0, approche = 0, resume, secrets = [] }) {
   if (!resume || typeof resume !== "object" || Array.isArray(resume)) return false
+  const propre = (x, max) => masquer(String(x ?? ""), secrets).slice(0, max)
   const ins = db.prepare(`INSERT INTO agents_tache (projet_id, tache_id, role, tentative, approche, principal, type, description, modele_demande, modeles, tours, outils)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const p = resume.principal && typeof resume.principal === "object" ? resume.principal : {}
   const modeles = Array.isArray(p.modeles) && p.modeles.length ? p.modeles : [resume.modele]
-  ins.run(projet, tache, role, entier(tentative), entier(approche), 1, null, null, null, listeModeles(modeles), entier(p.tours), entier(p.outils))
-  for (const s of (Array.isArray(resume.sous_agents) ? resume.sous_agents : []).slice(0, SOUS_AGENTS_MAX)) {
-    if (!s || typeof s !== "object") continue
-    ins.run(projet, tache, role, entier(tentative), entier(approche), 0, String(s.type ?? "inconnu").slice(0, TYPE_MAX), String(s.description ?? "").slice(0, DESCRIPTION_MAX),
-      typeof s.modele_demande === "string" && s.modele_demande ? s.modele_demande.slice(0, 30) : null, listeModeles(s.modeles), entier(s.tours), entier(s.outils))
+  // Un passage se note entier, ou pas du tout.
+  db.exec("BEGIN")
+  try {
+    ins.run(projet, tache, role, entier(tentative), entier(approche), 1, null, null, null, listeModeles(modeles), entier(p.tours), entier(p.outils))
+    for (const s of (Array.isArray(resume.sous_agents) ? resume.sous_agents : []).slice(0, SOUS_AGENTS_MAX)) {
+      if (!s || typeof s !== "object") continue
+      ins.run(projet, tache, role, entier(tentative), entier(approche), 0, propre(s.type ?? "inconnu", TYPE_MAX) || "inconnu", propre(s.description, DESCRIPTION_MAX),
+        typeof s.modele_demande === "string" && s.modele_demande ? propre(s.modele_demande, DEMANDE_MAX) : null, listeModeles(s.modeles), entier(s.tours), entier(s.outils))
+    }
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
   }
   return true
 }

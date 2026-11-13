@@ -372,7 +372,7 @@ const ROUTES = [
   // La page Visibilité : ce qui attend, l'état réel des produits, l'usine maintenant, les 7 derniers jours (visibilite.mjs).
   ["GET", /^\/api\/visibilite$/, (ctx) => visibilite(ctx, { aTraiter: aTraiter(ctx) })],
   // Un projet, lot par lot : les modèles de chaque tâche et les sous-agents de l'agent.
-  ["GET", /^\/api\/visibilite\/projets\/(\d{1,9})$/, (ctx, [id]) => {
+  ["GET", /^\/api\/visibilite\/projets\/(\d+)$/, (ctx, [id]) => {
     const r = modelesDuProjet(ctx, Number(id))
     if (!r) throw erreur(404, "Projet introuvable.")
     return r
