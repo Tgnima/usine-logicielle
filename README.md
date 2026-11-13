@@ -103,38 +103,113 @@ horloge est accélérée (un jour = une minute), et leurs emails sont capturés 
 
 Adresses (DNS joker via sslip.io, rien à configurer) :
 aperçu `https://<produit>.apercu.<base>`, production `https://<produit>.<base>`,
-emails capturés `https://mails.apercu.<base>`, tableau de bord `https://usine-tableau.<base>`,
+emails capturés `https://mails.apercu.<base>`, console `https://console.<base>`,
 portail « Mes applications » `https://connexion.<base>`.
+
+## Nouveau sur le projet ?
+
+Par où commencer, selon ce que tu viens faire :
+
+| Tu veux… | Lis |
+|---|---|
+| comprendre ce que fait l'usine, sans technique | `docs/guide-utilisateur.md` |
+| l'installer sur un serveur | **Installer**, ci-dessous, puis `docs/kb/` pas à pas (VPS, jeton GitHub, secrets, ports) |
+| la mettre à jour | **Mettre à jour** |
+| modifier son code | `CLAUDE.md` (où sont les choses, règles), puis **Contribuer et publier une version** |
+| la sécurité, ce qui reste à décider | `docs/SECURITE.md` |
+| la proposer à des clients | `docs/INDUSTRIALISATION.md` |
 
 ## Installer
 
-Prérequis : un serveur avec Docker (1 CPU / 4 Go suffisent pour la démo, avec du swap),
-les ports 80 et 443 libres.
+Prérequis : un serveur Linux avec Docker et le plugin Compose (1 CPU / 4 Go suffisent pour la
+démo, avec du swap), les ports 80 et 443 ouverts, et `sudo` (pour la clé de chiffrement des secrets).
 
-1. **GitHub** : un jeton fine-grained sur le compte qui recevra les produits, accès à tous
-   les dépôts, permissions *Administration*, *Contents*, *Issues*, *Pull requests* en
-   lecture/écriture.
-2. **Slack** (facultatif) : créer l'application depuis `slack-manifest.yml`, l'installer,
-   générer le jeton d'application (`connections:write`), inviter le bot dans le canal.
-3. Sur le serveur :
+1. **Sur le serveur, la dernière version publiée** (pas `main`, qui bouge tous les jours) :
 
    ```bash
-   git clone https://github.com/<toi>/usine-logicielle.git && cd usine-logicielle
-   bash install.sh            # crée .env et usine.config.yml, puis s'arrête s'il manque un secret
-   nano .env                  # colle tes jetons (jamais dans une conversation)
-   bash install.sh            # chiffre les secrets (et les retire de .env), construit, démarre
+   git clone https://github.com/Tgnima/usine-logicielle.git && cd usine-logicielle
+   git checkout "$(git tag -l 'v*' --sort=-v:refname | head -1)"
+   bash install.sh --admin prenom@exemple.fr
    ```
 
-   Sauvegarde ensuite la clé de déchiffrement hors du serveur (gestionnaire de mots de passe) :
-   `sudo cat /etc/usine/age.key`. Changer un secret : le recoller dans `.env` puis
-   `bash secrets.sh migrer`, ou `bash secrets.sh editer`.
+   `install.sh` crée `.env` et `usine.config.yml`, déduit l'adresse du serveur
+   (`<ip>.sslip.io`), génère et chiffre les jetons internes, construit et démarre l'usine.
+   Il affiche à la fin le lien d'invitation du premier administrateur (valable 72 h). Les
+   valeurs d'exemple (compte GitHub, domaine) ne désignent jamais l'usine de quelqu'un d'autre.
+2. **Ouvre le lien**, choisis ton mot de passe : la console s'ouvre sur **Premiers pas**, qui
+   guide le reste sans retourner sur le serveur :
+   - le fournisseur d'IA (abonnement Claude, clés API, connexion ChatGPT du vérificateur) ;
+   - GitHub (« Se connecter avec GitHub ») ;
+   - les invitations ;
+   - le premier projet.
+3. **Sauvegarde la clé de déchiffrement** hors du serveur (gestionnaire de mots de passe) :
+   `sudo cat /etc/usine/age.key`. Sans elle, les secrets chiffrés sont perdus.
+4. **Slack** (facultatif) : crée l'application depuis `slack-manifest.yml`, colle ses deux
+   jetons et tes identifiants Slack (`ADMIN_USER_IDS`, des U…) dans `.env`, puis
+   `bash install.sh`. Tant que `ADMIN_USER_IDS` est vide, personne ne décide depuis Slack.
 
-   Sur un serveur où l'usine à contenu tourne déjà : `bash install.sh --reprendre-de ../usine-contenu`
-   réutilise sa connexion Claude, sa clé Vercel AI Gateway et son volume Codex.
-4. Les fournisseurs d'IA : dans la console, **Réglages → Fournisseurs d'IA** (voir plus bas).
-   Rien à faire sur le serveur : jeton d'abonnement Claude, clés API, passerelle, connexion
-   ChatGPT du vérificateur, ordre de secours et modèles se règlent là.
-5. Dans Slack, `/usine acces` : crée ton compte (administrateur) et ouvre le lien d'invitation.
+Les secrets se collent dans `.env`, jamais dans une conversation. `install.sh` (ou
+`bash secrets.sh migrer`, **sans sudo**) les chiffre puis les retire de `.env`. Pour en changer
+un : le recoller dans `.env` et relancer `bash secrets.sh migrer`, ou `bash secrets.sh editer`.
+Sur un serveur où l'usine à contenu tourne déjà, `bash install.sh --reprendre-de ../usine-contenu`
+réutilise sa connexion Claude, sa clé Vercel AI Gateway et son volume Codex.
+
+## Mettre à jour
+
+L'usine a des **versions publiées** : des étiquettes `vX.Y.Z` sur GitHub, décrites dans
+`CHANGELOG.md` avec les gestes éventuels à faire. Une usine installée suit l'un de deux canaux
+(`CANAL_USINE` dans `.env`) :
+
+| Canal | Ce que propose « Mettre à jour l'usine » | Pour qui |
+|---|---|---|
+| `stable` (défaut) | la dernière version publiée | toute usine en service |
+| `main` | chaque fusion, dès qu'elle arrive | le serveur de test de l'équipe qui développe l'usine |
+
+Deux façons de mettre à jour, qui font la même chose : l'usine finit sa tâche en cours et
+s'arrête, passe à la nouvelle version, crée les secrets que celle-ci attend, se reconstruit,
+redémarre et reprend. Les données et les réglages ne bougent pas.
+
+- **Depuis la console ou Slack** : le bouton « Mettre à jour l'usine » apparaît quand une
+  version plus récente existe sur le canal.
+- **Sur le serveur** :
+
+  ```bash
+  bash update.sh              # la cible du canal
+  bash update.sh --liste      # les versions publiées
+  bash update.sh v1.2.0       # une version précise, y compris pour revenir en arrière
+  ```
+
+Avant de mettre à jour, lis le bloc **À faire** de la version dans `CHANGELOG.md`.
+`update.sh` signale aussi les nouveaux réglages de `.env.example`. Relancer
+`install.sh` sur une usine qui tourne redémarre tout aussitôt : préfère `update.sh`.
+
+## Contribuer et publier une version
+
+1. **Une branche, une pull request.** Chaque PR lance les tests (GitHub Actions,
+   `.github/workflows/tests.yml`) :
+   - orchestrateur, portier, déployeur et brique webapp ;
+   - les scripts shell ;
+   - `docker-compose.yml`, et la concordance de ses secrets avec `secrets.sh`.
+
+   Une PR rouge ne se fusionne pas. En local : `cd orchestrateur && npm ci && npm test`, de même
+   dans `portier`, et `node --test test/*.test.mjs` dans `deployeur`.
+2. **Le dépôt est public** : rien de réel dans une PR (adresse du serveur, emails, secrets).
+3. **Fusionner sur `main`** n'atteint que les serveurs sur le canal `main`. Note le
+   changement dans la section **Non publié** de `CHANGELOG.md`, avec tout geste à faire
+   (un nouveau secret, un réglage).
+4. **Publier**, une fois la version éprouvée sur le serveur de test :
+   - renomme **Non publié** en `vX.Y.Z` dans `CHANGELOG.md` et fusionne ;
+   - pose l'étiquette :
+
+   ```bash
+   git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
+   ```
+
+   En une dizaine de minutes, chaque usine sur le canal `stable` voit la mise à jour.
+   Numérotation :
+   - `X` quand il faut un geste à la main ;
+   - `Y` pour une nouveauté ;
+   - `Z` pour une correction.
 
 ## Premiers pas et GitHub
 
@@ -305,11 +380,12 @@ docker compose exec orchestrateur node src/cli.mjs production 1
   production restent sur le serveur.
 - **L'entretien**, toutes les 6 heures : vieilles images, cache de construction, sauvegardes
   de plus de 30 jours. La base de l'usine est sauvegardée chaque jour (14 jours gardés).
-- **La mise à jour** : quand une nouvelle version est sur GitHub, le bouton
-  « Mettre à jour l'usine » apparaît dans l'onglet Accueil. L'usine termine sa tâche en
-  cours, se reconstruit, redémarre et reprend seule (`cli.mjs mettre-a-jour` fait de même).
+- **La mise à jour** (voir **Mettre à jour**) : quand une version plus récente existe sur le
+  canal de l'usine, le bouton « Mettre à jour l'usine » apparaît dans l'onglet Accueil. L'usine
+  termine sa tâche en cours, se reconstruit, redémarre et reprend seule (`bash update.sh` et
+  `cli.mjs mettre-a-jour` font de même).
   Si la nouvelle version attend un secret qui n'existe pas encore sur le serveur, la mise à
-  jour s'arrête avant tout changement et dit quoi lancer (`sudo bash secrets.sh dechiffrer`).
+  jour s'arrête avant tout changement et dit quoi lancer (`bash secrets.sh dechiffrer`).
 - **Sentry et PostHog** (facultatifs, secrets `SENTRY_DSN` et `POSTHOG_TOKEN`, comptes en
   région européenne) : un seul DSN et un seul jeton pour l'usine et tous ses produits, chaque
   envoi porte le produit en étiquette.

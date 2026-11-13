@@ -16,12 +16,13 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/reorientation.mjs` | Changer de direction en cours de fabrication : pause, lots gardés, suite refaite par l'analyste, validation |
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
 | `orchestrateur/src/console.mjs`, `orchestrateur/console/` | La console web (API JSON + interface sans build), servie sur le port 8091 derrière le portier (administrateurs) |
-| `orchestrateur/src/visibilite.mjs` | La page Visibilité de la console (`GET /api/visibilite`), en lecture seule : ce qui attend, l'état réel de chaque produit (sonde de `sante.json`), l'usine maintenant (tâches, `statut.json`, serveur), les 7 derniers jours à l'heure de Paris (journal, consommations, causes des refus) |
+| `orchestrateur/src/visibilite.mjs` | La page Visibilité de la console (`GET /api/visibilite`), en lecture seule : ce qui attend, l'état réel de chaque produit (sonde de `sante.json`), l'usine maintenant (tâches, `statut.json`, serveur), les 7 derniers jours à l'heure de Paris (journal, consommations, causes des refus), qui fait quoi, et les modèles de chaque tâche d'un projet, lot par lot (`GET /api/visibilite/projets/:id`) |
+| `orchestrateur/src/sous-agents.mjs` | Les sous-agents de l'agent qui construit : `resumerFlux()` résume son flux stream-json dans l'atelier à la fin de chaque passage (`scriptResume()`, jamais bloquant), `noterPassage()` le range dans la table `agents_tache` (une ligne pour l'agent, une par sous-agent) |
 | `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |
 | `deployeur/observation.mjs` | Ce que le déployeur envoie de chaque produit (module commun) : `etat_produit` toutes les 5 min et à chaque changement, un incident Sentry quand la panne est confirmée (deux sondes de suite), un événement `deploiement` (ok, échec, abandon), les nouvelles lignes des journaux vers PostHog (`service.name` = produit, `deployment.environment`) |
 | `deployeur/deploiement.mjs` | Les décisions du tour : déployer, reprendre un déploiement interrompu (deux fois au plus), sinon l'abandonner ; l'attente de `/api/health` sans suivre de redirection |
 | `deployeur/sonde.mjs` | La sonde des produits (chaque minute) : état Docker, santé, redémarrages, `/api/health`, version ; jugée produit par produit, publiée dans `sante.json` (`applications`), une ligne de santé et une alerte par produit dans `orchestrateur/src/sante.mjs` |
-| `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes |
+| `portier/server.mjs` | La page de connexion (forward_auth), sessions, invitations, comptes ; la déconnexion (`/_portier/deconnexion`, sur chaque adresse protégée) ferme la session côté serveur (`sessions_fermees`) : le cookie rejoué ensuite est refusé |
 | `secrets.sh` | Les secrets chiffrés (SOPS + age), déchiffrés en mémoire au démarrage |
 | `orchestrateur/src/relectures.mjs` | Les relectures entre agents (sécurité) avant le vérificateur |
 | `commun/serveur-travaux.mjs` | Le serveur de travaux de l'atelier et du vérificateur |
@@ -77,4 +78,10 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 - Les scripts envoyés aux serveurs de travaux s'écrivent avec `q()` et `ecrireFichier()` (travaux.mjs).
 - Un changement de la console (`orchestrateur/console/`) passe par l’agent `designer-console` (`.claude/agents/`, avec `node scripts/controle-console.mjs`) ; un changement de route, par `auditeur-backend`.
 - Commentaires et messages en français.
-- Tests : `cd orchestrateur && npm test`.
+- Tests : `cd orchestrateur && npm test` (aussi `portier`, `deployeur`, `briques/webapp`) ; la CI
+  (`.github/workflows/tests.yml`) les lance sur chaque PR.
+- **Versions** : tout changement visible ou tout geste à faire (nouveau secret, nouveau réglage)
+  va dans la section « Non publié » de `CHANGELOG.md`. Un nouveau réglage de `.env` va aussi dans
+  `.env.example` (`update.sh` le signale). Une version se publie par une étiquette `vX.Y.Z`
+  (README, « Contribuer et publier une version ») ; les usines sur le canal `stable` ne voient
+  que les étiquettes.

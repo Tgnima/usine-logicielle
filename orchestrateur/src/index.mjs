@@ -19,6 +19,7 @@ import * as actions from "./pipeline.mjs"
 import { demarrerSlack, notificateurConsole } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
+import { ouvrirAgentsTache } from "./sous-agents.mjs"
 import { demarrerConsole } from "./console.mjs"
 import { demarrerSynchronisationPortier, portier } from "./portier.mjs"
 import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
@@ -33,6 +34,7 @@ const db = ouvrirDb(join(config.dataDir, "usine.db"))
 ouvrirCouts(db)
 ouvrirCycle(db)
 ouvrirDomaines(db)
+ouvrirAgentsTache(db)
 const ctx = { config, db, notifier: notificateurConsole(), livraison }
 // Les fournisseurs d'IA réglés dans la console : modèles, et identifiants passés aux travaux.
 appliquerModeles(ctx)
