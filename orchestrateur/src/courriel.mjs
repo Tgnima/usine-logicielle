@@ -4,7 +4,8 @@
 import nodemailer from "nodemailer"
 import { secret } from "./config.mjs"
 
-const duServeur = () => ({ hote: process.env.SMTP_HOST ?? "", port: process.env.SMTP_PORT ?? "", securite: process.env.SMTP_SECURE ?? "", expediteur: process.env.EMAIL_EXPEDITEUR ?? "", utilisateur: secret("smtp_user"), motDePasse: secret("smtp_pass") })
+// Le service d'envoi du serveur (.env et secrets), en un bloc.
+export const courrielDuServeur = () => ({ hote: process.env.SMTP_HOST ?? "", port: process.env.SMTP_PORT ?? "", securite: process.env.SMTP_SECURE ?? "", expediteur: process.env.EMAIL_EXPEDITEUR ?? "", utilisateur: secret("smtp_user"), motDePasse: secret("smtp_pass") })
 let reglage = null // null : le serveur
 let transport = null
 
@@ -14,20 +15,25 @@ export function reglerCourriel(r) {
   transport?.close?.()
   transport = null
 }
-const actuel = () => reglage ?? duServeur()
+const actuel = () => reglage ?? courrielDuServeur()
 
 export const courrielConfigure = () => Boolean(actuel().hote && actuel().expediteur)
 // Un service d'envoi existe : les produits en production peuvent envoyer de vrais emails.
 export const envoiDisponible = () => Boolean(actuel().hote)
 
-const creerTransport = (r) => nodemailer.createTransport({
+// Toujours chiffré : TLS direct (sécurité « 1 », port 465), sinon STARTTLS exigé (requireTLS). Un
+// serveur qui n'annonce pas STARTTLS, ou un intermédiaire qui retire l'annonce, fait échouer la
+// connexion avant l'identification : le mot de passe ne part jamais en clair.
+export const optionsTransport = (r) => ({
   host: r.hote,
   port: Number(r.port || 587),
   secure: r.securite === "1",
+  requireTLS: r.securite !== "1",
   ...(r.utilisateur ? { auth: { user: r.utilisateur, pass: r.motDePasse } } : {}),
   connectionTimeout: 15_000,
   greetingTimeout: 15_000,
 })
+const creerTransport = (r) => nodemailer.createTransport(optionsTransport(r))
 function obtenirTransport() {
   transport ??= creerTransport(actuel())
   return transport

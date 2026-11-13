@@ -48,7 +48,7 @@ import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recev
 import { adresseTableau } from "./slack-couts.mjs"
 import { iso, modelesDuProjet, visibilite } from "./visibilite.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
-import { appliquerAuxApplications, couperService, essaiCourriel, etatServices, poserService, retirerService, testerService } from "./services.mjs"
+import { appliquerAuxApplications, couperService, essaiCourriel, etatServices, poserService, reprendreService, retirerService, testerService } from "./services.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" }
@@ -551,6 +551,7 @@ const ROUTES = [
   ["PUT", /^\/api\/services\/cles\/([A-Z_]{3,40})$/, (ctx, [nom], c, qui) => poserService(ctx, nom, c.valeur, qui.email, { confirme: c.confirme === true })],
   ["DELETE", /^\/api\/services\/cles\/([A-Z_]{3,40})$/, (ctx, [nom], _c, qui) => retirerService(ctx, nom, qui.email)],
   ["POST", /^\/api\/services\/(sentry|posthog|smtp|passerelle|slack)\/couper$/, (ctx, [service], _c, qui) => couperService(ctx, service, qui.email)],
+  ["POST", /^\/api\/services\/(sentry|posthog|smtp|passerelle|slack)\/reprendre$/, (ctx, [service], _c, qui) => reprendreService(ctx, service, qui.email)],
   ["POST", /^\/api\/services\/(sentry|posthog|smtp|passerelle|slack)\/tester$/, (ctx, [service]) => testerService(ctx, service)],
   ["POST", /^\/api\/services\/smtp\/essai$/, (ctx, _p, _c, qui) => essaiCourriel(ctx, qui.email)],
   ["POST", /^\/api\/services\/appliquer$/, (ctx, _p, c, qui) => appliquerAuxApplications(ctx, qui.email, { confirme: c.confirme === true })],

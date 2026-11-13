@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { CLES_BOITE, blocSmtp, lireBoite, valeurBoite } from "../boite.mjs"
+import { CLES_BOITE, blocSmtp, lireBoite, valeurBoite, variablesSmtp } from "../boite.mjs"
 
 function avecBoite(contenu, corps) {
   const dossier = mkdtempSync(join(tmpdir(), "boite-"))
@@ -44,4 +44,19 @@ test("l'envoi d'emails en un bloc : console entière, ou serveur entier, jamais 
   assert.deepEqual(blocSmtp({ version: 1, cles: { SENTRY_DSN: "x" } }, serveur), serveur)
   assert.deepEqual(blocSmtp({ version: 2, cles: { SMTP_HOST: "smtp.console.exemple", SMTP_PORT: "465", SMTP_SECURE: "1" } }, serveur), { SMTP_HOST: "smtp.console.exemple", SMTP_PORT: "465", SMTP_SECURE: "1", EMAIL_EXPEDITEUR: "", SMTP_USER: "", SMTP_PASS: "" })
   assert.equal(blocSmtp({ version: 3, cles: { SMTP_HOST: "" } }, serveur).SMTP_HOST, "", "coupé dans la console : pas d'envoi, même avec le serveur")
+})
+
+test("emails réels : sans port dans la console, 587 comme l'usine ; jamais le 1025 de Mailpit", () => {
+  const serveur = { SMTP_HOST: "", SMTP_PORT: "587", SMTP_SECURE: "", EMAIL_EXPEDITEUR: "", SMTP_USER: "", SMTP_PASS: "" }
+  const boite = { version: 4, cles: { SMTP_HOST: "smtp.console.exemple", EMAIL_EXPEDITEUR: "usine@console.exemple", SMTP_USER: "compte", SMTP_PASS: "mot-de-passe-de-test" } }
+  assert.deepEqual(variablesSmtp(boite, serveur), { SMTP_HOST: "smtp.console.exemple", SMTP_PORT: "587", EMAIL_EXPEDITEUR: "usine@console.exemple", SMTP_USER: "compte", SMTP_PASS: "mot-de-passe-de-test" })
+  // Mailpit et emails réels à la fois : le port de Mailpit ne reste pas sur le vrai serveur d'envoi.
+  const v = { SMTP_HOST: "mailpit", SMTP_PORT: "1025", ...variablesSmtp(boite, serveur) }
+  assert.equal(v.SMTP_PORT, "587")
+  // La sécurité part telle quelle : « 0 » (STARTTLS) aussi.
+  assert.equal(variablesSmtp({ version: 5, cles: { SMTP_HOST: "smtp.console.exemple", SMTP_PORT: "465", SMTP_SECURE: "1" } }, serveur).SMTP_SECURE, "1")
+  assert.equal(variablesSmtp({ version: 6, cles: { SMTP_HOST: "smtp.console.exemple", SMTP_SECURE: "0" } }, serveur).SMTP_SECURE, "0")
+  // Le bloc du serveur, tel qu'il est.
+  assert.equal(variablesSmtp(null, { ...serveur, SMTP_HOST: "smtp.serveur.exemple", SMTP_PORT: "2525" }).SMTP_PORT, "2525")
+  assert.throws(() => variablesSmtp({ version: 7, cles: { SMTP_HOST: "" } }, { ...serveur, SMTP_HOST: "smtp.serveur.exemple" }), /aucun service d'envoi/, "coupé dans la console : pas d'envoi")
 })

@@ -1,7 +1,7 @@
 // L'orchestrateur : il tient l'état, applique le contrat, parle à GitHub et à
 // Slack. Il ne touche jamais Docker (c'est le déployeur) et ne code jamais
 // (ce sont les agents de l'atelier).
-import { demarrerObservabilite } from "./observabilite.mjs"
+import { demarrerBattement, demarrerObservabilite } from "./observabilite.mjs"
 import { envConnecteurs } from "./connecteurs.mjs"
 import { createServer } from "node:http"
 import { mkdirSync } from "node:fs"
@@ -17,7 +17,7 @@ import { demarrerFabrique } from "./fabrique.mjs"
 import { resoudre, surveillerEscalades } from "./escalade.mjs"
 import * as livraison from "./livraison.mjs"
 import * as actions from "./pipeline.mjs"
-import { arreterSlack, demarrerSlack, notificateurConsole, slackConnecte } from "./slack.mjs"
+import { fileDeRelance, notificateurConsole, slackConnecte } from "./slack.mjs"
 import { planEnMarkdown } from "./analyste.mjs"
 import { ouvrirCouts } from "./couts.mjs"
 import { ouvrirAgentsTache } from "./sous-agents.mjs"
@@ -47,6 +47,8 @@ try {
 } catch (e) {
   console.error("Services (Sentry, PostHog) :", e.message)
 }
+// Le battement de cœur part avec les clés de la console, une fois appliquées.
+demarrerBattement()
 // GitHub : l'application de l'usine, si elle est connectée (sinon le jeton du serveur).
 await brancherForge(ctx).catch((e) => console.error("GitHub (application) :", e.message))
 brancherJetons(config)
@@ -55,20 +57,12 @@ brancherEnvCommun((serveur) => ({ ...envFournisseurs(ctx, serveur === config.ver
 
 await preparerDepotEtat(config).catch((e) => console.error("Dépôt d'état :", e.message))
 // Slack se branche et se débranche aussi depuis la console (services.mjs) : la connexion se rouvre.
+// Les relances passent en file (fileDeRelance) : une seule à la fois, la dernière demandée l'emporte,
+// et chacune arrête la connexion d'avant : jamais deux connexions, jamais une connexion orpheline.
 ctx.slackConnecte = slackConnecte
-ctx.relancerSlack = async () => {
-  await arreterSlack(ctx)
-  if (!config.secrets.slackBot || !config.secrets.slackApp) return console.log("Slack débranché : mode console.")
-  await demarrerSlack(ctx).catch((e) => {
-    ctx.notifier = notificateurConsole()
-    console.error("Slack indisponible, mode console :", e.message)
-  })
-}
-if (config.secrets.slackBot && config.secrets.slackApp) {
-  await demarrerSlack(ctx).catch((e) => console.error("Slack indisponible, mode console :", e.message))
-} else {
-  console.log("Pas de jetons Slack : mode console (node src/cli.mjs).")
-}
+ctx.relancerSlack = fileDeRelance(ctx)
+if (config.secrets.slackBot && config.secrets.slackApp) await ctx.relancerSlack()
+else console.log("Pas de jetons Slack : mode console (node src/cli.mjs).")
 
 for (const [nom, url] of [["atelier", config.atelier.url], ["vérificateur", config.verificateur.url]]) {
   const s = await sante(url)

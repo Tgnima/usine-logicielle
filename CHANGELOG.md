@@ -19,7 +19,12 @@ Ce qui est sur `main` sans être encore dans une version.
 - **Correction** : le chemin de retour de la page de connexion ne peut plus mener vers un autre site
   (une tabulation, retirée par le navigateur, le permettait).
 
-**À faire** : rien. La table du portier se crée toute seule au démarrage.
+- **Emails de l'usine toujours chiffrés** : hors TLS direct (port 465), STARTTLS est désormais
+  exigé. Un serveur d'envoi qui ne le propose pas est refusé avant l'envoi du mot de passe.
+
+**À faire** : rien. La table du portier se crée toute seule au démarrage. Si les invitations
+partaient par un serveur d'envoi sans chiffrement, choisis TLS direct (port 465) ou un autre
+serveur, puis lance « Tester » (Réglages, Intégrations, Envoi d'emails).
 
 ## v1.0.0
 

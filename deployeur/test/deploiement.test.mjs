@@ -7,7 +7,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { REPRISES_MAX, attendreSante, decisionDeploiement, scriptVerifierSecrets } from "../deploiement.mjs"
+import { REPRISES_MAX, attendreSante, decisionDeploiement, scriptVerifierSecrets, statutEnLigne, versionServie } from "../deploiement.mjs"
 
 // Le script de vérification des secrets, avec un faux git (le nouveau docker-compose.yml) et un
 // faux docker (il joue le conteneur de vérification sur un dossier local à la place de /s).
@@ -135,4 +135,15 @@ test("attendreSante : un produit qui ne répond pas est en échec à la fin du d
   const debut = Date.now()
   assert.equal(await attendreSante(`${produit.url}/api/health`, rapide), false)
   assert.ok(Date.now() - debut >= 900)
+})
+
+test("statut : la version des clés que le conteneur a reçue, et celle de l'ancienne version gardée après un échec", () => {
+  const s = { sha: "a".repeat(40), demande_le: "2026-11-13T12:00:00.000Z", hote: "demo.exemple.fr", produit: "demo" }
+  // boite : celle que demarrer() a figée pour le fichier d'environnement (4), même si la boîte est passée à 5 depuis.
+  const ok = statutEnLigne(s, { conteneur: "usine-prod-demo-green", couleur: "green", publics: [], boite: 4 }, "2026-11-13T12:01:00.000Z")
+  assert.equal(ok.boite, 4)
+  assert.equal(statutEnLigne(s, { conteneur: "usine-apercu-demo" }, "le").boite, null)
+  // Un échec garde le conteneur qui sert encore, avec ses clés : la console le compte en retard.
+  assert.deepEqual(versionServie(ok), { hote: "demo.exemple.fr", hote_mails: null, conteneur: "usine-prod-demo-green", couleur: "green", boite: 4 })
+  assert.deepEqual(versionServie(null), {})
 })

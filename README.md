@@ -400,7 +400,8 @@ docker compose exec orchestrateur node src/cli.mjs production 1
     SSH ni redémarrage : chiffrées dans le coffre, elles servent tout de suite à l'orchestrateur,
     au déployeur dans les 30 s (par la boîte, un volume en mémoire vive), et aux applications à
     leur prochaine mise en ligne ou par « Appliquer ». « Couper l'envoi » l'emporte sur la valeur
-    du serveur ; « Retirer » la rend.
+    du serveur et garde celle de la console, que « Ne plus couper » rétablit ; « Retirer » efface
+    tout et rend la main au serveur.
 
 ## Le proposer à d'autres
 

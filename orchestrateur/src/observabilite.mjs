@@ -37,14 +37,19 @@ export const MONITEUR = "usine-orchestrateur"
 const decrire = (o) => (!o.actif.sentry && !o.actif.posthog ? "pas de clé Sentry ni PostHog, rien n'est envoyé" : [o.actif.sentry && "Sentry (erreurs, battement de cœur)", o.actif.posthog && "PostHog (journal)"].filter(Boolean).join(", "))
 const battre = (o = obs) => (o.actif.sentry ? o.battement(MONITEUR).catch(() => false) : Promise.resolve(false))
 
-// Au démarrage : les erreurs du processus, puis un battement tout de suite et chaque minute.
-// La minuterie tourne même sans clé : une clé posée plus tard dans la console bat aussitôt.
-let minuterie = null
+// Au démarrage : les erreurs du processus tout de suite (une erreur de démarrage part aussi).
 export function demarrerObservabilite() {
   obs.brancherProcessus()
   console.log(`Observabilité : ${decrire(obs)}.`)
-  battre()
-  minuterie ??= setInterval(() => battre(), 60_000)
+}
+
+// Le battement : tout de suite, puis chaque minute. Seulement une fois les réglages de la console
+// appliqués (index.mjs) : jamais un battement avec la clé du serveur si la console l'a remplacée
+// ou coupée. La minuterie tourne même sans clé : une clé posée plus tard bat aussitôt.
+let minuterie = null
+export function demarrerBattement(o = obs) {
+  battre(o)
+  minuterie ??= setInterval(() => battre(o), 60_000)
   minuterie.unref?.()
 }
 

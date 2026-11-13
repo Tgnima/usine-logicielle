@@ -3,6 +3,7 @@
 // Aucun appel réseau : les tests fournissent leurs faux envois.
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
 import { envFournisseurs } from "../src/fournisseurs.mjs"
 import { appliquerServices, couperService, etatServices, poserService, retirerService, testerService, traduireEchec, validerDsn, validerHotePosthog, validerJetonPosthog, valeurService } from "../src/services.mjs"
@@ -163,4 +164,41 @@ test("traduireEchec : chaque réponse en une phrase", () => {
   assert.match(traduireEchec("sentry", "HTTP 429"), /quota atteint/)
   assert.match(traduireEchec("sentry", "HTTP 400"), /copiée incomplète/)
   assert.match(traduireEchec("posthog", "HTTP 503"), /HTTP 503/)
+})
+
+test("hors d'Europe : seulement sentry.io hors de sa région UE ; un Sentry de l'entreprise n'est pas classé", () => {
+  assert.equal(validerDsn("https://cle@sentry.mon-entreprise.fr/3").horsUE, false)
+  assert.equal(validerDsn("https://cle@sentry.mon-entreprise.fr:9000/3").horsUE, false)
+  assert.equal(validerDsn("https://cle@o1.ingest.sentry.io/3").horsUE, true)
+  assert.equal(validerDsn("https://cle@o1.ingest.us.sentry.io/3").horsUE, true)
+  assert.equal(validerDsn("https://cle@o1.ingest.de.sentry.io/3").horsUE, false)
+  const ctx = ctxDe()
+  poserService(ctx, "SENTRY_DSN", "https://0123456789abcdef@sentry.mon-entreprise.fr/3", "admin@exemple.fr", {}, faux())
+  assert.doesNotMatch(ctx.db.prepare("SELECT message FROM journal ORDER BY id DESC").get().message, /hors d'Europe/, "le journal ne note pas un fait faux")
+})
+
+test("le dernier test s'efface dès que la clé change (posée, retirée, coupée)", async () => {
+  const ctx = ctxDe()
+  const dernierTest = () => etatServices(ctx, { actif: { sentry: true, posthog: false }, etat: () => ({ battement: {}, erreurs: {}, evenements: {} }) }).services.find((s) => s.id === "sentry").test
+  const instance = { actif: { sentry: true, posthog: false }, battement: async () => true, etat: () => ({ battement: { joignable: true } }) }
+  for (const changer of [() => poserService(ctx, "SENTRY_DSN", DSN, "admin@exemple.fr", {}, faux()), () => couperService(ctx, "sentry", "admin@exemple.fr", faux()), () => retirerService(ctx, "SENTRY_DSN", "admin@exemple.fr", faux())]) {
+    await testerService(ctx, "sentry", { instance })
+    assert.equal(dernierTest().ok, true)
+    changer()
+    assert.equal(dernierTest(), null, "le verdict d'avant ne dit rien de la nouvelle clé")
+  }
+})
+
+test("PostHog : l'usine n'envoie pas de journaux de conteneurs, la console n'en parle pas pour elle", () => {
+  const ctx = ctxDe()
+  const e = etatServices(ctx, { actif: { sentry: false, posthog: true }, etat: () => ({ battement: {}, erreurs: {}, evenements: { envoyes: 2, echecs: 0, joignable: true, dernier_ok: "2026-11-13T12:00:00.000Z" } }) })
+  assert.deepEqual(Object.keys(e.services.find((s) => s.id === "posthog").envoi), ["evenements"])
+})
+
+test("au démarrage, aucun battement avant que les réglages de la console soient appliqués", () => {
+  const source = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8")
+  const index = source("index.mjs")
+  assert.ok(index.indexOf("appliquerServices(ctx)") > 0 && index.indexOf("appliquerServices(ctx)") < index.indexOf("demarrerBattement()"), "le battement part après appliquerServices")
+  const demarrer = /export function demarrerObservabilite\(\) \{([\s\S]*?)\n\}/.exec(source("observabilite.mjs"))[1]
+  assert.doesNotMatch(demarrer, /battre|battement|setInterval/, "demarrerObservabilite ne bat pas")
 })

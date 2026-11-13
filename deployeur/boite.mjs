@@ -25,6 +25,16 @@ export function blocSmtp(boite, serveur) {
   return Object.fromEntries(Object.keys(serveur).map((k) => [k, boite.cles[k] ?? ""]))
 }
 
+// Les variables d'envoi d'une application en « emails réels » : le bloc de la console ou celui du
+// serveur, jamais le dépôt d'état. Sans port, 587, comme l'usine elle-même (courriel.mjs) : jamais
+// le 1025 de Mailpit ni celui que la brique prend par défaut. La sécurité part telle quelle (« 1 »
+// TLS direct, « 0 » STARTTLS).
+export function variablesSmtp(boite, serveur) {
+  const smtp = blocSmtp(boite, serveur)
+  if (!smtp.SMTP_HOST) throw new Error("emails réels demandés mais aucun service d'envoi n'est branché (console ou serveur)")
+  return { ...Object.fromEntries(Object.entries(smtp).filter(([, v]) => v)), SMTP_PORT: smtp.SMTP_PORT || "587" }
+}
+
 export function lireBoite(dossier = process.env.BOITE_DIR ?? "/boite") {
   let brut
   try {

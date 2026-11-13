@@ -250,3 +250,78 @@ test("l'écriture d'un état relit et réessaie après un conflit 409", async ()
     globalThis.fetch = reel
   }
 })
+
+test("redemander un état : jamais un état périmé réécrit, jamais un état retiré recréé", async () => {
+  const { redemanderEtat } = await import("../src/github.mjs")
+  const config = { github: { depot_etat: "usine-etat", proprietaire: "o" }, secrets: { github: "jeton" } }
+  const reel = globalThis.fetch
+  const contenu = (o) => Buffer.from(JSON.stringify(o)).toString("base64")
+  try {
+    // Une livraison pousse le lot 4 entre la lecture (lot 3) et l'écriture : GitHub refuse (409), on relit.
+    let fichier = { sha: "s3", objet: { lot: 3 } }
+    const puts = []
+    globalThis.fetch = async (_url, o = {}) => {
+      if ((o.method ?? "GET") === "GET") {
+        const r = new Response(JSON.stringify({ sha: fichier.sha, content: contenu(fichier.objet) }), { status: 200 })
+        if (fichier.sha === "s3") fichier = { sha: "s4", objet: { lot: 4 } } // écrit juste après la lecture
+        return r
+      }
+      const corps = JSON.parse(o.body)
+      puts.push(corps)
+      if (corps.sha !== fichier.sha) return new Response(JSON.stringify({ message: "does not match" }), { status: 409 })
+      return new Response("{}", { status: 200 })
+    }
+    const le = await redemanderEtat(config, "apercus/x.json", "m")
+    assert.match(String(le), /^\d{4}-\d{2}-\d{2}T/, "la date demandée est rendue")
+    const dernier = puts.at(-1)
+    assert.equal(dernier.sha, "s4")
+    assert.deepEqual(JSON.parse(Buffer.from(dernier.content, "base64").toString("utf8")), { lot: 4, demande_le: le }, "le lot 4 est gardé")
+
+    // L'état est retiré entre la lecture et l'écriture : rien n'est recréé.
+    let present = true
+    const ecritures = []
+    globalThis.fetch = async (_url, o = {}) => {
+      if ((o.method ?? "GET") === "GET") {
+        if (!present) return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 })
+        present = false
+        return new Response(JSON.stringify({ sha: "s1", content: contenu({ lot: 1 }) }), { status: 200 })
+      }
+      ecritures.push(JSON.parse(o.body))
+      return new Response(JSON.stringify({ message: "does not match" }), { status: 409 })
+    }
+    assert.equal(await redemanderEtat(config, "apercus/y.json", "m"), false)
+    assert.equal(ecritures.length, 1, "une seule tentative, refusée, puis plus rien")
+  } finally {
+    globalThis.fetch = reel
+  }
+})
+
+test("redemander une production : si l'état a changé depuis la lecture, la branche est jetée et on relit", async () => {
+  const { redemanderEtat } = await import("../src/github.mjs")
+  const config = { github: { depot_etat: "usine-etat", proprietaire: "o" }, secrets: { github: "jeton" } }
+  const reel = globalThis.fetch
+  const contenu = (o) => Buffer.from(JSON.stringify(o)).toString("base64")
+  let lecturesMain = 0
+  const appels = []
+  globalThis.fetch = async (url, o = {}) => {
+    const m = o.method ?? "GET"
+    appels.push(`${m} ${url.replace(/^https:\/\/api\.github\.com\/repos\/o\/usine-etat/, "")}`)
+    const json = (corps, status = 200) => new Response(JSON.stringify(corps), { status })
+    if (m === "GET" && url.includes("/contents/") && url.endsWith("ref=main")) return lecturesMain++ === 0 ? json({ sha: "s3", content: contenu({ lot: 3 }) }) : json({ sha: "s4", content: contenu({ lot: 4 }) })
+    if (m === "GET" && url.includes("/contents/")) return json({ sha: "s4", content: contenu({ lot: 4 }) }) // la branche part du main à jour
+    if (m === "GET" && url.endsWith("/git/ref/heads/main")) return json({ object: { sha: "base" } })
+    if (m === "PUT" && url.includes("/contents/")) return json({}, 200)
+    if (m === "POST" && url.endsWith("/pulls")) return json({ number: 7 }, 201)
+    if (m === "DELETE") return new Response(null, { status: 204 })
+    return json({}, m === "POST" ? 201 : 200)
+  }
+  try {
+    assert.ok(await redemanderEtat(config, "production/x.json", "m", { viaPR: true }))
+    const premierPut = appels.findIndex((a) => a.startsWith("PUT /contents/"))
+    const premiereSuppression = appels.findIndex((a) => a.startsWith("DELETE /git/refs/heads/"))
+    assert.ok(premiereSuppression >= 0 && premiereSuppression < premierPut, `la branche d'un état périmé est jetée avant toute écriture : ${appels.join(" ; ")}`)
+    assert.equal(appels.filter((a) => a.startsWith("PUT /contents/")).length, 1, "une seule écriture, sur l'état à jour")
+  } finally {
+    globalThis.fetch = reel
+  }
+})

@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { blocCourriel, contenuBoite, couperService, essaiCourriel, etatServices, poserService, testerService, traduireEchecSmtp, validerAdmins, validerCanal, validerExpediteur, validerHoteSmtp, validerJetonApp, validerJetonBot } from "../src/services.mjs"
 import { courrielConfigure, envoiDisponible } from "../src/courriel.mjs"
+import { fileDeRelance } from "../src/slack.mjs"
 
 const regler = () => ({ sentry: false, posthog: false })
 // De faux jetons, assemblés ici pour qu'aucun jeton n'apparaisse tel quel dans le dépôt (public).
@@ -94,7 +95,16 @@ test("tests : l'envoi d'emails vérifié sans rien envoyer ; Slack et la passere
   try {
     assert.match((await testerService(ctx, "smtp", { verifier: async () => {} })).message, /Aucun serveur d'envoi/)
     poserService(ctx, "SMTP_HOST", "smtp.exemple.fr", "admin@exemple.fr", {}, regler)
-    assert.equal((await testerService(ctx, "smtp", { verifier: async () => {} })).ok, true)
+    // Sans expéditeur, aucun email ne part : le test le dit, même si la connexion passe.
+    const sansExpediteur = await testerService(ctx, "smtp", { verifier: async () => {} })
+    assert.equal(sansExpediteur.ok, false)
+    assert.match(sansExpediteur.message, /manque l'expéditeur/)
+    poserService(ctx, "EMAIL_EXPEDITEUR", "usine@exemple.fr", "admin@exemple.fr", {}, regler)
+    const sansIdentifiant = await testerService(ctx, "smtp", { verifier: async () => {} })
+    assert.equal(sansIdentifiant.ok, true)
+    assert.match(sansIdentifiant.message, /sans identifiant/, "aucun identifiant ne sert : le test ne prétend pas l'avoir vérifié")
+    poserService(ctx, "SMTP_USER", "compte@exemple.fr", "admin@exemple.fr", {}, regler)
+    assert.match((await testerService(ctx, "smtp", { verifier: async () => {} })).message, /chiffrée et les identifiants/)
     const refus = await testerService(ctx, "smtp", { verifier: async () => { throw Object.assign(new Error("Invalid login"), { code: "EAUTH", responseCode: 535 }) } })
     assert.match(refus.message, /refuse l'identifiant ou le mot de passe/)
     assert.match(traduireEchecSmtp({ code: "ETIMEDOUT", message: "Connection timeout" }), /587 ou 465/)
@@ -113,5 +123,138 @@ test("tests : l'envoi d'emails vérifié sans rien envoyer ; Slack et la passere
     assert.equal(contenuBoite(ctx).cles.AI_GATEWAY_API_KEY_APPLIS, "vck_cle-de-test-des-applications-0123")
   } finally {
     fin()
+  }
+})
+
+// Les réglages du serveur (.env et secrets), le temps d'un test.
+function avecServeur(env, corps) {
+  const avant = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]))
+  Object.assign(process.env, env)
+  const remettre = () => {
+    for (const [k, v] of Object.entries(avant)) if (v === undefined) delete process.env[k]
+    else process.env[k] = v
+  }
+  try {
+    const r = corps()
+    if (r?.then) return r.finally(remettre)
+    remettre()
+    return r
+  } catch (e) {
+    remettre()
+    throw e
+  }
+}
+const SERVEUR_SMTP = { SMTP_HOST: "smtp.serveur.exemple", SMTP_PORT: "465", SMTP_SECURE: "1", EMAIL_EXPEDITEUR: "usine@serveur.exemple", SMTP_USER: "compte-du-serveur", SMTP_PASS: "mot-de-passe-du-serveur" }
+const cleDe = (e, nom) => e.services.find((s) => s.id === "smtp").cles.find((c) => c.nom === nom)
+
+test("emails : le serveur d'envoi vient de la console, les autres champs montrent ce qui sert vraiment", () => avecServeur(SERVEUR_SMTP, () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    poserService(ctx, "SMTP_HOST", "smtp.console.exemple", "admin@exemple.fr", {}, regler)
+    const e = etatServices(ctx, instance)
+    // Le bloc de la console sert : port, sécurité, expéditeur et identifiants du serveur ne servent plus.
+    for (const nom of ["SMTP_PORT", "SMTP_SECURE", "EMAIL_EXPEDITEUR", "SMTP_USER", "SMTP_PASS"]) {
+      const c = cleDe(e, nom)
+      assert.equal(c.source, "aucune", nom)
+      assert.equal(c.serveur, false, `${nom} ne se présente plus comme « posée sur le serveur »`)
+      if (!c.secret) assert.equal(c.valeur, "", nom)
+    }
+    assert.equal(e.services.find((s) => s.id === "smtp").complet, false, "sans expéditeur, l'envoi n'est pas complet")
+    // Ce qu'on adopte depuis la console sert tel quel.
+    poserService(ctx, "EMAIL_EXPEDITEUR", "usine@console.exemple", "admin@exemple.fr", {}, regler)
+    assert.equal(cleDe(etatServices(ctx, instance), "EMAIL_EXPEDITEUR").valeur, "usine@console.exemple")
+    assert.equal(etatServices(ctx, instance).services.find((s) => s.id === "smtp").complet, true)
+  } finally {
+    fin()
+  }
+}))
+
+test("emails : une clé posée dans la console alors que le serveur d'envoi vient du serveur ne se dit pas en service", () => avecServeur(SERVEUR_SMTP, () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    const r = poserService(ctx, "SMTP_PASS", "bon-mot-de-passe", "admin@exemple.fr", {}, regler)
+    assert.match(r.message, /ne sert pas encore/)
+    assert.doesNotMatch(r.message, /dès maintenant/)
+    const c = cleDe(etatServices(ctx, instance), "SMTP_PASS")
+    assert.equal(c.en_attente, true)
+    assert.equal(blocCourriel(ctx), null, "le serveur sert toujours, en bloc")
+    // Le serveur d'envoi posé ici : la console prend la main, et le dit pour ce qui manque.
+    const hote = poserService(ctx, "SMTP_HOST", "smtp.console.exemple", "admin@exemple.fr", {}, regler)
+    // Le mot de passe vient d'être posé ici ; l'expéditeur et l'identifiant du serveur ne servent plus.
+    assert.match(hote.message, /Il manque encore ici l'expéditeur et l'identifiant \(ceux du serveur ne servent plus\)/)
+    assert.equal(cleDe(etatServices(ctx, instance), "SMTP_PASS").en_attente, false)
+  } finally {
+    fin()
+  }
+}))
+
+test("emails : le mot de passe n'est jamais gardé en partie, ni affiché", () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    poserService(ctx, "SMTP_PASS", "Lyon-Rhone", "admin@exemple.fr", {}, regler)
+    const brut = ctx.db.prepare("SELECT valeur FROM reglages WHERE cle = 'service_SMTP_PASS'").get().valeur
+    assert.ok(!brut.includes("hone") && !brut.includes("Lyon") && !("fin" in JSON.parse(brut)), brut)
+    assert.equal(cleDe(etatServices(ctx, instance), "SMTP_PASS").console.fin, null)
+    // Une entrée d'avant (avec sa fin en clair) ne la montre plus non plus.
+    ctx.db.prepare("UPDATE reglages SET valeur = ? WHERE cle = 'service_SMTP_PASS'").run(JSON.stringify({ ...JSON.parse(brut), fin: "hone" }))
+    assert.equal(cleDe(etatServices(ctx, instance), "SMTP_PASS").console.fin, null)
+  } finally {
+    fin()
+  }
+})
+
+test("Slack : chaque pose dit ce qui se passe vraiment (canal, administrateurs, jeton qui manque)", () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    ctx.relancerSlack = async () => {}
+    assert.equal(poserService(ctx, "SLACK_CANAL", "C0123456789", "admin@exemple.fr", {}, regler).message, "Canal enregistré : pris en compte dès le prochain message.")
+    assert.match(poserService(ctx, "ADMIN_USER_IDS", "U0123456789", "admin@exemple.fr", {}, regler).message, /^Administrateurs enregistrés : pris en compte/)
+    assert.match(poserService(ctx, "SLACK_BOT_TOKEN", BOT, "admin@exemple.fr", {}, regler).message, /Il manque encore le jeton de l'application/)
+    assert.match(poserService(ctx, "SLACK_APP_TOKEN", APP, "admin@exemple.fr", {}, regler).message, /la connexion à Slack se rouvre/)
+  } finally {
+    fin()
+  }
+})
+
+test("Slack : des relances rapprochées passent en file ; la dernière l'emporte, aucune connexion orpheline", async () => {
+  // Une fausse connexion : démarrer dure 30 ms, arrêter ferme celle qui est tenue (comme arreterSlack).
+  const ouvertes = new Set()
+  let tenue = null
+  let enMemeTemps = 0
+  let max = 0
+  const ctx = { config: { secrets: { slackBot: "bot-1", slackApp: "app-1" } } }
+  const demarrer = async (c) => {
+    enMemeTemps++
+    max = Math.max(max, enMemeTemps)
+    const cnx = `${c.config.secrets.slackBot}+${c.config.secrets.slackApp}`
+    await new Promise((r) => setTimeout(r, 30))
+    ouvertes.add(cnx)
+    tenue = cnx
+    enMemeTemps--
+  }
+  const arreter = async () => {
+    if (tenue) ouvertes.delete(tenue)
+    tenue = null
+  }
+  const journal = console.log
+  console.log = () => {}
+  try {
+    const relancer = fileDeRelance(ctx, { demarrer, arreter })
+    const a = relancer()
+    ctx.config.secrets.slackBot = "bot-2"
+    const b = relancer()
+    ctx.config.secrets.slackApp = "app-2"
+    const c = relancer()
+    await Promise.all([a, b, c])
+    assert.equal(max, 1, "une seule relance à la fois")
+    assert.deepEqual([...ouvertes], ["bot-2+app-2"], "une seule connexion, avec les derniers jetons")
+    // Débrancher pendant un démarrage : la coupure passe après, et ferme tout.
+    const d = relancer()
+    ctx.config.secrets.slackBot = ""
+    const e = relancer()
+    await Promise.all([d, e])
+    assert.deepEqual([...ouvertes], [], "débranché : plus aucune connexion")
+  } finally {
+    console.log = journal
   }
 })

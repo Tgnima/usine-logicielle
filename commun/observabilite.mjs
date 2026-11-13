@@ -214,13 +214,17 @@ export function creerObservabilite({
   }
 
   const files = { erreurs: [], evenements: [], journaux: [] }
-  const compteNeuf = () => ({ envoyes: 0, echecs: 0, perdus: 0, ignores: 0, joignable: null, dernier_ok: null, dernier_echec: null })
+  // premier_echec : le début de la panne en cours (le premier échec depuis le dernier envoi réussi).
+  const compteNeuf = () => ({ envoyes: 0, echecs: 0, perdus: 0, ignores: 0, joignable: null, dernier_ok: null, premier_echec: null, dernier_echec: null })
   const comptes = Object.fromEntries(["erreurs", "evenements", "journaux", "battement"].map((c) => [c, compteNeuf()]))
   let minuterie = null
   let vidage = null
   let sentryEnPauseJusqua = 0
   const vues = new Map() // empreinte d'une erreur -> dernier envoi (doublons : une fois par heure)
   let fenetre = { debut: Date.now(), n: 0 }
+  // La génération des clés de chaque service : un envoi parti avec une ancienne clé ne compte plus
+  // pour la nouvelle (sa réponse peut arriver après le changement).
+  const generation = { sentry: 0, posthog: 0 }
   cles({ sentryDsn, posthogJeton, posthogHote })
 
   // Poser les clés. Une clé qui change remet à zéro les compteurs de son service (ils décrivent
@@ -237,8 +241,13 @@ export function creerObservabilite({
       for (const c of ["erreurs", "battement"]) comptes[c] = compteNeuf()
       sentryEnPauseJusqua = 0
       vues.clear()
+      fenetre = { debut: Date.now(), n: 0 } // le plafond horaire repart de zéro avec la nouvelle clé
+      generation.sentry += 1
     }
-    if (change.posthog) for (const c of ["evenements", "journaux"]) comptes[c] = compteNeuf()
+    if (change.posthog) {
+      for (const c of ["evenements", "journaux"]) comptes[c] = compteNeuf()
+      generation.posthog += 1
+    }
     if (!dsn) files.erreurs.length = 0
     if (!jeton) files.evenements.length = files.journaux.length = 0
     return change
@@ -267,7 +276,9 @@ export function creerObservabilite({
       if (c.joignable === false) signaler(`Observabilité : ${LIBELLES[canal]} de nouveau envoyés.`)
       c.envoyes += n
       c.dernier_ok = new Date().toISOString()
+      c.premier_echec = null
     } else {
+      if (c.joignable !== false || !c.premier_echec) c.premier_echec = new Date().toISOString()
       if (c.joignable !== false) signaler(`Observabilité : envoi des ${LIBELLES[canal]} impossible (${nettoyer(detail, 200)}) ; les suivants sont ignorés sans bruit jusqu'au retour.`)
       c.echecs += n
       c.dernier_echec = { le: new Date().toISOString(), detail: nettoyer(detail, 200) }
@@ -275,14 +286,18 @@ export function creerObservabilite({
     c.joignable = ok
   }
   async function poster(canal, url, corps, entetes, n) {
+    const famille = canal === "evenements" || canal === "journaux" ? "posthog" : "sentry"
+    const g = generation[famille]
+    // La clé a changé pendant l'envoi : la réponse décrit l'ancienne, les compteurs de la nouvelle n'en tiennent pas compte.
+    const noter = (ok, detail) => g === generation[famille] && constater(canal, ok, n, detail)
     try {
       const res = await envoyer(url, { method: "POST", headers: entetes, body: corps, signal: AbortSignal.timeout(delaiMs) })
       await res.body?.cancel?.().catch(() => {})
-      if (res.status === 429 && canal === "erreurs") sentryEnPauseJusqua = Date.now() + (Number(res.headers?.get?.("retry-after")) || 60) * 1000
-      constater(canal, res.ok, n, res.ok ? "" : `HTTP ${res.status}`)
+      if (res.status === 429 && canal === "erreurs" && g === generation.sentry) sentryEnPauseJusqua = Date.now() + (Number(res.headers?.get?.("retry-after")) || 60) * 1000
+      noter(res.ok, res.ok ? "" : `HTTP ${res.status}`)
       return res.ok
     } catch (e) {
-      constater(canal, false, n, e?.name === "TimeoutError" ? `pas de réponse en ${delaiMs} ms` : e?.message ?? String(e))
+      noter(false, e?.name === "TimeoutError" ? `pas de réponse en ${delaiMs} ms` : e?.message ?? String(e))
       return false
     }
   }

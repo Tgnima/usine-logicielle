@@ -308,3 +308,39 @@ test("etat : l'hôte PostHog (public) se lit, jamais une clé", () => {
   assert.equal(o.etat().posthog_hote, "ph.exemple.fr")
   assert.ok(!e.includes("cle0publique") && !e.includes(JETON), e)
 })
+
+test("reconfigurer : une nouvelle clé Sentry repart d'un plafond horaire vide", async () => {
+  const f = fauxFetch(() => new Response(null, { status: 403 }))
+  const o = instance({ fetch: f, erreursParHeure: 3 })
+  for (let i = 0; i < 3; i++) o.erreur(new Error(`ancienne ${"abc"[i]}`))
+  await o.vider()
+  assert.equal(o.erreur(new Error("de trop")), false, "le plafond est atteint avec l'ancienne clé")
+  o.reconfigurer({ sentryDsn: DSN.replace("cle0publique", "cle1nouvelle") })
+  assert.equal(o.erreur(new Error("avec la nouvelle clé")), true, "la nouvelle clé n'hérite pas du plafond de l'ancienne")
+})
+
+test("reconfigurer : la réponse d'un envoi parti avec l'ancienne clé ne compte pas pour la nouvelle", async () => {
+  let repondre
+  const f = fauxFetch(() => new Promise((r) => (repondre = r)))
+  const o = instance({ fetch: f })
+  const ancien = o.battement("usine-orchestrateur")
+  o.reconfigurer({ sentryDsn: DSN.replace("cle0publique", "cle1nouvelle") })
+  repondre(new Response(null, { status: 403 }))
+  await ancien
+  assert.deepEqual([o.etat().battement.joignable, o.etat().battement.echecs], [null, 0], "le refus de l'ancienne clé ne rend pas la nouvelle « à vérifier »")
+})
+
+test("une panne garde l'heure de son début, jusqu'au prochain envoi réussi", async () => {
+  let statut = 403
+  const o = instance({ fetch: fauxFetch(() => new Response(null, { status: statut })) })
+  await o.battement("usine-orchestrateur")
+  const debut = o.etat().battement.premier_echec
+  assert.ok(debut)
+  await new Promise((r) => setTimeout(r, 5))
+  await o.battement("usine-orchestrateur")
+  assert.equal(o.etat().battement.premier_echec, debut, "le début de la panne ne bouge pas")
+  assert.notEqual(o.etat().battement.dernier_echec.le, debut)
+  statut = 202
+  await o.battement("usine-orchestrateur")
+  assert.equal(o.etat().battement.premier_echec, null)
+})

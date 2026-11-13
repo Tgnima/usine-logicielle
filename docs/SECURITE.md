@@ -101,8 +101,14 @@ les secrets et l'installation. Les corrections sont dans la branche `securite/au
 ## Les clés réglées dans la console (Sentry, PostHog)
 
 - **Au repos**, dans le coffre de la console (AES-256-GCM, scellé par AXMARIL quand il est
-  branché), comme les clés des IA. La console ne renvoie que les 4 derniers caractères, la date
-  et l'auteur ; chaque pose est notée au journal.
+  branché), comme les clés des IA. La console ne renvoie que la date, l'auteur et les 4 derniers
+  caractères d'une clé (jamais ceux du mot de passe SMTP, ni gardés ni affichés) ; chaque pose
+  est notée au journal.
+- **Envoi d'emails de l'usine** (invitations, test, email d'essai) : toujours chiffré. TLS direct
+  (sécurité « 1 »), sinon STARTTLS exigé (`requireTLS`, `courriel.mjs`) : un serveur qui ne le
+  propose pas, ou un intermédiaire qui retire l'annonce, fait échouer la connexion avant
+  l'identification (test : `courriel-tls.test.mjs`). Les applications reçoivent `SMTP_SECURE` tel
+  quel ; leur envoi suit le code de leur brique.
 - **Registre à part** (`CLES_SERVICES`, `orchestrateur/src/services.mjs`) : ces clés ne partent
   jamais dans l'environnement des travaux de l'atelier ni du vérificateur, où tourne le code des
   produits (test : `services.test.mjs`).

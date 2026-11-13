@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { DatabaseSync } from "node:sqlite"
-import { appliquerAuxApplications, applicationsEtCles, contenuBoite, couperService, etatServices, poserService, retirerService, versionBoite } from "../src/services.mjs"
+import { appliquerAuxApplications, applicationsEtCles, contenuBoite, couperService, etatServices, poserService, reprendreService, retirerService, valeurService, versionBoite } from "../src/services.mjs"
 
 const DSN = "https://0123456789abcdef0123456789abcdef@o4500000000000001.ingest.de.sentry.io/4500000000000002"
 const JETON = "phc_jetondetestjetondetest1234WXYZ"
@@ -98,6 +98,99 @@ test("Appliquer : confirmation exigée ; seules les applications en retard sont 
     await new Promise((f) => setTimeout(f, 20))
     assert.deepEqual(appels.map((a) => [a.chemin, a.options.viaPR]), [["production/demo-a.json", true]])
     assert.ok(!JSON.stringify(appels).includes("0123456789abcdef"), "rien de secret ne part sur GitHub")
+  } finally {
+    fin()
+  }
+})
+
+const ecrireStatut = (ctx, statut) => {
+  mkdirSync(ctx.config.etatDir, { recursive: true })
+  writeFileSync(join(ctx.config.etatDir, "statut.json"), JSON.stringify(statut))
+}
+
+test("la version ne change que si la boîte change : jamais pour Slack, ni pour une valeur reposée à l'identique", () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    ctx.config.secrets = { ...ctx.config.secrets, slackBot: "", slackApp: "" }
+    ctx.config.serveur = { slackCanal: "", slackAdmins: "" }
+    poserService(ctx, "SENTRY_DSN", DSN, "admin@exemple.fr", {}, regler)
+    ecrireStatut(ctx, { "production/demo-a": { etat: "ok", conteneur: "usine-prod-demo-a-blue", boite: 1 } })
+    assert.equal(versionBoite(ctx), 1)
+    poserService(ctx, "SLACK_CANAL", "C0123456789", "admin@exemple.fr", {}, regler)
+    poserService(ctx, "SENTRY_DSN", DSN, "admin@exemple.fr", {}, regler) // la même clé
+    retirerService(ctx, "SMTP_PASS", "admin@exemple.fr", regler) // jamais posée
+    assert.equal(versionBoite(ctx), 1, "rien de neuf pour le déployeur ni pour les applications")
+    assert.deepEqual(applicationsEtCles(ctx).map((a) => a.a_jour), [true], "l'application reste à jour")
+    assert.equal(etatServices(ctx, instance).applications.a_faire, 0, "« Appliquer » n'est pas proposé")
+  } finally {
+    fin()
+  }
+})
+
+test("une mise en ligne en échec : l'ancienne version, toujours servie avec ses anciennes clés, reste comptée en retard", () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    poserService(ctx, "SENTRY_DSN", DSN, "admin@exemple.fr", {}, regler)
+    couperService(ctx, "sentry", "admin@exemple.fr", regler)
+    ecrireStatut(ctx, { "production/demo-a": { etat: "echec", conteneur: "usine-prod-demo-a-blue", couleur: "blue", boite: 1, message: "aucun service d'envoi" } })
+    const e = etatServices(ctx, instance)
+    assert.deepEqual({ total: e.applications.total, a_jour: e.applications.a_jour, a_faire: e.applications.a_faire }, { total: 1, a_jour: 0, a_faire: 1 })
+    assert.deepEqual(e.applications.en_retard, [{ nom: "Démo A", environnement: "production", echec: true, en_cours: false }])
+  } finally {
+    fin()
+  }
+})
+
+test("Appliquer : une application redemandée reste « en cours » jusqu'à ce que le déployeur la prenne ; un second clic ne la refait pas", async () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    poserService(ctx, "SENTRY_DSN", DSN, "admin@exemple.fr", {}, regler)
+    ecrireStatut(ctx, { "production/demo-a": { etat: "ok", conteneur: "usine-prod-demo-a-blue", boite: null, demande_le: "2026-11-01T00:00:00.000Z" } })
+    const demandes = []
+    const redemander = async (_c, chemin) => {
+      const le = `2026-11-13T12:00:0${demandes.length}.000Z`
+      demandes.push(chemin)
+      return le
+    }
+    await appliquerAuxApplications(ctx, "admin@exemple.fr", { confirme: true, redemander })
+    await new Promise((f) => setTimeout(f, 20))
+    assert.deepEqual(demandes, ["production/demo-a.json"])
+    let e = etatServices(ctx, instance).applications
+    assert.deepEqual([e.en_cours, e.a_faire], [true, 0], "demandée, pas encore prise : pas de bouton")
+    assert.match((await appliquerAuxApplications(ctx, "admin@exemple.fr", { confirme: true, redemander })).message, /déjà en cours/)
+    assert.equal(demandes.length, 1, "aucune seconde demande")
+    // Le déployeur la prend (il recopie la date demandée), puis la met en ligne avec la dernière boîte.
+    ecrireStatut(ctx, { "production/demo-a": { etat: "en_cours", conteneur: "usine-prod-demo-a-blue", boite: null, demande_le: "2026-11-13T12:00:00.000Z" } })
+    assert.equal(etatServices(ctx, instance).applications.en_cours, true)
+    ecrireStatut(ctx, { "production/demo-a": { etat: "ok", conteneur: "usine-prod-demo-a-green", boite: versionBoite(ctx), demande_le: "2026-11-13T12:00:00.000Z" } })
+    e = etatServices(ctx, instance).applications
+    assert.deepEqual([e.a_jour, e.total, e.en_cours], [1, 1, false])
+  } finally {
+    fin()
+  }
+})
+
+test("couper garde la valeur de la console ; « Ne plus couper » la rétablit ; « Retirer » efface tout", () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    poserService(ctx, "SENTRY_DSN", DSN, "admin@exemple.fr", {}, regler)
+    couperService(ctx, "sentry", "admin@exemple.fr", regler)
+    assert.deepEqual(valeurService(ctx, "SENTRY_DSN"), { valeur: "", source: "coupe" })
+    assert.equal(lireBoite(ctx).cles.SENTRY_DSN, "", "coupé : le déployeur n'envoie plus rien")
+    const c = etatServices(ctx, instance).services.find((s) => s.id === "sentry").cles[0]
+    assert.ok(c.coupe && c.console, "la coupure et la valeur de la console, toutes deux montrées")
+    const r = reprendreService(ctx, "sentry", "admin@exemple.fr", regler)
+    assert.match(r.message, /valeur de la console/)
+    assert.deepEqual(valeurService(ctx, "SENTRY_DSN"), { valeur: DSN, source: "console" })
+    assert.equal(lireBoite(ctx).cles.SENTRY_DSN, DSN)
+    couperService(ctx, "sentry", "admin@exemple.fr", regler)
+    retirerService(ctx, "SENTRY_DSN", "admin@exemple.fr", regler)
+    assert.equal(valeurService(ctx, "SENTRY_DSN").source, "aucune", "ni valeur ni coupure : le serveur (ici, rien)")
+    // Une coupure écrite à l'ancienne (à la place de la valeur) se lit encore, et « Ne plus couper » l'efface.
+    ctx.db.prepare("INSERT INTO reglages (cle, valeur) VALUES ('service_POSTHOG_TOKEN', ?)").run(JSON.stringify({ coupe: true, le: "2026-11-12T10:00:00.000Z", par: "admin@exemple.fr" }))
+    assert.equal(valeurService(ctx, "POSTHOG_TOKEN").source, "coupe")
+    reprendreService(ctx, "posthog", "admin@exemple.fr", regler)
+    assert.equal(valeurService(ctx, "POSTHOG_TOKEN").source, "aucune")
   } finally {
     fin()
   }
