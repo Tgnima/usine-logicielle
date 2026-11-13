@@ -247,7 +247,10 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .options-decision { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px }
 .choix-decision { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--rayon-m); border: 1px solid var(--trait); background: var(--surface); color: var(--encre); font: inherit; cursor: pointer; min-height: 44px }
 .choix-decision span { font-size: 13px; color: var(--doux) }
-.choix-decision:hover { border-color: var(--accent) }
+.choix-decision:hover:not(:disabled) { border-color: var(--accent) }
+/* Pendant les 5 s avant l'envoi : les options restent à leur place, inertes ; celle qui part est marquée « choisie ». */
+.choix-decision:disabled { cursor: not-allowed; opacity: .6 }
+.choix-decision.choisie:disabled { opacity: 1 }
 .choix-decision.recommande { border: 2px solid var(--accent); background: var(--accent-fond) }
 
 /* Le plan en lecture. */
@@ -487,6 +490,32 @@ td.modeles-fonction .sous { max-width: 200px }
 .causes li { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 4px 10px; align-items: center }
 .causes .jauge { grid-column: 1 / -1 }
 @media (max-width: 720px) { .chiffres .chiffre { font-size: 24px } }
+.chiffres .avant { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--trait-2) }
+.echecs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; font-size: 14px }
+.echecs li { display: grid; grid-template-columns: auto minmax(0, 1fr) 40px; gap: 4px 10px; align-items: center }
+.echec-cause { overflow-wrap: anywhere }
+.echec-detail { grid-column: 1 / -1; font-size: 13px }
+
+/* --- La file d'attention : À décider, À débloquer, À réparer --- */
+.attente-accueil { max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 10px }
+.compteurs-attente { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px }
+.compteur-attente { display: flex; align-items: baseline; gap: 8px; min-height: 44px; padding: 10px 14px; border: 1px solid var(--signal-trait); border-radius: var(--rayon-l); background: var(--surface); color: var(--encre); text-decoration: none; font-size: 14px; font-weight: 600 }
+.compteur-attente strong { font-size: 22px; color: var(--signal) }
+.compteur-attente.reparer { border-color: var(--danger) }
+.compteur-attente.reparer strong { color: var(--danger) }
+.compteur-attente.vide { border-color: var(--trait); color: var(--doux) }
+.compteur-attente.vide strong { color: var(--doux) }
+.compteur-attente:hover { border-color: var(--accent) }
+.ligne-coupee { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.groupe-attente { display: flex; flex-direction: column; gap: 8px }
+.groupe-attente.reparer h3 { color: var(--danger) }
+.envoye { margin: 0; font-size: 14px; font-weight: 600; color: var(--ok) }
+.decision-attente { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 14px; border-radius: var(--rayon-m); background: var(--accent-fond); color: var(--encre); font-size: 14px; font-weight: 600 }
+.enregistrement { margin: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 12px; border-radius: var(--rayon-m); background: var(--surface-2); font-size: 14px }
+.enregistrement dt { font-size: 12px; color: var(--doux) }
+.enregistrement dd { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere }
+/* Sur téléphone, les trois compteurs restent côte à côte : le nombre au-dessus de son mot. */
+@media (max-width: 600px) { .compteurs-attente { gap: 8px } .compteur-attente { flex-direction: column; align-items: flex-start; gap: 0; padding: 8px 10px; font-size: 13px } }
 
 /* --- Publics : création guidée, envoi depuis sa machine, champs qui suivent leur texte --- */
 textarea.champ { field-sizing: content; min-height: 4.5em; max-height: 70vh; resize: vertical; overflow-y: auto; line-height: 1.55 }

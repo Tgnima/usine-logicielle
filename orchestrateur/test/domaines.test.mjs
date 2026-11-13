@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
-import { ajouterDomaine, hoteValide, instructionsDns, listerDomaines, ouvrirDomaines } from "../src/domaines.mjs"
+import { ajouterDomaine, enregistrementDns, hoteValide, instructionsDns, listerDomaines, ouvrirDomaines } from "../src/domaines.mjs"
 
 test("une adresse est nettoyée (lien Slack, https, majuscules) puis validée", () => {
   assert.deepEqual(hoteValide("<http://App.Client.fr|App.Client.fr>", "usine.test"), { ok: true, hote: "app.client.fr" })
@@ -15,6 +15,21 @@ test("une adresse est nettoyée (lien Slack, https, majuscules) puis validée", 
 test("les instructions DNS donnent le bon nom et l'adresse IP", () => {
   assert.match(instructionsDns("app.client.fr", ["45.93.21.17"]), /nom \*app\*.*45\.93\.21\.17/s)
   assert.match(instructionsDns("client.fr", ["45.93.21.17"]), /nom \*@\*/)
+})
+
+test("sous un suffixe à deux niveaux (asso.fr, co.uk), le nom à créer reste juste ; sinon, le nom complet seul", () => {
+  const nom = (hote) => enregistrementDns(hote).nom
+  assert.equal(nom("exemple-essai.asso.fr"), "@", "le domaine lui-même")
+  assert.equal(nom("www.exemple-essai.asso.fr"), "www")
+  assert.equal(nom("boutique-essai.co.uk"), "@")
+  assert.equal(nom("app.boutique-essai.co.uk"), "app")
+  assert.equal(nom("app.client.fr"), "app", "le cas courant ne change pas")
+  assert.equal(nom("client.fr"), "@")
+  // Un second niveau générique (com, co…) sous un suffixe inconnu de la liste : le nom serait deviné.
+  assert.equal(nom("app.exemple.com.zz"), null)
+  assert.match(instructionsDns("app.exemple.com.zz", []), /nom complet `app\.exemple\.com\.zz`/)
+  assert.doesNotMatch(instructionsDns("app.exemple.com.zz", []), /nom \*/)
+  assert.match(instructionsDns("www.exemple-essai.asso.fr", []), /nom \*www\* \(soit `www\.exemple-essai\.asso\.fr`\)/)
 })
 
 test("un domaine se demande seulement pour un produit en production, une fois", async () => {

@@ -25,7 +25,7 @@ import { repondreDansLeFil } from "./conversation.mjs"
 import { decrireApercu, garderApercu, mettreAJourUsine, prolongerApercu, retirerApercu, supprimerProjet } from "./cycle.mjs"
 import { etatUsine, lireSanteServeur, resumeEtat } from "./sante.mjs"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evolution, lireReglage, montant, reglagesCouts } from "./couts.mjs"
-import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
+import { ajouterDomaine, enregistrementDns, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
 import { envoiDisponible } from "./courriel.mjs"
 import { ajouterConnecteur, effacerCleConnecteur, listerConnecteurs, poserCleConnecteur, reglerConnecteur, retirerConnecteur, testerConnecteur } from "./connecteurs.mjs"
@@ -40,6 +40,8 @@ import { etatDrive, poserCompteDrive, retirerCompteDrive, testerDrive } from "./
 import { MODES_REPRISE } from "./reprise.mjs"
 import { lireReorientation } from "./reorientation.mjs"
 import { ecartsEnCorrections, lireRecette, pointsACorriger, propositionsRecette } from "./recette.mjs"
+import { elementsAttente } from "./attention.mjs"
+import { fileAttente } from "./visibilite.mjs"
 import { ETAPES_TACHE, attendDecision, etapeTache, normaliserQuestions, phase, presenterDecision } from "./presentation.mjs"
 import { GOUFFRE, SEUIL, etageAtteint, verdictPyramide } from "./pyramide.mjs"
 import { proteges } from "./profil.mjs"
@@ -114,21 +116,11 @@ function resumeProjet(ctx, p) {
   }
 }
 
+// La file d'attention sans les produits : Décider, Débloquer, et les pannes de l'usine (attention.mjs).
+// fileAttente et visibilite (visibilite.mjs) y ajoutent les produits : l'accueil, le titre de l'onglet,
+// les notifications et la page Visibilité lisent ainsi la même liste.
 function aTraiter(ctx) {
-  const { db } = ctx
-  const liste = []
-  for (const e of db.prepare("SELECT e.*, p.nom FROM escalades e JOIN projets p ON p.id = e.projet_id WHERE e.statut = 'ouverte' ORDER BY e.id").all()) {
-    const t = e.tache_id ? obtenir(db, "taches", e.tache_id) : null
-    liste.push({ type: "decision", projet: e.projet_id, titre: `${e.nom} · décision attendue`, detail: `${t ? `${t.cle} : ` : ""}${RAISONS[e.raison] ?? e.raison}`, depuis: iso(e.cree_le) })
-  }
-  // depuis (ISO) : la dernière modification du projet, à peu près le moment où il s'est mis à attendre.
-  for (const p of db.prepare("SELECT * FROM projets WHERE statut IN ('plan_a_valider', 'questions', 'livre') ORDER BY id DESC").all()) {
-    const plan = lirePlan(p)
-    if (p.statut === "plan_a_valider") liste.push({ type: "plan", projet: p.id, titre: `${p.nom} · ${lireReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches`, depuis: iso(p.maj_le) })
-    if (p.statut === "questions") liste.push({ type: "questions", projet: p.id, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "", depuis: iso(p.maj_le) })
-    if (p.statut === "livre") liste.push({ type: "livre", projet: p.id, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger", depuis: iso(p.maj_le) })
-  }
-  return liste
+  return elementsAttente(ctx, { raisons: RAISONS })
 }
 
 async function resume(ctx) {
@@ -141,7 +133,7 @@ async function resume(ctx) {
   const enCours = db.prepare("SELECT COUNT(*) AS n FROM taches WHERE statut IN ('en_cours', 'verification')").get().n
   return {
     usine: { base: config.domaine.base, portail: adressePortail(config), arretee: existsSync(join(config.dataDir, "STOP")), taches_en_cours: enCours, mise_a_jour: s?.mise_a_jour ?? null },
-    a_traiter: aTraiter(ctx),
+    a_traiter: fileAttente(ctx, { aTraiter: aTraiter(ctx) }),
     projets,
     serveur: s ? { disque: s.disque?.pct ?? null, memoire: s.memoire ? Math.round(100 - (s.memoire.dispo_mo / s.memoire.total_mo) * 100) : null } : null,
     couts: { mois: montant(rc, b.api), reel: montant(rc, b.reel), budget: budget > 0 ? montant(rc, budget) : null, pct: budget > 0 ? Math.round((b.api / budget) * 100) : null },
@@ -188,7 +180,8 @@ async function detailProjet(ctx, id) {
     production_choix: choixProduction(config, p.production ? JSON.parse(p.production) : null),
     production_texte: p.production ? decrireChoix(JSON.parse(p.production)) : null,
     domaines: listerDomaines(db, id),
-    domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id),
+    // nom : le nom à créer chez le fournisseur (null quand seul le nom complet est sûr, domaines.mjs).
+    domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id).map((d) => ({ ...d, nom: enregistrementDns(d.hote).nom })),
     ip_serveur: (await ipServeur(config).catch(() => []))[0] ?? null,
     // Chaque capture porte son lot : le volet « Produit » les montre lot par lot.
     captures: capturesProjet(ctx, id).map((c) => ({ ...c, lot: t.find((x) => x.cle === c.tache)?.lot ?? null })),

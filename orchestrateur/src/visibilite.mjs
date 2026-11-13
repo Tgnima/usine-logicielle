@@ -2,7 +2,8 @@
 // produit, ce que fait l'usine en ce moment, et le bilan des 7 derniers jours.
 //
 // Sources, toutes en lecture seule :
-//   - la base : escalades, tâches, journal (fusion, refus, escalade), consommations ;
+//   - la base : escalades, tâches, journal (fusion, refus, escalade ; erreurs et mises en ligne pour
+//     les échecs par cause), consommations ; la file d'attention vient d'attention.mjs ;
 //   - /app/etat/sante.json, écrit par le déployeur : serveur et sonde des produits (champ
 //     « applications », deployeur/sonde.mjs) ;
 //   - /app/etat/statut.json, écrit par le déployeur : le dernier déploiement de chaque produit ;
@@ -15,6 +16,8 @@ import { adresses } from "./config.mjs"
 import { lireReglage, montant, reglagesCouts, versDevise } from "./couts.mjs"
 import { limitesEnCours, MODES, modeleJuge, MOTEURS_RELAIS, nomMode, relais } from "./moteurs.mjs"
 import { lireSanteServeur, SONDE_PERIMEE_S } from "./sante.mjs"
+import { groupeDe, ordonner, produitsAReparer } from "./attention.mjs"
+import { comparerTaux, regrouperEchecs, signatureEchec } from "./bilan.mjs"
 
 // Les jours du bilan se comptent à l'heure de Paris : un refus à 00 h 30 le 9 novembre (heure
 // de Paris) compte le 9, même s'il est noté le 8 à 23 h 30 en temps universel.
@@ -188,22 +191,16 @@ function parcProduits(sante, produits, config, maintenant) {
 }
 
 // --- Ce qui t'attend -------------------------------------------------------------------
-// Les décisions, plans, questions et livraisons (aTraiter de console.mjs), et les produits en
-// panne ou en alerte. Une décision passe d'abord, puis ce qui est cassé, puis le reste.
-const ORDRE_ATTENTE = { decision: 0, panne: 1, alerte: 2, sonde: 3, plan: 4, questions: 5, livre: 6 }
+// La file d'attention (attention.mjs) : Décider, Débloquer, Réparer. aTraiter en donne tout sauf
+// les produits (elementsAttente, par console.mjs) ; ici s'ajoutent les produits en panne et la sonde.
+// La même fonction sert l'accueil (fileAttente) et cette page : le même total partout.
 function ceQuiAttend(aTraiter, parc) {
-  const liste = aTraiter.map((x) => ({ ...x, depuis: iso(x.depuis), lien: `#/projets/${x.projet}` }))
-  const { sonde } = parc
-  if (sonde.muette) liste.push({ type: "sonde", projet: null, titre: "L'état des produits est inconnu", detail: "le serveur n'a pas pu lire l'état des applications à la dernière vérification", depuis: sonde.le, lien: "#/reglages/etat" })
-  else if (sonde.perimee) liste.push({ type: "sonde", projet: null, titre: "Les produits ne sont plus vérifiés", detail: "la dernière vérification des applications est trop ancienne : leur état réel est inconnu", depuis: sonde.le, lien: "#/reglages/etat" })
-  else {
-    for (const x of [...parc.productions, ...parc.apercus]) {
-      if (x.etat !== "panne" && x.etat !== "alerte") continue
-      const ou = x.environnement === "apercu" ? "aperçu" : "production"
-      liste.push({ type: x.etat, projet: x.projet_id, titre: `${x.nom} · ${ou} ${x.etat === "panne" ? "en panne" : "à surveiller"}`, detail: x.raison, depuis: null, lien: x.projet_id ? `#/projets/${x.projet_id}` : "#/reglages/etat" })
-    }
-  }
-  return liste.map((x, i) => [x, i]).sort(([a, i], [b, j]) => (ORDRE_ATTENTE[a.type] ?? 9) - (ORDRE_ATTENTE[b.type] ?? 9) || i - j).map(([x]) => x)
+  const liste = aTraiter.map((x) => ({ ...x, groupe: x.groupe ?? groupeDe(x.type), depuis: iso(x.depuis), lien: x.lien ?? `#/projets/${x.projet}` }))
+  return ordonner([...liste, ...produitsAReparer(parc)])
+}
+// La file complète, pour l'accueil, le titre de l'onglet et les notifications (GET /api/resume).
+export function fileAttente(ctx, { aTraiter = [], maintenant = Date.now() } = {}) {
+  return ceQuiAttend(aTraiter, parcProduits(lireSanteServeur(ctx.config), projetsParSlug(ctx.db), ctx.config, maintenant))
 }
 
 // --- Les modèles : qui fait quoi ---------------------------------------------------------
@@ -335,10 +332,98 @@ function usineMaintenant(ctx, sante, statut, produits, maintenant, processeurs) 
 
 // --- Les 7 derniers jours ---------------------------------------------------------------
 const CLES = { fusion: "fusions", refus: "refus", escalade: "escalades" }
+// Le coût d'une semaine, comme septJours l'écrit : sans décimale à partir de 100.
+const coutTexte = (rc, usd) => montant(rc, versDevise(rc, usd), { decimales: versDevise(rc, usd) >= 100 ? 0 : 2 })
+
+// La semaine d'avant, pour comparer : les 7 jours de Paris qui précèdent la fenêtre, comptés comme
+// septJours (fusions, refus, décisions, coût, calcul). Un essai est un contrôle : il finit en fusion
+// (réussi) ou en refus.
+function semaineAvant(ctx, maintenant) {
+  const { db, config } = ctx
+  const rc = reglagesCouts(db, config)
+  const jours = joursFenetre(maintenant, JOURS * 2).slice(0, JOURS)
+  const fenetre = new Set(jours)
+  const depuis = new Date(maintenant - (JOURS * 2 + 1) * 86_400_000).toISOString().slice(0, 19).replace("T", " ")
+  const dedans = (le) => fenetre.has(jourParis(dateDe(le)))
+  const t = { fusions: 0, refus: 0, escalades: 0 }
+  for (const e of db.prepare("SELECT type, le FROM journal WHERE type IN ('fusion', 'refus', 'escalade') AND le >= ?").all(depuis)) if (dedans(e.le)) t[CLES[e.type]] += 1
+  let usd = 0
+  let duree = 0
+  let inconnu = false
+  for (const c of db.prepare("SELECT cout_api_usd, duree_s, le FROM consommations WHERE le >= ?").all(depuis)) {
+    if (!dedans(c.le)) continue
+    if (c.cout_api_usd === null) inconnu = true
+    usd += c.cout_api_usd ?? 0
+    duree += c.duree_s ?? 0
+  }
+  const essais = t.fusions + t.refus
+  return { du: jours[0], au: jours.at(-1), ...t, essais, acceptes_pct: essais ? Math.round((t.fusions / essais) * 100) : null, cout_api: versDevise(rc, usd), cout_api_texte: coutTexte(rc, usd), cout_incomplet: inconnu, heures: Math.round(duree / 360) / 10 }
+}
+
+// Les échecs de la semaine, par cause (bilan.mjs) : les mises en ligne en échec (journal « livraison » et
+// « production », puis statut.json pour celles que le journal n'a pas) et les erreurs des projets (journal
+// « erreur »). Une réussite efface un échec passager plus ancien seulement si elle est du même projet et
+// du même environnement : un aperçu en ligne pour un aperçu, une mise en production pour la production,
+// une fusion, un plan reçu ou un socle prêt pour le reste. Un échec encore affiché par statut.json n'est
+// jamais effacé.
+const reussite = (e) => e.type === "fusion" || e.type === "analyse" || (["livraison", "production", "creation"].includes(e.type) && !/échec/i.test(e.message) && /en ligne|en production|prêt/i.test(e.message))
+const echec = (e) => e.type === "erreur" || (["livraison", "production"].includes(e.type) && /en échec/i.test(e.message))
+// L'environnement d'une ligne du journal : la production, l'aperçu (sa mise en ligne, ou sa livraison à
+// réessayer), sinon la fabrication (null).
+const environnementDe = (e) => (e.type === "production" || /^mise en production/i.test(e.message) ? "production" : e.type === "livraison" || /^(?:livraison|aperçu) du lot \d+/i.test(e.message) ? "apercu" : null)
+// Une livraison à réessayer : l'usine la relance seule toutes les 5 minutes, tant que le projet est en fabrication.
+const relanceeSeule = (e, projet) => e.type === "erreur" && /^livraison du lot \d+ à réessayer/i.test(e.message) && projet?.statut === "fabrication"
+// Le même échec déjà noté : même projet, même environnement, même cause, à moins de 30 minutes.
+const DOUBLON_MS = 30 * 60_000
+function echecsDeLaSemaine(ctx, produits, jours, maintenant) {
+  const { db, config } = ctx
+  const fenetre = new Set(jours)
+  const dansLaFenetre = (le) => Number.isFinite(le) && le <= maintenant && fenetre.has(jourParis(new Date(le)))
+  const depuis = new Date(maintenant - (JOURS + 1) * 86_400_000).toISOString().slice(0, 19).replace("T", " ")
+  const projets = new Map(db.prepare("SELECT id, nom, slug, statut FROM projets").all().map((p) => [p.id, p]))
+  const retirer = (id) => [projets.get(id)?.slug, projets.get(id)?.nom].filter(Boolean)
+  const nomDe = (id) => (id ? texte(projets.get(id)?.nom ?? `Projet ${id}`, TITRE_MAX) : "L'usine elle-même")
+  const echecs = []
+  const reussites = []
+  // Le plus récent, s'il y en a un.
+  const dejaNote = (projet, environnement, le, cause) => echecs.findLast((x) => x.projet === projet && x.environnement === environnement && Math.abs(x.le - le) < DOUBLON_MS && signatureEchec(x.message, { retirer: x.retirer }) === cause)
+  for (const e of db.prepare("SELECT type, message, le, projet_id FROM journal WHERE type IN ('erreur', 'livraison', 'production', 'fusion', 'analyse', 'creation') AND le >= ? ORDER BY id").all(depuis)) {
+    const le = dateDe(e.le).getTime()
+    if (!dansLaFenetre(le)) continue
+    const environnement = environnementDe(e)
+    if (reussite(e)) reussites.push({ le, projet: e.projet_id, environnement })
+    else if (echec(e)) {
+      const projet = e.projet_id ?? null
+      // Une mise en production ratée depuis la console est notée deux fois (« en échec », puis « refusée »
+      // avec le même message) : elle compte une fois.
+      if (e.type === "erreur" && environnement === "production" && dejaNote(projet, environnement, le, signatureEchec(e.message, { retirer: retirer(projet) }))) continue
+      echecs.push({ message: e.message, le, projet, environnement, nom: nomDe(projet), retirer: retirer(projet), reessaie: relanceeSeule(e, projets.get(projet)) })
+    }
+  }
+  for (const [cle, s] of Object.entries(lireStatut(config))) {
+    const m = /^(apercu|production)\/([a-z0-9-]+)$/.exec(cle)
+    if (!m || !s || typeof s !== "object" || s.etat !== "echec" || !s.message) continue
+    const le = dateDe(s.le).getTime()
+    if (!dansLaFenetre(le)) continue
+    const projet = produits.get(m[2])?.id ?? null
+    const r = [m[2], ...(projet ? retirer(projet) : [])]
+    // Déjà au journal : c'est cette ligne qui est toujours en échec. Elle ne s'efface plus.
+    const double = dejaNote(projet, m[1], le, signatureEchec(s.message, { retirer: r }))
+    if (double) {
+      double.actuel = true
+      continue
+    }
+    echecs.push({ message: String(s.message), le, projet, environnement: m[1], nom: projet ? nomDe(projet) : texte(m[2], TITRE_MAX), retirer: r, actuel: true })
+  }
+  const r = regrouperEchecs(echecs, reussites, { jour: (le) => jourParis(new Date(le)), aujourdhui: jours.at(-1), texte: enClair })
+  return { ...r, groupes: r.groupes.map((g) => ({ ...g, projets: g.projets.slice(0, 3), dernier: new Date(g.dernier).toISOString() })) }
+}
+
 function septJours(ctx, produits, maintenant) {
   const { db, config } = ctx
   const rc = reglagesCouts(db, config)
   const jours = joursFenetre(maintenant)
+  const avant = semaineAvant(ctx, maintenant)
   const fenetre = new Set(jours)
   // Une marge d'un jour en temps universel, puis le tri exact par jour de Paris.
   const depuis = new Date(maintenant - (JOURS + 1) * 86_400_000).toISOString().slice(0, 19).replace("T", " ")
@@ -398,6 +483,13 @@ function septJours(ctx, produits, maintenant) {
     du: jours[0],
     au: jours.at(-1),
     ...totaux,
+    // L'effectif d'abord : un essai est un contrôle, qui finit en fusion (réussi) ou en refus.
+    essais: totaux.fusions + totaux.refus,
+    // La semaine d'avant ; le taux de réussite ne se compare qu'avec assez d'essais des deux côtés.
+    precedente: avant,
+    comparaison: comparerTaux({ n: totaux.fusions, sur: totaux.fusions + totaux.refus }, { n: avant.fusions, sur: avant.essais }),
+    // Ce qui a échoué (mises en ligne, projets), regroupé par cause et par classe.
+    echecs: echecsDeLaSemaine(ctx, produits, jours, maintenant),
     // La part des contrôles qui laissent passer une fonction (une fusion suit un contrôle réussi).
     acceptes_pct: verifications ? Math.round((totaux.fusions / verifications) * 100) : null,
     cout_api: versDevise(rc, usd),
@@ -524,7 +616,7 @@ function projetsAvecTaches(db) {
 }
 
 // --- La page entière ---------------------------------------------------------------------
-// aTraiter : les décisions, plans, questions et livraisons en attente (console.mjs).
+// aTraiter : la file d'attention sans les produits (elementsAttente d'attention.mjs, par console.mjs).
 export function visibilite(ctx, { aTraiter = [], maintenant = Date.now(), processeurs = availableParallelism() } = {}) {
   const produits = projetsParSlug(ctx.db)
   const sante = lireSanteServeur(ctx.config)

@@ -197,6 +197,6 @@ case "${1:-}" in
   dechiffrer) dechiffrer ;;
   editer) editer ;;
   verifier) verifier ;;
-  axmaril) sudo_si_besoin install -d -m 0750 -o root -g "$GID_CONTENEURS" "$SORTIE"; cle_axmaril; echo "Pour l'appliquer : docker compose up -d orchestrateur" ;;
+  axmaril) sudo_si_besoin install -d -m 0750 -o root -g "$GID_CONTENEURS" "$SORTIE"; cle_axmaril; echo "Pour l'appliquer (l'orchestrateur ne lit la clé qu'à son démarrage) : docker compose restart orchestrateur" ;;
   *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

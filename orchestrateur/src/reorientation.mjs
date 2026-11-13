@@ -30,6 +30,9 @@ const LIVRES = ["livre", "en_production"]
 const cle = (projetId) => `reorientation_${Number(projetId)}`
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 const enPreparation = new Set() // les projets dont la suite est en train d'être refaite
+// L'analyste refait-il la suite du plan (ou attend-il la fin de la tâche en cours) ? Sinon, une
+// réorientation encore ouverte ne bougera plus seule (la file d'attention, attention.mjs).
+export const reorientationEnPreparation = (projetId) => [...enPreparation].some((id) => Number(id) === Number(projetId))
 
 export function lireReorientation(db, projetId) {
   try {

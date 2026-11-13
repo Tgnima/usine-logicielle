@@ -219,19 +219,20 @@ test("les productions et les aperçus, d'après la sonde", () => {
   assert.equal(sansProjet.age_s, null)
 })
 
-test("ce qui t'attend : la décision d'abord, puis la panne, l'alerte, et ce qui est prêt", () => {
+test("ce qui t'attend : À décider (la décision d'abord), puis À réparer (la panne) ; un produit à surveiller n'y est pas", () => {
   const aTraiter = [
     { type: "livre", projet: 3, titre: "Prêt'Asso · prêt à mettre en ligne", detail: "à mettre en ligne ou à corriger", depuis: "2026-11-09 02:35:00" },
     { type: "decision", projet: 2, titre: "Vingt-Cinq · décision attendue", detail: "la durée maximale du projet est atteinte", depuis: "2026-10-23 18:27:18" },
   ]
   const a = calcul({ aTraiter }).attend
-  assert.deepEqual(a.map((x) => x.type), ["decision", "panne", "alerte", "livre"])
+  assert.deepEqual(a.map((x) => [x.groupe, x.type]), [["decider", "decision"], ["decider", "livre"], ["reparer", "panne"]])
   assert.equal(a[0].depuis, "2026-10-23T18:27:18.000Z")
   assert.equal(a[0].lien, "#/projets/2")
-  assert.equal(a[1].titre, "Vingt-Cinq · aperçu en panne")
+  assert.equal(a[2].titre, "Vingt-Cinq · aperçu en panne")
+  assert.equal(a[2].cle, "produit:apercu/vingt-cinq")
   // Les raisons de la sonde, avec les mots de l'usine (ni « déploiement » ni « conteneur »).
-  assert.equal(a[1].detail, "redémarre sans arrêt (29 fois en 30 min, 13931 au total) · la dernière mise en ligne a échoué")
-  assert.equal(a[2].titre, "Prêt'Asso · aperçu à surveiller")
+  assert.equal(a[2].detail, "redémarre sans arrêt (29 fois en 30 min, 13931 au total) · la dernière mise en ligne a échoué")
+  assert.ok(!a.some((x) => /Prêt'Asso · aperçu/.test(x.titre)), "à surveiller : sa carte le montre dans Productions")
 })
 
 test("une sonde trop ancienne : états inconnus, une seule ligne d'alerte", () => {
