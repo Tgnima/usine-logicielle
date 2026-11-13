@@ -4,10 +4,10 @@
 // d'essai à date fixe (semaine d'avant, effectifs, échecs par cause).
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { SEUIL_COMPARAISON, classeEchec, classerEchec, comparerTaux, regrouperEchecs, signatureEchec } from "../src/bilan.mjs"
+import { SEUIL_COMPARAISON, classeEchec, classerEchec, comparerTaux, ligneUtile, regrouperEchecs, signatureEchec } from "../src/bilan.mjs"
 
 // Des messages tels que l'usine les note, anonymisés (produits, sha, numéros, adresses factices).
 const MESSAGES = {
@@ -20,12 +20,20 @@ const MESSAGES = {
     "API rate limit exceeded for installation ID 41234567. (403)",
     "Error: connect ETIMEDOUT 203.0.113.7:443",
     "Request failed with status code 503 (Service Unavailable)",
+    // Une coupure réseau, telle que la pile la donne (fabrique.mjs note error.stack).
+    "TypeError: fetch failed\n    at node:internal/deps/undici/undici:13510:13\n    at async executer (file:///app/src/travaux.mjs:29:5)",
+    "Livraison du lot 2 à réessayer : GitHub injoignable (GET /repos/exemple/prospecta/commits/main) : UND_ERR_CONNECT_TIMEOUT",
+    "Aperçu du lot 1 en échec : git fetch -q : fatal: unable to access 'https://github.com/exemple/prospecta.git/': Could not resolve host: github.com",
+    "GitHub 500 GET /repos/exemple/prospecta : ",
+    // La cause sur une ligne à part, après le contexte (fabrique.mjs, Push impossible).
+    "Error: Push impossible :\nTo une adresse\nfatal: unable to access 'https://github.com/exemple/prospecta.git/': Failed to connect to github.com port 443\n    at fabriquer (file:///app/src/fabrique.mjs:303:19)",
   ],
   environnement: [
     "npm ERR! code ENOSPC npm ERR! syscall write npm ERR! errno -28 ENOSPC: no space left on device, write",
     "le conteneur usine-apercu-prospecta s'est arrêté (exited, code de sortie 137, mémoire dépassée)",
     "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
     "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    "Création du socle impossible :\nnpm warn deprecated inflight@1.0.6\nnpm ERR! code ENOSPC\nnpm ERR! nospc ENOSPC: no space left on device, write\n",
   ],
   configuration: [
     "Error: Bad credentials",
@@ -34,6 +42,10 @@ const MESSAGES = {
     "Pull request de livraison impossible : Resource not accessible by integration (403)",
     "worker_token manquant : le coffre est indisponible.",
     "Mise en production refusée : Emails réels demandés, mais aucun service d'envoi n'est configuré sur le serveur.",
+    "emails réels demandés mais SMTP_HOST n'est pas configuré",
+    "GitHub : l'autorisation de créer des dépôts a expiré. Dans la console, Réglages, reconnecte GitHub.",
+    "Réorientation : le dépôt de référence exemple/ref est introuvable, ou privé et invisible pour le compte GitHub de l'usine (invite-le en lecture, ou garde l'ancien plan et recommence sans dépôt)",
+    "Création du socle impossible :\nCloning into 'socle'...\nremote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/exemple/socle.git/'",
   ],
   code: [
     "Aperçu du lot 1 en échec : l'aperçu ne répond pas à /api/health :\n    at writeFileSync (node:fs:2482:20)",
@@ -49,6 +61,10 @@ test("la classe d'un échec : passager, environnement, configuration ou code, su
   for (const [classe, messages] of Object.entries(MESSAGES)) for (const m of messages) assert.equal(classeEchec(m), classe, m.split("\n")[0])
   // Ce qui suit la première ligne (une pile d'appels) ne change pas la classe.
   assert.equal(classeEchec("TypeError: x is not a function\n    at fetch failed (node:internal)"), "code")
+  // Un vrai TypeError reste du code ; seul celui d'une coupure réseau (« fetch failed ») est passager.
+  assert.equal(classeEchec("TypeError: Cannot read properties of undefined (reading 'fetch failed')"), "code")
+  // « /api/health répond 500 » reste du code : 500 n'est passager que venant de GitHub.
+  assert.equal(classeEchec("Mise en production en échec : /api/health répond 500"), "code")
   assert.equal(classeEchec(""), "code")
   assert.equal(classeEchec(null), "code")
 })
@@ -65,7 +81,17 @@ test("la signature : la même cause d'une fois sur l'autre, sans sha, numéro, a
   // Une adresse, une adresse IP, un conteneur, une image, un fichier avec sa ligne, un numéro de PR : effacés.
   const s = signatureEchec("build de usine/vigie-copro:fca2fc0 en échec sur 203.0.113.7 (PR #12, https://github.com/exemple/vigie-copro/pull/12, at server/index.js:41:7)")
   for (const interne of ["vigie-copro", "fca2fc0", "203.0.113", "#12", "github.com", ":41"]) assert.ok(!s.includes(interne), `${interne} dans « ${s} »`)
-  assert.equal(signatureEchec("le conteneur usine-apercu-prospecta s'est arrêté (exited, code de sortie 137)"), "l'application s'est arrêté (exited, code de sortie N)")
+  assert.equal(signatureEchec("le conteneur usine-apercu-prospecta s'est arrêté (exited, code de sortie 137)"), "l'application s'est arrêtée (exited, code de sortie N)")
+  // Une coupure réseau : la pile et le message donnent la même cause.
+  assert.equal(signatureEchec("TypeError: fetch failed\n    at node:internal/deps/undici/undici:13510:13"), "fetch failed")
+  assert.equal(signatureEchec("Livraison du lot 2 à réessayer : fetch failed"), "fetch failed")
+  // blue ou green : la couleur de la mise en ligne ne change pas la cause.
+  assert.equal(signatureEchec("Mise en production en échec : la nouvelle version (blue) ne répond pas ; l'ancienne reste en ligne :\n<journal>"), "la nouvelle version ne répond pas ; l'ancienne reste en ligne")
+  assert.equal(signatureEchec("la nouvelle version (green) ne répond pas ; l'ancienne reste en ligne :"), "la nouvelle version ne répond pas ; l'ancienne reste en ligne")
+  // L'exemple montré garde ses nombres (jamais N), mais ni sha ni identifiant long.
+  assert.equal(signatureEchec("le déployeur n'a pas appliqué 3f9c2a1 en 15 min", { nombres: true }), "le déployeur n'a pas appliqué en 15 min")
+  assert.equal(signatureEchec("API rate limit exceeded for installation ID 41234567. (403)", { nombres: true }), "API rate limit exceeded for installation ID. (403)")
+  assert.equal(signatureEchec("déploiement interrompu 3 fois (le déployeur a redémarré pendant le déploiement)", { nombres: true }), "déploiement interrompu 3 fois (le déployeur a redémarré pendant le déploiement)")
   // Le nom du produit, donné par l'appelant.
   assert.equal(signatureEchec("Vigie Copro : la vérification de vigie-copro a échoué", { retirer: ["vigie-copro", "Vigie Copro"] }), "la vérification de a échoué")
   // Bornée, jamais vide.
@@ -73,6 +99,22 @@ test("la signature : la même cause d'une fois sur l'autre, sans sha, numéro, a
   assert.equal(signatureEchec("Error: "), "autre")
   assert.equal(signatureEchec(undefined), "autre")
   assert.deepEqual(classerEchec("Error: Bad credentials"), { classe: "configuration", signature: "Bad credentials" })
+})
+
+test("la ligne qui dit la cause : la première, sauf quand elle ne porte que le contexte", () => {
+  assert.equal(ligneUtile("Error: Bad credentials\n    at x (y.js:1:2)"), "Error: Bad credentials")
+  // « Création du socle impossible : » suivi du journal : la dernière ligne qui parle d'une erreur.
+  assert.equal(ligneUtile("Création du socle impossible :\nnpm warn x\nnpm ERR! nospc ENOSPC: no space left on device\nfin du journal"), "npm ERR! nospc ENOSPC: no space left on device")
+  assert.equal(ligneUtile("Error: Préparation impossible :\nnpm ci\nfatal: Authentication failed\n    at fabriquer (file:///app/src/fabrique.mjs:204:9)"), "fatal: Authentication failed")
+  // Sans ligne d'erreur, la dernière ligne ; sans suite, la première, telle quelle.
+  assert.equal(ligneUtile("Push impossible :\nTo une adresse\n ! [rejected] main -> main (non-fast-forward)"), "! [rejected] main -> main (non-fast-forward)")
+  assert.equal(ligneUtile("Push impossible :"), "Push impossible :")
+  // Deux socles ratés pour deux raisons : deux causes, deux classes.
+  const r = regrouperEchecs([
+    { message: "Création du socle impossible :\nnpm ERR! nospc ENOSPC: no space left on device", le: 1, projet: 1 },
+    { message: "Création du socle impossible :\nfatal: Authentication failed for 'https://github.com/exemple/socle.git/'", le: 2, projet: 2 },
+  ])
+  assert.deepEqual(r.groupes.map((g) => g.classe).sort(), ["configuration", "environnement"])
 })
 
 test("le regroupement : par cause ; un échec passager suivi d'une réussite ne compte plus, un échec de code si", () => {
@@ -102,6 +144,30 @@ test("le regroupement : par cause ; un échec passager suivi d'une réussite ne 
   const t = regrouperEchecs(echecs.slice(4, 6), [], { texte: () => "l'aperçu ne répond pas" })
   assert.deepEqual(t.groupes.map((g) => [g.cause, g.n]), [["l'aperçu ne répond pas", 2]])
   assert.deepEqual(regrouperEchecs([], []), { total: 0, groupes: [], passageres: { aujourdhui: 0, semaine: 0 } })
+})
+
+test("le regroupement : une réussite n'efface que l'échec du même projet et du même environnement, arrivé avant elle", () => {
+  const apercu = { message: "Aperçu du lot 2 en échec : déploiement interrompu 3 fois (le déployeur a redémarré pendant le déploiement)", le: 1000, projet: 1, environnement: "apercu" }
+  // Une fusion (la fabrication) n'efface pas un aperçu en échec : il n'a pas été relancé.
+  assert.equal(regrouperEchecs([apercu], [{ le: 5000, projet: 1 }]).total, 1)
+  // Un aperçu en ligne d'un autre projet, ou avant l'échec, non plus.
+  assert.equal(regrouperEchecs([apercu], [{ le: 5000, projet: 2, environnement: "apercu" }]).total, 1)
+  assert.equal(regrouperEchecs([apercu], [{ le: 500, projet: 1, environnement: "apercu" }]).total, 1)
+  // Un aperçu en ligne du même projet, après : oui. Une mise en production, non.
+  assert.deepEqual(regrouperEchecs([apercu], [{ le: 5000, projet: 1, environnement: "apercu" }]).passageres, { aujourdhui: 0, semaine: 1 })
+  assert.equal(regrouperEchecs([apercu], [{ le: 5000, projet: 1, environnement: "production" }]).total, 1)
+  // Toujours en échec (statut.json) : jamais effacé.
+  assert.equal(regrouperEchecs([{ ...apercu, actuel: true }], [{ le: 5000, projet: 1, environnement: "apercu" }]).total, 1)
+  // Le groupe montre le dernier message réel : ses nombres, pas N.
+  const g = regrouperEchecs([
+    { message: "le déployeur n'a pas appliqué 3f9c2a1 en 15 min", le: 1, projet: 1 },
+    { message: "le déployeur n'a pas appliqué 8be41d0 en 20 min", le: 2, projet: 1 },
+  ]).groupes[0]
+  assert.deepEqual([g.cause, g.exemple, g.n], ["le déployeur n'a pas appliqué en N min", "le déployeur n'a pas appliqué en 20 min", 2])
+  assert.doesNotMatch(g.exemple, /\bN\b/)
+  // reessaie : vrai seulement quand l'usine relance seule chacun des échecs du groupe.
+  assert.equal(regrouperEchecs([{ message: "fetch failed", le: 1, projet: 1, reessaie: true }]).groupes[0].reessaie, true)
+  assert.equal(regrouperEchecs([{ message: "fetch failed", le: 1, projet: 1, reessaie: true }, { message: "fetch failed", le: 2, projet: 2 }]).groupes[0].reessaie, false)
 })
 
 test("comparer deux semaines : « trop peu pour comparer » sous 10 essais, d'un côté ou de l'autre", () => {
@@ -165,9 +231,11 @@ test("7 derniers jours : les échecs par cause, une erreur passagère relancée 
   const b = await base("echecs")
   const { visibilite } = await import("../src/visibilite.mjs")
   b.db.prepare("INSERT INTO projets (id, prompt, statut, nom, slug) VALUES (1, 'p', 'fabrication', 'Prospecta', 'prospecta'), (2, 'p', 'echec', 'Relais', 'relais'), (3, 'p', 'fabrication', 'Atlas', 'atlas')").run()
-  // Prospecta : une erreur réseau, puis une fusion (relancée avec succès, aujourd'hui) ; un aperçu qui ne démarre pas, puis en ligne (du code : compte).
+  // Prospecta : la livraison du lot 2 bute sur le réseau, puis son aperçu est en ligne (relancée avec succès,
+  // aujourd'hui) ; un aperçu qui ne démarre pas, puis en ligne (du code : compte).
   noter(b, "erreur", "Livraison du lot 2 à réessayer : fetch failed", "2026-11-11 08:00:00", 1)
   noter(b, "fusion", "T4 fusionnée (PR #4, 12 tests)", "2026-11-11 09:00:00", 1)
+  noter(b, "livraison", "Aperçu du lot 2 en ligne (abc1234)", "2026-11-11 09:30:00", 1)
   noter(b, "livraison", "Aperçu du lot 1 en échec : l'aperçu ne répond pas à /api/health", "2026-11-08 10:00:00", 1)
   noter(b, "livraison", "Aperçu du lot 1 en ligne (abc1234)", "2026-11-08 11:00:00", 1)
   // Relais : la création échoue sur une clé refusée.
@@ -175,6 +243,8 @@ test("7 derniers jours : les échecs par cause, une erreur passagère relancée 
   // Atlas : le déployeur trop lent, deux fois (même cause, sha différents) ; et la même panne d'aperçu.
   noter(b, "livraison", "Aperçu du lot 1 en échec : le déployeur n'a pas appliqué 3f9c2a1 en 15 min", "2026-11-09 10:00:00", 3)
   noter(b, "livraison", "Aperçu du lot 2 en échec : le déployeur n'a pas appliqué 8be41d0 en 15 min", "2026-11-10 10:00:00", 3)
+  // Puis une fonction d'Atlas est fusionnée : son aperçu, lui, n'est toujours pas en ligne.
+  noter(b, "fusion", "T5 fusionnée (PR #5, 8 tests)", "2026-11-11 09:00:00", 3)
   // Hors fenêtre, ou une réussite d'un autre type : rien.
   noter(b, "erreur", "Error: Bad credentials", "2026-11-01 10:00:00", 2)
   noter(b, "production", "En production (abc1234, blue) validé par a@exemple.test", "2026-11-10 12:00:00", 2)
@@ -188,14 +258,70 @@ test("7 derniers jours : les échecs par cause, une erreur passagère relancée 
   const e = visibilite(b, { maintenant: MAINTENANT, processeurs: 1 }).semaine.echecs
   assert.deepEqual(e.groupes.map((g) => [g.classe, g.cause, g.n, g.projets]), [
     ["passager", "le déployeur n'a pas appliqué en N min", 2, ["Atlas"]],
-    ["environnement", "l'application s'est arrêté : mémoire dépassée (code N)", 1, ["Relais"]],
+    ["environnement", "l'application s'est arrêtée : mémoire dépassée (code N)", 1, ["Relais"]],
     ["configuration", "Bad credentials", 1, ["Relais"]],
     ["code", "l'aperçu ne répond pas", 1, ["Prospecta"]],
   ])
   assert.equal(e.total, 5)
-  assert.deepEqual(e.passageres, { aujourdhui: 1, semaine: 1 }, "l'erreur réseau de Prospecta, suivie d'une fusion")
+  assert.deepEqual(e.passageres, { aujourdhui: 1, semaine: 1 }, "l'erreur réseau de Prospecta, suivie de son aperçu en ligne")
   assert.match(e.groupes[0].dernier, /^2026-11-10T10:00:00/)
+  // Ce qui se montre : le dernier message réel, jamais « N ».
+  assert.deepEqual(e.groupes.map((g) => g.exemple), ["le déployeur n'a pas appliqué en 15 min", "l'application s'est arrêtée : mémoire dépassée (code 137)", "Bad credentials", "l'aperçu ne répond pas"])
   // Rien de ce que le déployeur garde pour lui : ni sha, ni nom de conteneur, ni chemin de fichier.
   const texte = JSON.stringify(e)
   for (const interne of ["8be41d0", "3f9c2a1", "fca2fc0", "usine-apercu", "server.mjs"]) assert.ok(!texte.includes(interne), interne)
+})
+
+test("7 derniers jours : un échec encore dans statut.json n'est jamais « relancé avec succès », même déjà au journal", async () => {
+  const b = await base("actuel")
+  const { visibilite } = await import("../src/visibilite.mjs")
+  b.db.prepare("INSERT INTO projets (id, prompt, statut, nom, slug) VALUES (3, 'p', 'fabrication', 'Atlas', 'atlas'), (4, 'p', 'fabrication', 'Boussole', 'boussole')").run()
+  const message = "déploiement interrompu 3 fois (le déployeur a redémarré pendant le déploiement) : abandonné. Une nouvelle demande le relancera."
+  // Atlas : l'aperçu échoue (journal, et statut.json qui le garde), puis une autre fonction est fusionnée.
+  noter(b, "livraison", `Aperçu du lot 2 en échec : ${message}`, "2026-11-10 10:00:10", 3)
+  noter(b, "fusion", "T5 fusionnée (PR #5, 8 tests)", "2026-11-11 09:00:00", 3)
+  // Boussole : le même échec, absent de statut.json, puis son aperçu en ligne : celui-là est relancé avec succès.
+  noter(b, "livraison", `Aperçu du lot 1 en échec : ${message}`, "2026-11-10 10:00:00", 4)
+  noter(b, "livraison", "Aperçu du lot 1 en ligne (abc1234)", "2026-11-10 11:00:00", 4)
+  writeFileSync(join(b.dossier, "statut.json"), JSON.stringify({ "apercu/atlas": { etat: "echec", sha: "8be41d0aaaa", message, le: "2026-11-10T10:00:00Z" } }))
+  const e = visibilite(b, { maintenant: MAINTENANT, processeurs: 1 }).semaine.echecs
+  assert.deepEqual(e.groupes.map((g) => [g.classe, g.n, g.projets]), [["passager", 1, ["Atlas"]]], "compté une fois, pas deux")
+  assert.equal(e.total, 1)
+  assert.deepEqual(e.passageres, { aujourdhui: 0, semaine: 1 }, "seul celui de Boussole")
+})
+
+test("7 derniers jours : une mise en production ratée compte une fois, et blue ou green ne coupent pas la cause en deux", async () => {
+  const b = await base("production")
+  const { visibilite } = await import("../src/visibilite.mjs")
+  b.db.prepare("INSERT INTO projets (id, prompt, statut, nom, slug) VALUES (1, 'p', 'livre', 'Prospecta', 'prospecta'), (2, 'p', 'livre', 'Relais', 'relais')").run()
+  const echec = (couleur) => `la nouvelle version (${couleur}) ne répond pas ; l'ancienne reste en ligne :\n<le journal de l'application>`
+  // Depuis la console : la ligne « en échec » (livraison.mjs), puis la même en « refusée » (console.mjs).
+  noter(b, "production", `Mise en production en échec : ${echec("blue")}`, "2026-11-10 10:00:00", 1)
+  noter(b, "erreur", `Mise en production refusée : ${echec("blue")}`, "2026-11-10 10:00:00", 1)
+  noter(b, "production", `Mise en production en échec : ${echec("green")}`, "2026-11-10 12:00:00", 2)
+  noter(b, "erreur", `Mise en production refusée : ${echec("green")}`, "2026-11-10 12:00:01", 2)
+  writeFileSync(join(b.dossier, "statut.json"), JSON.stringify({ "production/prospecta": { etat: "echec", message: echec("blue"), le: "2026-11-10T09:59:50Z" } }))
+  const e = visibilite(b, { maintenant: MAINTENANT, processeurs: 1 }).semaine.echecs
+  assert.deepEqual(e.groupes.map((g) => [g.classe, g.cause, g.n, g.projets]), [["code", "la nouvelle version ne répond pas ; l'ancienne reste en ligne", 2, ["Prospecta", "Relais"]]])
+  assert.equal(e.total, 2)
+})
+
+test("7 derniers jours : « l'usine réessaie » seulement quand elle relance vraiment seule", async () => {
+  const b = await base("reessaie")
+  const { visibilite } = await import("../src/visibilite.mjs")
+  b.db.prepare("INSERT INTO projets (id, prompt, statut, nom, slug) VALUES (1, 'p', 'fabrication', 'Prospecta', 'prospecta'), (2, 'p', 'echec', 'Relais', 'relais')").run()
+  // Prospecta est en fabrication : sa livraison à réessayer repart toute seule (fabrique.mjs, toutes les 5 min).
+  noter(b, "erreur", "Livraison du lot 2 à réessayer : fetch failed", "2026-11-10 10:00:00", 1)
+  // Relais est en échec : personne ne relancera sa création.
+  noter(b, "erreur", "GitHub 403 : API rate limit exceeded for installation ID 41234567.", "2026-11-10 11:00:00", 2)
+  const e = visibilite(b, { maintenant: MAINTENANT, processeurs: 1 }).semaine.echecs
+  const parProjet = Object.fromEntries(e.groupes.map((g) => [g.projets[0], g]))
+  assert.equal(parProjet.Prospecta.classe, "passager")
+  assert.equal(parProjet.Prospecta.reessaie, true)
+  assert.equal(parProjet.Relais.classe, "passager")
+  assert.equal(parProjet.Relais.reessaie, false)
+  // La console ne promet une nouvelle tentative que pour le premier.
+  const console = readFileSync(new URL("../console/console.js", import.meta.url), "utf8")
+  assert.match(console, /g\.classe === "passager" && g\.reessaie \? "un incident passager : l'usine réessaie seule"/)
+  assert.doesNotMatch(console, /réseau ou GitHub, l'usine réessaie/)
 })

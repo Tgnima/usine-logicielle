@@ -83,6 +83,8 @@ before(async () => {
   )
   ids.orphelin = projet("fabrication", "Orphelin", "orphelin")
   ids.t1Orphelin = tache(ids.orphelin, "T1", "bloquee")
+  // Arrêtée depuis une heure : au-delà du délai de grâce (une escalade en cours d'écriture n'est pas orpheline).
+  db.prepare("UPDATE taches SET maj_le = datetime('now', '-1 hour') WHERE id = ?").run(ids.t1Orphelin)
   tache(ids.orphelin, "T2", "attente", ["T1"])
   ids.vitrine = projet("en_production", "Vitrine", "vitrine")
   db.prepare("INSERT INTO domaines (projet_id, hote, statut, message) VALUES (?, 'app.client.test', 'attente_dns', 'aucun enregistrement A pour l''instant'), (?, 'www.client.test', 'actif', NULL)").run(ids.vitrine, ids.vitrine)
@@ -147,14 +149,15 @@ test("Décider : chaque décision avec sa recommandation d'abord, les plans, les
   assert.equal(b.decision.consigne, false)
   assert.ok(b.decision.options.every((o) => !o.recommande))
   assert.equal(b.detail, "la durée maximale du projet est atteinte")
-  // Pendant une réorientation, la décision attend le nouveau plan : pas de choix sur place.
+  // Pendant une réorientation, la décision attend le nouveau plan : rien à décider, elle n'est pas dans la file.
   ctx.db.prepare("INSERT INTO reglages (cle, valeur) VALUES (?, '{}')").run(`reorientation_${ids.relais}`)
   try {
-    assert.equal(parCle(mod.elementsAttente(ctx, { raisons: RAISONS }))[`decision:${ids.escBudget}`].decision, null)
+    assert.equal(parCle(mod.elementsAttente(ctx, { raisons: RAISONS }))[`decision:${ids.escBudget}`], undefined)
   } finally {
     ctx.db.prepare("DELETE FROM reglages WHERE cle = ?").run(`reorientation_${ids.relais}`)
   }
   assert.equal(l[`plan:${ids.atlas}`].groupe, "decider")
+  assert.equal(l[`plan:${ids.atlas}`].detail, "1 lot, 2 tâches", "le singulier quand il n'y en a qu'un")
   assert.equal(l[`questions:${ids.boussole}`].detail, "Pour qui ?")
   assert.equal(l[`livre:${ids.comptoir}`].titre, "Comptoir · prêt à mettre en ligne")
   assert.deepEqual([l[`persona:${ids.persona}`].groupe, l[`persona:${ids.persona}`].lien], ["decider", `#/personas/${ids.persona}`])
@@ -178,7 +181,9 @@ test("Débloquer : une seule action par cas, et une relance déjà envoyée n'es
   assert.match(p.detail, /faute de crédit/)
   assert.equal(p.action.lien, "#/reglages/integrations")
   const c = l.coffre
-  assert.deepEqual(c.action.commandes, ["bash secrets.sh axmaril", "docker compose up -d orchestrateur"], "à faire sur le serveur, avec la commande exacte")
+  // L'orchestrateur ne lit la clé maîtresse qu'à son démarrage : « up -d » ne le redémarrerait pas (il tourne déjà).
+  assert.deepEqual(c.action.commandes, ["bash secrets.sh axmaril", "docker compose restart orchestrateur"], "à faire sur le serveur, avec la commande exacte")
+  assert.match(readFileSync(new URL("../../secrets.sh", import.meta.url), "utf8"), /Pour l'appliquer[^\n]*: docker compose restart orchestrateur/, "secrets.sh dit la même chose")
   const o = l[`tache:${ids.t1Orphelin}`]
   assert.equal(o.titre, "Orphelin · T1 est arrêtée sans décision ouverte")
   assert.equal(o.derriere, 1)
@@ -188,6 +193,74 @@ test("Débloquer : une seule action par cas, et une relance déjà envoyée n'es
   assert.deepEqual(dns.enregistrement, { type: "A", nom: "app", hote: "app.client.test", valeur: "203.0.113.10" })
   assert.match(dns.detail, /aucun enregistrement A pour l'instant/)
   assert.equal(l["dns:www.client.test"], undefined, "une adresse déjà active n'attend rien")
+})
+
+test("Décider pendant une réorientation : un seul geste, le nouveau plan, qui dit combien de décisions il règle ; une réorientation ratée est à débloquer", () => {
+  const { db } = ctx
+  const cap = Number(db.prepare("INSERT INTO projets (prompt, statut, nom, plan) VALUES ('p', 'reorientation', 'Cap', ?)").run(JSON.stringify({ lots: [{ nom: "Socle", taches: [{ cle: "T1" }] }] })).lastInsertRowid)
+  try {
+    for (const cle of ["T1", "T2", "T3"]) {
+      const t = Number(db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, statut) VALUES (?, ?, 1, 't', 'd', '[]', 'bloquee')").run(cap, cle).lastInsertRowid)
+      db.prepare("INSERT INTO escalades (projet_id, tache_id, raison, options) VALUES (?, ?, 'criteres', ?)").run(cap, t, JSON.stringify(OPTIONS))
+    }
+    db.prepare("INSERT INTO reglages (cle, valeur) VALUES (?, '{}')").run(`reorientation_${cap}`)
+    db.prepare("INSERT INTO journal (projet_id, type, message) VALUES (?, 'erreur', 'Une vieille erreur, avant la réorientation')").run(cap)
+    db.prepare("INSERT INTO journal (projet_id, type, message) VALUES (?, 'reorientation', 'Réorientation demandée par a@exemple.test : autre chose')").run(cap)
+    const deCap = () => mod.elementsAttente(ctx, { raisons: RAISONS }).filter((x) => x.projet === cap)
+    // Les trois décisions attendent le nouveau plan : rien à décider.
+    let l = deCap()
+    assert.deepEqual(l.filter((x) => x.type === "decision"), [], "pas dans la file")
+    assert.equal(mod.compterAttente(l).decider, 0)
+    // Personne ne refait la suite du plan (ni analyste au travail, ni tâche en cours) : à débloquer, et la
+    // cause est la dernière erreur notée après la demande, pas une plus ancienne.
+    assert.equal(parCle(l)[`reorientation:${cap}`].detail, "L'analyste n'a pas pu refaire la suite du plan.")
+    db.prepare("INSERT INTO journal (projet_id, type, message) VALUES (?, 'erreur', ?)").run(cap, "Réorientation : le dépôt de référence exemple/ref est introuvable\n    at lireReference (file:///app/src/reorientation.mjs:75:9)")
+    l = deCap()
+    const r = parCle(l)[`reorientation:${cap}`]
+    assert.equal(r.groupe, "debloquer")
+    assert.equal(r.titre, "Cap · la réorientation a échoué")
+    assert.equal(r.detail, "le dépôt de référence exemple/ref est introuvable")
+    assert.deepEqual(r.action, { type: "relancer", libelle: "Relancer", projet: cap })
+    assert.match(r.refait, /garder l'ancien plan/)
+    assert.deepEqual(mod.compterAttente(l), { decider: 0, debloquer: 1, reparer: 0, total: 1 })
+    // Le nouveau plan est prêt : un seul geste, qui règle les trois décisions.
+    db.prepare("UPDATE projets SET statut = 'plan_a_valider' WHERE id = ?").run(cap)
+    l = deCap()
+    assert.deepEqual(l.map((x) => x.cle), [`plan:${cap}`])
+    assert.equal(l[0].titre, "Cap · nouveau plan (réorientation) à valider")
+    assert.equal(l[0].detail, "1 lot, 1 tâche · 3 décisions ouvertes seront réglées par ce plan")
+    assert.deepEqual(mod.compterAttente(l), { decider: 1, debloquer: 0, reparer: 0, total: 1 })
+  } finally {
+    for (const table of ["escalades", "taches", "journal"]) db.prepare(`DELETE FROM ${table} WHERE projet_id = ?`).run(cap)
+    db.prepare("DELETE FROM reglages WHERE cle = ?").run(`reorientation_${cap}`)
+    db.prepare("DELETE FROM projets WHERE id = ?").run(cap)
+  }
+})
+
+test("Débloquer : une fonction tout juste arrêtée, ou qui vient d'être décidée, n'est pas une orpheline", () => {
+  const { db } = ctx
+  const p = Number(db.prepare("INSERT INTO projets (prompt, statut, nom) VALUES ('p', 'fabrication', 'Lent')").run().lastInsertRowid)
+  try {
+    const t = Number(db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, statut) VALUES (?, 'T1', 1, 't', 'd', '[]', 'bloquee')").run(p).lastInsertRowid)
+    const orpheline = () => parCle(mod.elementsAttente(ctx, { raisons: RAISONS }))[`tache:${t}`]
+    // L'escalade est en cours d'écriture (creerEscalade attend GitHub) : pas encore orpheline.
+    assert.equal(orpheline(), undefined)
+    db.prepare("UPDATE taches SET maj_le = datetime('now', '-10 minutes') WHERE id = ?").run(t)
+    assert.equal(orpheline()?.titre, "Lent · T1 est arrêtée sans décision ouverte", "au-delà de 5 minutes, elle l'est")
+    // Une décision B vient d'être prise : la fusion est en cours, la fonction est encore « bloquee ».
+    db.prepare("INSERT INTO decisions (projet_id, tache_id, question, reponse, par) VALUES (?, ?, 'T1 : criteres', 'B · Accepter en l''état', 'a@exemple.test')").run(p, t)
+    assert.equal(orpheline(), undefined)
+    db.prepare("UPDATE decisions SET le = datetime('now', '-10 minutes') WHERE tache_id = ?").run(t)
+    assert.ok(orpheline(), "la fusion n'a jamais fini : elle redevient orpheline")
+  } finally {
+    for (const table of ["decisions", "taches"]) db.prepare(`DELETE FROM ${table} WHERE projet_id = ?`).run(p)
+    db.prepare("DELETE FROM projets WHERE id = ?").run(p)
+  }
+})
+
+test("GET /api/resume ne relit pas tout le journal : la dernière erreur d'un projet passe par un index", () => {
+  const plan = ctx.db.prepare("EXPLAIN QUERY PLAN SELECT id, message, le FROM journal WHERE projet_id = ? AND type = 'erreur' ORDER BY id DESC LIMIT 1").all(1)
+  assert.ok(plan.some((l) => /journal_projet_type/.test(l.detail)), JSON.stringify(plan))
 })
 
 test("Réparer : les pannes de l'usine elle-même, pas ses alertes ni les lignes des produits ; un bilan trop ancien ne compte plus", () => {
@@ -282,6 +355,48 @@ test("console : rien ne part avant 5 s ; Annuler pendant le délai, et rien ne p
   h.avancer(60_000)
   assert.deepEqual(envois, [[7, "A"]], "annulée : jamais envoyée")
   assert.equal(d.annuler(8), null)
+})
+
+test("console : un seul clic compte ; pendant le délai, les options restent à leur place, désactivées", () => {
+  const { GARDE_DECISION, clicIgnore } = new Function(`${source.match(/^const GARDE_DECISION = \d+$/m)[0]}\n${extraire("function clicIgnore(")}\nreturn { GARDE_DECISION, clicIgnore }`)()
+  assert.equal(GARDE_DECISION, 400)
+  assert.equal(clicIgnore("decider", { detail: 2, maintenant: 10_000, derniere: 0 }), true, "le second clic d'un double clic")
+  assert.equal(clicIgnore("annuler-decision", { detail: 2, maintenant: 10_000, derniere: 0 }), true)
+  assert.equal(clicIgnore("decider", { detail: 1, maintenant: 10_000, derniere: 9_800 }), true, "trop près d'un lancement ou d'une annulation")
+  assert.equal(clicIgnore("decider", { detail: 1, maintenant: 10_000, derniere: 9_000 }), false, "un clic voulu, plus tard")
+  assert.equal(clicIgnore("annuler-decision", { detail: 0, maintenant: 10_000, derniere: 0 }), false, "Entrée au clavier")
+  assert.equal(clicIgnore("relancer-attente", { detail: 2, maintenant: 10_000, derniere: 9_900 }), false, "les autres actions ne changent pas")
+  // La garde est branchée avant toute action, et chaque bascule la réarme.
+  assert.match(source, /if \(clicIgnore\(el\.dataset\.action, \{ detail: e\.detail, derniere: derniereBascule \}\)\) return e\.preventDefault\(\)/)
+  assert.equal([...source.matchAll(/derniereBascule = Date\.now\(\)/g)].length, 2, "au lancement et à l'annulation")
+  // Le rendu, avec les outils de console.js : pendant le délai, chaque option reste, désactivée, et la choisie est marquée.
+  const outils = ["BRUT", "brut", "echapper", "valeur"].map((n) => source.match(new RegExp(`^const ${n} = .*$`, "m"))[0]).join("\n")
+  const r = new Function(`${outils}\n${extraire("function html(")}\n${extraire("function optionsDecision(")}\n${extraire("function ligneAttenteDecision(")}\nreturn { BRUT, optionsDecision, ligneAttenteDecision }`)()
+  const options = [{ cle: "A", libelle: "Continuer", consequence: "prolonger", recommande: true }, { cle: "C", libelle: "Arrêter", consequence: "arrêter la fabrication" }]
+  const libres = r.optionsDecision(12, options, { projet: 3 })[r.BRUT]
+  assert.equal((libres.match(/<button/g) ?? []).length, 2)
+  assert.doesNotMatch(libres, /disabled/)
+  const attente = { choix: "C", quoi: "Arrêter", fin: Date.now() + 4500 }
+  const figees = r.optionsDecision(12, options, { projet: 3, attente })[r.BRUT]
+  assert.equal((figees.match(/<button/g) ?? []).length, 2, "les options restent à leur place")
+  assert.equal((figees.match(/ disabled>/g) ?? []).length, 2, "toutes désactivées : un second clic tombe sur un bouton inerte")
+  assert.match(figees, /data-choix="C"[^>]*disabled>\s*<strong>Arrêter <span class="badge orange">choisie<\/span>/)
+  // La ligne d'attente dit quand la décision part ; elle vient après les options, jamais à leur place.
+  const ligne = r.ligneAttenteDecision(12, attente)[r.BRUT]
+  assert.match(ligne, /Arrêter : part dans <span data-compte="12">5<\/span> s/)
+  assert.match(ligne, /data-action="annuler-decision" data-id="12" aria-label="Annuler : Arrêter">Annuler</)
+  assert.match(extraire("function choixSurPlace("), /\$\{boutons\}[\s\S]*\$\{fin\}/)
+})
+
+test("console : la décision qui part est annoncée aux lecteurs d'écran, sans faire bouger la page", () => {
+  const page = readFileSync(new URL("../console/index.html", import.meta.url), "utf8")
+  assert.match(page, /<div id="annonce" class="cache" aria-live="polite"><\/div>/)
+  const decider = source.slice(source.indexOf("  decider: (el) => {"), source.indexOf('  "annuler-decision"'))
+  assert.match(decider, /annoncer\(`\$\{quoi\} : part dans 5 secondes\. Annuler pour l'arrêter\.`\)/)
+  // Une consigne tapée qui ne part pas (B, C) : la ligne d'attente le dit.
+  assert.match(decider, /ta consigne n'est pas transmise/)
+  // Après l'envoi, le focus passe au texte qui remplace Annuler.
+  assert.match(extraire("async function envoyerDecision("), /#envoye-decision-\$\{id\}`\)\?\.focus/)
 })
 
 test("console : une décision annulée dans les 5 s n'atteint pas le serveur (aucune ligne dans decisions) ; sinon, elle part", async () => {

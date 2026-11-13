@@ -65,6 +65,9 @@ export function ouvrirDb(chemin) {
       message_ts TEXT, cree_le TEXT NOT NULL DEFAULT (datetime('now')), relance_le TEXT
     );
   `)
+  // La dernière ligne d'un type pour un projet (la file d'attention la cherche à chaque rafraîchissement de la
+  // console, toutes les 5 à 15 s) : sans cet index, chaque recherche relirait tout le journal.
+  db.exec("CREATE INDEX IF NOT EXISTS journal_projet_type ON journal (projet_id, type)")
   // Colonnes ajoutées après coup : présentes sur une base neuve comme sur une base existante.
   const colonnes = new Set(db.prepare("PRAGMA table_info(projets)").all().map((c) => c.name))
   if (!colonnes.has("production")) db.exec("ALTER TABLE projets ADD COLUMN production TEXT") // choix de production (JSON)

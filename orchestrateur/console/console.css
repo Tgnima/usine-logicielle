@@ -247,7 +247,10 @@ dialog.palette::backdrop { background: rgba(14, 42, 64, .45) }
 .options-decision { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px }
 .choix-decision { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--rayon-m); border: 1px solid var(--trait); background: var(--surface); color: var(--encre); font: inherit; cursor: pointer; min-height: 44px }
 .choix-decision span { font-size: 13px; color: var(--doux) }
-.choix-decision:hover { border-color: var(--accent) }
+.choix-decision:hover:not(:disabled) { border-color: var(--accent) }
+/* Pendant les 5 s avant l'envoi : les options restent à leur place, inertes ; celle qui part est marquée « choisie ». */
+.choix-decision:disabled { cursor: not-allowed; opacity: .6 }
+.choix-decision.choisie:disabled { opacity: 1 }
 .choix-decision.recommande { border: 2px solid var(--accent); background: var(--accent-fond) }
 
 /* Le plan en lecture. */

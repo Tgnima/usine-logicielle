@@ -3,10 +3,11 @@
 //
 //   decider     une décision (A, B ou C), un plan, des questions, la fiche d'un public, un produit
 //               prêt à mettre en ligne ;
-//   debloquer   ce qui ne bougera pas seul, avec une seule action par cas : un projet en échec
-//               (Relancer), la fabrication en pause faute d'accès (reprise à telle heure), le coffre
-//               des clés verrouillé (à régler sur le serveur), une adresse web qui attend son
-//               enregistrement, une fonction arrêtée sans décision ouverte ;
+//   debloquer   ce qui ne bougera pas seul, avec une seule action par cas : un projet en échec ou une
+//               réorientation dont l'analyse a échoué (Relancer), la fabrication en pause faute
+//               d'accès (reprise à telle heure), le coffre des clés verrouillé (à régler sur le
+//               serveur), une adresse web qui attend son enregistrement, une fonction arrêtée sans
+//               décision ouverte ;
 //   reparer     ce qui est en panne : un service de l'usine, la sonde des produits, un produit.
 //
 // Le compte (titre de l'onglet, notifications) additionne decider et debloquer. reparer reste à
@@ -21,6 +22,7 @@ import { enregistrementDns, ipServeur } from "./domaines.mjs"
 import { etatFournisseurs } from "./fournisseurs.mjs"
 import { facturationsEnCours } from "./moteurs.mjs"
 import { normaliserQuestions, presenterDecision } from "./presentation.mjs"
+import { reorientationEnPreparation } from "./reorientation.mjs"
 import { dernierEtatUsine } from "./sante.mjs"
 
 export const GROUPES = ["decider", "debloquer", "reparer"]
@@ -60,6 +62,10 @@ const FINIES = ["fusionnee", "abandonnee"]
 // Les raisons d'une décision où une consigne pour l'agent a un sens (A reprend la fonction, escalade.mjs).
 const SANS_CONSIGNE = ["cout", "budget", "livraison"]
 const FUSEAU = "Europe/Paris"
+// Une fonction « bloquee » sans décision ouverte n'est orpheline qu'au bout de 5 minutes (aDebloquer).
+const ORPHELINE_MS = 5 * 60_000
+// Une date au format de SQLite (« 2026-11-09 02:25:08 », temps universel), pour comparer à maj_le ou le.
+const sqlDate = (ms) => new Date(ms).toISOString().slice(0, 19).replace("T", " ")
 
 // Une date de SQLite (« 2026-11-09 02:25:08 », temps universel) ou ISO, en ISO ; null si illisible.
 function iso(le) {
@@ -120,13 +126,14 @@ function aDecider(ctx, raisons) {
   const { db } = ctx
   const liste = []
   for (const e of db.prepare("SELECT e.*, p.nom, p.statut AS statut_projet FROM escalades e JOIN projets p ON p.id = e.projet_id WHERE e.statut = 'ouverte' AND p.statut != 'supprime' ORDER BY e.id").all()) {
+    // Pendant une réorientation, la décision attend le nouveau plan (resoudre() la refuserait) : il n'y a
+    // rien à décider. Le nouveau plan, une fois prêt, est le seul geste ; il dit combien de décisions il règle.
+    if (e.statut_projet === "reorientation" || enReorientation(db, e.projet_id)) continue
     const t = e.tache_id ? obtenir(db, "taches", e.tache_id) : null
     const raison = raisons[e.raison] ?? e.raison
     const derriere = t ? fonctionsDerriere(db.prepare("SELECT cle, statut, depend_de FROM taches WHERE projet_id = ?").all(e.projet_id), t.cle) : 0
     const options = lireJson(e.options, [])
     const d = presenterDecision({ raison: e.raison, raisonTexte: raison, options: Array.isArray(options) ? options : [], tache: t })
-    // Pendant une réorientation, la décision attend le nouveau plan (resoudre() la refuserait) : pas de choix sur place.
-    const reorientation = e.statut_projet === "reorientation" || enReorientation(db, e.projet_id)
     liste.push({
       groupe: "decider", type: "decision", cle: `decision:${e.id}`, projet: e.projet_id,
       titre: `${e.nom} · décision attendue`,
@@ -135,7 +142,7 @@ function aDecider(ctx, raisons) {
       derriere,
       // La décision prise sur place : l'option recommandée et sa conséquence d'abord (presenterDecision),
       // puis les autres ; « Autre consigne » quand l'option A reprend la fonction avec une consigne.
-      decision: reorientation ? null : {
+      decision: {
         id: e.id,
         tache: t?.cle ?? null,
         consigne: Boolean(t) && !SANS_CONSIGNE.includes(e.raison) && d.options.some((o) => o.cle === "A"),
@@ -147,7 +154,14 @@ function aDecider(ctx, raisons) {
   for (const p of db.prepare("SELECT * FROM projets WHERE statut IN ('plan_a_valider', 'questions', 'livre') ORDER BY id DESC").all()) {
     const plan = lirePlan(p)
     const base = { groupe: "decider", projet: p.id, depuis: iso(p.maj_le), lien: `#/projets/${p.id}` }
-    if (p.statut === "plan_a_valider") liste.push({ ...base, type: "plan", cle: `plan:${p.id}`, titre: `${p.nom} · ${enReorientation(db, p.id) ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${plan?.lots?.length ?? 0} lots, ${plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0} tâches` })
+    if (p.statut === "plan_a_valider") {
+      const reoriente = enReorientation(db, p.id)
+      // Les décisions ouvertes du projet : valider le nouveau plan les règle toutes (validerReorientation).
+      const ouvertes = reoriente ? db.prepare("SELECT COUNT(*) AS n FROM escalades WHERE projet_id = ? AND statut = 'ouverte'").get(p.id).n : 0
+      const lots = plan?.lots?.length ?? 0
+      const nTaches = plan?.lots?.reduce((n, l) => n + l.taches.length, 0) ?? 0
+      liste.push({ ...base, type: "plan", cle: `plan:${p.id}`, titre: `${p.nom} · ${reoriente ? "nouveau plan (réorientation)" : "plan"} à valider`, detail: `${pluriel(lots, "lot", "lots")}, ${pluriel(nTaches, "tâche", "tâches")}${ouvertes ? ` · ${pluriel(ouvertes, "décision ouverte sera réglée", "décisions ouvertes seront réglées")} par ce plan` : ""}` })
+    }
     if (p.statut === "questions") liste.push({ ...base, type: "questions", cle: `questions:${p.id}`, titre: `${p.nom ?? "Nouveau projet"} · l'analyste a des questions`, detail: normaliserQuestions(plan?.questions)[0]?.question ?? "" })
     if (p.statut === "livre") liste.push({ ...base, type: "livre", cle: `livre:${p.id}`, titre: `${p.nom} · prêt à mettre en ligne`, detail: "à mettre en ligne ou à corriger" })
   }
@@ -181,6 +195,24 @@ function aDebloquer(ctx, maintenant) {
     })
   }
 
+  // Une réorientation dont l'analyse a échoué (reorientation.mjs, preparer) : le projet reste en pause et
+  // rien ne la relancera seule. Pendant que l'analyste refait la suite du plan, ou qu'il attend la fin de
+  // la tâche en cours, elle n'y est pas. Relancer passe par relancerReorientation (relancerProjet).
+  for (const p of db.prepare("SELECT id, nom, maj_le FROM projets WHERE statut = 'reorientation' ORDER BY id DESC").all()) {
+    if (!enReorientation(db, p.id) || reorientationEnPreparation(p.id)) continue
+    const erreur = db.prepare(`SELECT message, le FROM journal WHERE projet_id = ? AND type = 'erreur'
+        AND id > (SELECT COALESCE(MAX(id), 0) FROM journal WHERE projet_id = ? AND type = 'reorientation') ORDER BY id DESC LIMIT 1`).get(p.id, p.id)
+    liste.push({
+      groupe: "debloquer", type: "echec", cle: `reorientation:${p.id}`, projet: p.id,
+      titre: `${p.nom ?? "Nouveau projet"} · la réorientation a échoué`,
+      detail: premiereLigne(erreur?.message).replace(/^Réorientation\s*:\s*/i, "") || "L'analyste n'a pas pu refaire la suite du plan.",
+      refait: "Relancer refait la suite du plan. Tu peux aussi garder l'ancien plan, depuis la page du projet.",
+      action: { type: "relancer", libelle: "Relancer", projet: p.id },
+      envoye: null,
+      depuis: iso(erreur?.le ?? p.maj_le), lien: `#/projets/${p.id}`,
+    })
+  }
+
   // La fabrication en pause faute d'accès (fabrique.mjs, pause_limite) : elle reprend seule.
   const fin = lireReglage(db, "pause_limite", "")
   if (fin && new Date(fin).getTime() > maintenant) {
@@ -196,6 +228,8 @@ function aDebloquer(ctx, maintenant) {
   }
 
   // Le coffre des clés verrouillé (fournisseurs.mjs) : seule la personne qui s'occupe du serveur peut le rouvrir.
+  // La clé maîtresse n'est lue qu'au démarrage de l'orchestrateur (config.mjs) : après « secrets.sh axmaril »,
+  // il faut le redémarrer. « docker compose up -d » ne le ferait pas : le conteneur tourne déjà.
   let verrouille = false
   try {
     verrouille = Boolean(etatFournisseurs(ctx).verrouille)
@@ -206,15 +240,20 @@ function aDebloquer(ctx, maintenant) {
       titre: "Le coffre des clés est verrouillé",
       detail: "La clé maîtresse d'AXMARIL n'arrive plus : les clés posées dans la console ne servent pas, celles du serveur prennent le relais.",
       depuis: null, lien: "#/reglages/integrations",
-      action: { type: "commande", libelle: "À faire sur le serveur", aide: "Vérifier que l'agent AXMARIL tourne, puis, dans le dossier de l'usine :", commandes: ["bash secrets.sh axmaril", "docker compose up -d orchestrateur"] },
+      action: { type: "commande", libelle: "À faire sur le serveur", aide: "Vérifier que l'agent AXMARIL tourne, puis, dans le dossier de l'usine :", commandes: ["bash secrets.sh axmaril", "docker compose restart orchestrateur"] },
     })
   }
 
   // Une fonction arrêtée sans décision ouverte (une décision résolue à moitié, par exemple) : rien ne
   // la relancera seule. Une fonction qui attend sa décision est déjà dans « Décider ».
+  // Un délai de grâce de ORPHELINE_MS : la fonction passe « bloquee » avant que son escalade soit écrite
+  // (creerEscalade attend GitHub, jusqu'à 3 minutes s'il répond mal), et une décision B laisse la fonction
+  // « bloquee » le temps de la fusion. Ni l'un ni l'autre n'est une fonction orpheline.
+  const avant = sqlDate(maintenant - ORPHELINE_MS)
   const orphelines = db.prepare(`SELECT t.id, t.cle, t.projet_id, t.maj_le, p.nom FROM taches t JOIN projets p ON p.id = t.projet_id
-      WHERE t.statut = 'bloquee' AND p.statut NOT IN ('supprime', 'abandonne', 'arrete', 'reorientation')
-      AND NOT EXISTS (SELECT 1 FROM escalades e WHERE e.tache_id = t.id AND e.statut = 'ouverte') ORDER BY t.id`).all()
+      WHERE t.statut = 'bloquee' AND p.statut NOT IN ('supprime', 'abandonne', 'arrete', 'reorientation') AND t.maj_le <= ?
+      AND NOT EXISTS (SELECT 1 FROM escalades e WHERE e.tache_id = t.id AND e.statut = 'ouverte')
+      AND NOT EXISTS (SELECT 1 FROM decisions d WHERE d.tache_id = t.id AND d.le > ?) ORDER BY t.id`).all(avant, avant)
   for (const t of orphelines) {
     const derriere = fonctionsDerriere(db.prepare("SELECT cle, statut, depend_de FROM taches WHERE projet_id = ?").all(t.projet_id), t.cle)
     liste.push({

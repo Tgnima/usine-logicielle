@@ -29,6 +29,12 @@ import { noterPassage, scriptResume } from "./sous-agents.mjs"
 const RESUME_AGENTS_MAX = 200_000
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
+// Les n derniers caractères d'un journal, sans la ligne que la découpe coupe au milieu : la cause d'un
+// échec se lit sur une ligne entière (bilan.mjs, ligneUtile), le contexte (« Push impossible : ») à part.
+function finDuJournal(journal, n) {
+  const fin = String(journal ?? "").slice(-n)
+  return String(journal ?? "").length > n && fin.includes("\n") ? fin.replace(/^[^\n]*\n/, "") : fin
+}
 
 // Une tâche en attente devient prête quand toutes ses dépendances sont finies.
 export function liberer(db, projetId) {
@@ -195,7 +201,7 @@ async function fabriquer(ctx, projet, tache) {
     `bash -c ${q(profil.installer)} > /tmp/sorties/tache/installation.log 2>&1 || { [ -f package.json ] && npm install --no-audit --no-fund >> /tmp/sorties/tache/installation.log 2>&1; }`,
     "echo '@@ PREPARATION_OK'",
   ].join("\n"), { env: { JETON: config.secrets.github }, minutes: 10 })
-  if (!("PREPARATION_OK" in prep.marqueurs)) throw new Error(`Préparation impossible : ${prep.journal.slice(-600)}`)
+  if (!("PREPARATION_OK" in prep.marqueurs)) throw new Error(`Préparation impossible :\n${finDuJournal(prep.journal, 600)}`)
 
   // 2. L'agent code. Il ne voit pas le jeton GitHub ; l'atelier est son bac à sable.
   const minutes = config.autonomie?.minutes_max_par_agent ?? 30
@@ -294,7 +300,7 @@ async function fabriquer(ctx, projet, tache) {
     "echo \"@@ SHA $(git rev-parse HEAD)\"",
   ].join("\n"), { env: { JETON: config.secrets.github }, minutes: 5 })
   const sha = push.marqueurs.SHA
-  if (!sha) throw new Error(`Push impossible : ${push.journal.slice(-600)}`)
+  if (!sha) throw new Error(`Push impossible :\n${finDuJournal(push.journal, 600)}`)
   const lignes = Number(m.LIGNES ?? 0)
   const max = config.autonomie?.lignes_max_par_pr ?? 800
   const corps = [

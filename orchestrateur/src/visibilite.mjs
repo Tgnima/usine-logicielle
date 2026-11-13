@@ -362,27 +362,43 @@ function semaineAvant(ctx, maintenant) {
 
 // Les échecs de la semaine, par cause (bilan.mjs) : les mises en ligne en échec (journal « livraison » et
 // « production », puis statut.json pour celles que le journal n'a pas) et les erreurs des projets (journal
-// « erreur »). Une réussite du même projet (fusion, plan reçu, socle prêt, mise en ligne réussie) efface
-// un échec passager plus ancien ; un échec encore affiché par statut.json n'est jamais effacé.
+// « erreur »). Une réussite efface un échec passager plus ancien seulement si elle est du même projet et
+// du même environnement : un aperçu en ligne pour un aperçu, une mise en production pour la production,
+// une fusion, un plan reçu ou un socle prêt pour le reste. Un échec encore affiché par statut.json n'est
+// jamais effacé.
 const reussite = (e) => e.type === "fusion" || e.type === "analyse" || (["livraison", "production", "creation"].includes(e.type) && !/échec/i.test(e.message) && /en ligne|en production|prêt/i.test(e.message))
 const echec = (e) => e.type === "erreur" || (["livraison", "production"].includes(e.type) && /en échec/i.test(e.message))
-// Un échec de mise en ligne déjà au journal : même projet, même cause, à moins de 30 minutes.
+// L'environnement d'une ligne du journal : la production, l'aperçu (sa mise en ligne, ou sa livraison à
+// réessayer), sinon la fabrication (null).
+const environnementDe = (e) => (e.type === "production" || /^mise en production/i.test(e.message) ? "production" : e.type === "livraison" || /^(?:livraison|aperçu) du lot \d+/i.test(e.message) ? "apercu" : null)
+// Une livraison à réessayer : l'usine la relance seule toutes les 5 minutes, tant que le projet est en fabrication.
+const relanceeSeule = (e, projet) => e.type === "erreur" && /^livraison du lot \d+ à réessayer/i.test(e.message) && projet?.statut === "fabrication"
+// Le même échec déjà noté : même projet, même environnement, même cause, à moins de 30 minutes.
 const DOUBLON_MS = 30 * 60_000
 function echecsDeLaSemaine(ctx, produits, jours, maintenant) {
   const { db, config } = ctx
   const fenetre = new Set(jours)
   const dansLaFenetre = (le) => Number.isFinite(le) && le <= maintenant && fenetre.has(jourParis(new Date(le)))
   const depuis = new Date(maintenant - (JOURS + 1) * 86_400_000).toISOString().slice(0, 19).replace("T", " ")
-  const projets = new Map(db.prepare("SELECT id, nom, slug FROM projets").all().map((p) => [p.id, p]))
+  const projets = new Map(db.prepare("SELECT id, nom, slug, statut FROM projets").all().map((p) => [p.id, p]))
   const retirer = (id) => [projets.get(id)?.slug, projets.get(id)?.nom].filter(Boolean)
   const nomDe = (id) => (id ? texte(projets.get(id)?.nom ?? `Projet ${id}`, TITRE_MAX) : "L'usine elle-même")
   const echecs = []
   const reussites = []
+  // Le plus récent, s'il y en a un.
+  const dejaNote = (projet, environnement, le, cause) => echecs.findLast((x) => x.projet === projet && x.environnement === environnement && Math.abs(x.le - le) < DOUBLON_MS && signatureEchec(x.message, { retirer: x.retirer }) === cause)
   for (const e of db.prepare("SELECT type, message, le, projet_id FROM journal WHERE type IN ('erreur', 'livraison', 'production', 'fusion', 'analyse', 'creation') AND le >= ? ORDER BY id").all(depuis)) {
     const le = dateDe(e.le).getTime()
     if (!dansLaFenetre(le)) continue
-    if (reussite(e)) reussites.push({ le, projet: e.projet_id })
-    else if (echec(e)) echecs.push({ message: e.message, le, projet: e.projet_id ?? null, nom: nomDe(e.projet_id), retirer: retirer(e.projet_id) })
+    const environnement = environnementDe(e)
+    if (reussite(e)) reussites.push({ le, projet: e.projet_id, environnement })
+    else if (echec(e)) {
+      const projet = e.projet_id ?? null
+      // Une mise en production ratée depuis la console est notée deux fois (« en échec », puis « refusée »
+      // avec le même message) : elle compte une fois.
+      if (e.type === "erreur" && environnement === "production" && dejaNote(projet, environnement, le, signatureEchec(e.message, { retirer: retirer(projet) }))) continue
+      echecs.push({ message: e.message, le, projet, environnement, nom: nomDe(projet), retirer: retirer(projet), reessaie: relanceeSeule(e, projets.get(projet)) })
+    }
   }
   for (const [cle, s] of Object.entries(lireStatut(config))) {
     const m = /^(apercu|production)\/([a-z0-9-]+)$/.exec(cle)
@@ -391,9 +407,13 @@ function echecsDeLaSemaine(ctx, produits, jours, maintenant) {
     if (!dansLaFenetre(le)) continue
     const projet = produits.get(m[2])?.id ?? null
     const r = [m[2], ...(projet ? retirer(projet) : [])]
-    const cause = signatureEchec(s.message, { retirer: r })
-    if (echecs.some((x) => x.projet === projet && Math.abs(x.le - le) < DOUBLON_MS && signatureEchec(x.message, { retirer: x.retirer }) === cause)) continue
-    echecs.push({ message: String(s.message), le, projet, nom: projet ? nomDe(projet) : texte(m[2], TITRE_MAX), retirer: r, actuel: true })
+    // Déjà au journal : c'est cette ligne qui est toujours en échec. Elle ne s'efface plus.
+    const double = dejaNote(projet, m[1], le, signatureEchec(s.message, { retirer: r }))
+    if (double) {
+      double.actuel = true
+      continue
+    }
+    echecs.push({ message: String(s.message), le, projet, environnement: m[1], nom: projet ? nomDe(projet) : texte(m[2], TITRE_MAX), retirer: r, actuel: true })
   }
   const r = regrouperEchecs(echecs, reussites, { jour: (le) => jourParis(new Date(le)), aujourdhui: jours.at(-1), texte: enClair })
   return { ...r, groupes: r.groupes.map((g) => ({ ...g, projets: g.projets.slice(0, 3), dernier: new Date(g.dernier).toISOString() })) }

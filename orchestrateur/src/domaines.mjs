@@ -42,16 +42,35 @@ export async function ipServeur(config) {
   return resolve4(`connexion.${config.domaine.base}`).catch(() => [])
 }
 
-// L'enregistrement à créer chez le fournisseur du nom de domaine : un A vers le serveur. Le nom est
-// la partie avant le domaine (« app » pour app.client.fr), « @ » pour le domaine lui-même.
+// Les suffixes publics à deux niveaux les plus courants : sous l'un d'eux, le domaine enregistré a trois
+// parties (monasso.asso.fr, boutique.co.uk), et non deux.
+const SUFFIXES_DOUBLES = new Set([
+  "asso.fr", "com.fr", "gouv.fr", "nom.fr", "presse.fr", "tm.fr",
+  "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "ac.uk", "gov.uk", "sch.uk",
+  "com.br", "net.br", "org.br", "gov.br", "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au",
+  "co.nz", "net.nz", "org.nz", "co.za", "org.za", "co.jp", "ne.jp", "or.jp", "ac.jp", "co.in", "net.in", "org.in",
+  "co.ma", "net.ma", "org.ma", "com.tn", "com.dz", "co.cm", "com.mx", "com.ar", "com.tr", "com.cn", "com.tw",
+  "com.hk", "co.kr", "com.sg", "com.my", "co.id", "com.co", "co.il", "com.pl", "com.es", "com.pt",
+])
+// Les mots d'un second niveau générique (co, com, asso…) : sous un suffixe qui en a un sans être dans la
+// liste, le nom relatif serait deviné. On ne donne alors que le nom complet.
+const SECONDS_NIVEAUX = new Set(["ac", "asn", "asso", "co", "com", "ed", "edu", "go", "gob", "gouv", "gov", "govt", "gv", "id", "ltd", "me", "mil", "ne", "net", "nom", "or", "org", "plc", "presse", "sch", "tm"])
+
+// L'enregistrement à créer chez le fournisseur du nom de domaine : un A vers le serveur. Le nom est la
+// partie avant le domaine enregistré (« app » pour app.client.fr, « www » pour www.monasso.asso.fr),
+// « @ » pour le domaine lui-même ; null quand le suffixe n'est pas sûr (seul le nom complet, hote, vaut).
 export function enregistrementDns(hote, ips = []) {
-  const nom = hote.split(".").length > 2 ? hote.split(".").slice(0, -2).join(".") : "@"
+  const parties = String(hote).split(".")
+  const double = SUFFIXES_DOUBLES.has(parties.slice(-2).join("."))
+  const douteux = !double && parties.length > 2 && SECONDS_NIVEAUX.has(parties.at(-2))
+  const longueur = double ? 3 : 2
+  const nom = douteux ? null : parties.length > longueur ? parties.slice(0, -longueur).join(".") : "@"
   return { type: "A", nom, hote, valeur: ips[0] ?? null }
 }
 
 export function instructionsDns(hote, ips) {
   const e = enregistrementDns(hote, ips)
-  return `Chez ton fournisseur de nom de domaine, crée cet enregistrement :\n• type *A* · nom *${e.nom}* (soit \`${hote}\`) · valeur *${e.valeur ?? "l'adresse IP du serveur"}*\nS'il existe déjà un enregistrement A ou CNAME pour \`${hote}\`, remplace-le. La propagation prend de quelques minutes à quelques heures : l'usine vérifie toute seule toutes les 2 minutes et te prévient ici.`
+  return `Chez ton fournisseur de nom de domaine, crée cet enregistrement :\n• type *A* · ${e.nom ? `nom *${e.nom}* (soit \`${hote}\`)` : `nom complet \`${hote}\``} · valeur *${e.valeur ?? "l'adresse IP du serveur"}*\nS'il existe déjà un enregistrement A ou CNAME pour \`${hote}\`, remplace-le. La propagation prend de quelques minutes à quelques heures : l'usine vérifie toute seule toutes les 2 minutes et te prévient ici.`
 }
 
 export async function ajouterDomaine(ctx, projetId, hote, par) {

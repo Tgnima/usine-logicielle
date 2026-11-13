@@ -3,7 +3,8 @@
 //     d'avant qu'avec assez d'essais des deux côtés (sous SEUIL_COMPARAISON : « trop peu pour comparer ») ;
 //   - les échecs (mises en ligne, projets en échec) se regroupent par cause normalisée, sans
 //     identifiant ni sha, avec une classe : passager (réseau, GitHub), environnement (mémoire, disque),
-//     configuration (clé, compte) ou code. Un échec passager suivi d'une réussite ne compte plus.
+//     configuration (clé, compte) ou code. Un échec passager suivi d'une réussite du même projet et du
+//     même environnement ne compte plus ; un échec encore en cours (statut.json) compte toujours.
 // Des fonctions pures : ni base, ni fichier, ni horloge.
 
 // --- Comparer deux semaines ----------------------------------------------------------------
@@ -31,54 +32,81 @@ export const CLASSES = ["passager", "environnement", "configuration", "code"]
 // (une limite de débit de GitHub répond 403, c'est passager) ; puis la configuration. Sinon : le code.
 const MOTIFS = [
   ["environnement", /\benospc\b|no space left|disque (?:plein|saturé)|disk (?:is )?full|\benomem\b|cannot allocate memory|out of memory|heap out of memory|oom-?kill|mémoire dépassée|code de sortie 137|exit(?:ed)?(?: with)? code 137|\bemfile\b|too many open files|cannot connect to the docker daemon|docker daemon (?:is not running|not responding)/i],
-  ["code", /\/api\/health|l'(?:aperçu|application) ne (?:répond|démarre) pas|ne démarre pas|\b(?:syntax|type|reference|range)error\b|cannot find module|err_module_not_found|npm err! code elifecycle|test\(s\) échouent|\beacces\b/i],
-  ["passager", /\betimedout\b|\beconnreset\b|\beconnrefused\b|\beai_again\b|\benotfound\b|\bepipe\b|socket hang up|fetch failed|network (?:error|is unreachable)|réseau (?:injoignable|indisponible)|timed out|délai dépassé|the operation was aborted|aborterror|\b50[234]\b|bad gateway|service unavailable|gateway time-?out|remote: internal server error|rate limit|too many requests|\b429\b|overloaded|\b529\b|usage limit|limite d'usage|temporarily|temporairement|try again later|réessaie plus tard|redémarré pendant|interrompu \d+ fois|n'a pas appliqué/i],
-  ["configuration", /\b40[13]\b|unauthori[sz]ed|forbidden|bad credentials|invalid (?:api[ -]?)?key|invalid x-api-key|authentication (?:failed|error|required)|not logged in|please run \/login|credit balance|insufficient (?:credit|funds|quota)|billing|\b402\b|payment required|resource not accessible by integration|permission denied \(publickey\)|token (?:expired|invalid)|jeton (?:expiré|invalide|manquant|refusé)|clé (?:api )?(?:invalide|refusée|manquante)|coffre verrouillé|manquant : |n'est configuré|not configured/i],
+  ["code", /\/api\/health|l'(?:aperçu|application) ne (?:répond|démarre) pas|ne démarre pas|\b(?:syntax|type|reference|range)error\b(?!:\s*fetch failed)|cannot find module|err_module_not_found|npm err! code elifecycle|test\(s\) échouent|\beacces\b/i],
+  ["passager", /\betimedout\b|\beconnreset\b|\beconnrefused\b|\beai_again\b|\benotfound\b|\bepipe\b|socket hang up|fetch failed|network (?:error|is unreachable)|réseau (?:injoignable|indisponible)|timed out|délai dépassé|the operation was aborted|aborterror|\b50[234]\b|bad gateway|service unavailable|gateway time-?out|remote: internal server error|rate limit|too many requests|\b429\b|overloaded|\b529\b|usage limit|limite d'usage|temporarily|temporairement|try again later|réessaie plus tard|redémarré pendant|interrompu \d+ fois|n'a pas appliqué|injoignable|\bund_err_[a-z_]+\b|could not resolve host|couldn't connect to server|failed to connect to|\benetunreach\b|\behostunreach\b|github 5\d\d\b|api error: 5\d\d\b/i],
+  ["configuration", /\b40[13]\b|unauthori[sz]ed|forbidden|bad credentials|invalid (?:api[ -]?)?key|invalid x-api-key|authentication (?:failed|error|required)|not logged in|please run \/login|credit balance|insufficient (?:credit|funds|quota)|billing|\b402\b|payment required|resource not accessible by integration|permission denied \(publickey\)|token (?:expired|invalid)|jeton (?:expiré|invalide|manquant|refusé)|clé (?:api )?(?:invalide|refusée|manquante)|coffre verrouillé|manquant : |n'est (?:pas )?configuré|not configured|a expiré|invisible pour le compte/i],
 ]
 
-export function classeEchec(message) {
-  const t = String(message ?? "").split("\n")[0]
-  return MOTIFS.find(([, motif]) => motif.test(t))?.[0] ?? "code"
-}
-
-// --- La signature d'un échec -----------------------------------------------------------------
-// Ce qui dit « où » plutôt que « pourquoi » : retiré, la cause reste.
+// --- La ligne qui dit la cause ---------------------------------------------------------------
+// Ce qui dit « où » plutôt que « pourquoi » : retiré, la cause reste. « TypeError: fetch failed »
+// (la pile d'une coupure réseau) se dit comme son message, « fetch failed ».
 const PREFIXES = [
   /^(?:uncaught )?(?:error|erreur)\s*:\s*/i,
+  /^typeerror:\s*(?=fetch failed)/i,
   /^livraison du lot \d+ à réessayer\s*:\s*/i,
   /^aperçu du lot \d+ en échec\s*:\s*/i,
   /^mise en production (?:en échec|refusée)\s*:\s*/i,
   /^pull request de livraison impossible\s*:\s*/i,
   /^push impossible\s*:\s*/i,
+  /^préparation impossible\s*:\s*/i,
+  /^création du socle impossible\s*:\s*/i,
   /^réorientation\s*:\s*/i,
   /^vidéo de présentation\s*:\s*/i,
   /^command failed\s*:\s*/i,
 ]
+function sansPrefixes(ligne) {
+  let t = String(ligne ?? "")
+  for (let tour = 0; tour < 3; tour++) for (const p of PREFIXES) t = t.replace(p, "")
+  return t
+}
+
+// La ligne qui dit la cause : la première (la suite est souvent une pile d'appels), sauf quand elle ne
+// porte que le contexte, comme « Création du socle impossible : » suivi du journal de l'atelier. C'est
+// alors la dernière ligne de la suite qui parle d'une erreur, à défaut sa dernière ligne ; jamais une
+// ligne de pile (« at … »).
+export function ligneUtile(message) {
+  const lignes = String(message ?? "").split("\n")
+  if (sansPrefixes(lignes[0]).replace(/[\s:]+$/, "")) return lignes[0]
+  const suite = lignes.slice(1).map((l) => l.trim()).filter((l) => l && !/^at\s/.test(l))
+  return suite.findLast((l) => /error|erreur|fatal|err!|failed|échec|impossible|denied|refus/i.test(l)) ?? suite.at(-1) ?? lignes[0]
+}
+
+export function classeEchec(message) {
+  const t = ligneUtile(message)
+  return MOTIFS.find(([, motif]) => motif.test(t))?.[0] ?? "code"
+}
+
+// --- La signature d'un échec -----------------------------------------------------------------
 export const SIGNATURE_MAX = 80
 const echapperRegex = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-// La cause d'un échec, la même d'une fois sur l'autre : la première ligne (la suite est une pile
-// d'appels), sans ce qui change à chaque fois (sha, numéros, adresses, chemins de fichier avec leur
-// ligne, noms des conteneurs) ni le nom du produit (retirer : son slug, son nom). Les codes HTTP
-// (4xx, 5xx) restent : 401 et 502 ne sont pas la même cause.
-export function signatureEchec(message, { retirer = [] } = {}) {
-  let t = String(message ?? "").split("\n")[0]
-  for (let tour = 0; tour < 3; tour++) for (const p of PREFIXES) t = t.replace(p, "")
+// La cause d'un échec, la même d'une fois sur l'autre : la ligne qui dit la cause (ligneUtile), sans ce
+// qui change à chaque fois (sha, numéros, adresses, chemins de fichier avec leur ligne, noms des
+// conteneurs, couleur blue ou green de la mise en ligne) ni le nom du produit (retirer : son slug, son
+// nom). Les codes HTTP (4xx, 5xx) restent : 401 et 502 ne sont pas la même cause.
+// nombres : garder les nombres (15 min, code 137) au lieu de N, pour montrer un exemple réel. Les
+// identifiants longs (6 chiffres et plus) sont alors retirés.
+export function signatureEchec(message, { retirer = [], nombres = false } = {}) {
+  let t = sansPrefixes(ligneUtile(message))
   t = t
     .replace(/https?:\/\/[^\s'")]+/gi, "une adresse")
     .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "une adresse IP")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
     .replace(/\b(?:le conteneur )?usine-(?:apercu|prod)-[a-z0-9-]+\b/gi, "l'application")
+    .replace(/\bl'application s'est arrêté(?!e)/g, "l'application s'est arrêtée")
     .replace(/\busine\/[a-z0-9-]+(?::[\w.-]+)?/gi, "l'image")
+    .replace(/\s*\((?:blue|green)\)/gi, "")
   for (const nom of retirer.filter((x) => typeof x === "string" && x.length >= 3)) t = t.replace(new RegExp(`(?<![\\w-])${echapperRegex(nom)}(?![\\w-])`, "gi"), "")
   t = t
     .replace(/(?:\(|\b)node:[a-z_/]+:\d+(?::\d+)?\)?/gi, "")
     .replace(/[\w./-]+\.(?:mjs|cjs|js|ts|tsx|jsx|json|py)(?::\d+){1,2}/gi, "un fichier")
     .replace(/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi, "")
     .replace(/#\d+/g, "")
+  t = nombres
+    ? t.replace(/\b\d{6,}\b/g, "")
     // Les nombres deviennent N (une tâche T4 ou T5, 15 ou 20 min : la même cause), sauf un code HTTP.
-    .replace(/\b([45]\d\d)\b/g, "\u0001$1")
-    .replace(/\u0001?\d+(?:[.,]\d+)*/g, (m) => (m.startsWith("\u0001") ? m.slice(1) : "N"))
+    : t.replace(/\b([45]\d\d)\b/g, "\u0001$1").replace(/\u0001?\d+(?:[.,]\d+)*/g, (m) => (m.startsWith("\u0001") ? m.slice(1) : "N"))
+  t = t
     .replace(/[`*]/g, "")
     .replace(/\(\s*\)/g, "")
     .replace(/\s+([,.)])/g, "$1")
@@ -93,28 +121,41 @@ export function signatureEchec(message, { retirer = [] } = {}) {
 export const classerEchec = (message, options = {}) => ({ classe: classeEchec(message), signature: signatureEchec(message, options) })
 
 // --- Les échecs de la semaine, par cause ---------------------------------------------------------
-// echecs : [{ message, le (ms), projet (id ou null), nom (pour la liste), retirer ([slug, nom]), actuel }] ;
-// reussites : [{ le (ms), projet (id ou null) }]. Un échec passager suivi d'une réussite du même projet
-// (de n'importe quel projet pour un échec de l'usine elle-même) ne compte plus : il est seulement compté
-// dans passageres (aujourdhui : son jour, par jour(le), est celui d'aujourd'hui). Un échec « actuel »
-// (toujours en échec, comme le dit statut.json) n'est jamais effacé. texte(message) : le message dit avec
-// les mots de l'usine avant d'en tirer la cause montrée (la classe, elle, se lit sur le message d'origine).
+// echecs : [{ message, le (ms), projet (id ou null), environnement, nom (pour la liste), retirer ([slug,
+// nom]), actuel, reessaie }] ; reussites : [{ le (ms), projet (id ou null), environnement }].
+// environnement : « apercu », « production », ou absent pour la fabrication (analyse, création, fonctions).
+//
+// Un échec passager s'efface devant une réussite qui le suit, du même projet (de n'importe quel projet pour
+// un échec de l'usine elle-même) et du même environnement : une fusion n'efface pas un aperçu en échec. Il
+// est alors seulement compté dans passageres (aujourdhui : son jour, par jour(le), est celui d'aujourd'hui).
+// Un échec « actuel » (toujours en échec, comme le dit statut.json) n'est jamais effacé.
+//
+// texte(message) : le message dit avec les mots de l'usine, avant d'en tirer la cause et l'exemple (la
+// classe, elle, se lit sur le message d'origine). Chaque groupe porte sa cause (la clé du regroupement, N
+// pour un nombre), son exemple (le dernier message réel, nettoyé, avec ses nombres : c'est lui qui se
+// montre) et reessaie (l'usine relance seule chacun de ses échecs).
 export function regrouperEchecs(echecs, reussites = [], { jour = (le) => new Date(le).toISOString().slice(0, 10), aujourdhui = null, texte = (s) => s } = {}) {
   const groupes = new Map()
   const passageres = { aujourdhui: 0, semaine: 0 }
+  const lieu = (x) => x.environnement ?? null
   for (const e of echecs) {
     const classe = classeEchec(e.message)
-    const suivi = !e.actuel && reussites.some((r) => r.le > e.le && (e.projet === null || e.projet === undefined || r.projet === e.projet))
+    const suivi = !e.actuel && reussites.some((r) => r.le > e.le && (e.projet === null || e.projet === undefined || r.projet === e.projet) && lieu(r) === lieu(e))
     if (classe === "passager" && suivi) {
       passageres.semaine += 1
       if (aujourdhui && jour(e.le) === aujourdhui) passageres.aujourdhui += 1
       continue
     }
-    const cause = signatureEchec(texte(String(e.message ?? "")), { retirer: e.retirer ?? [] })
+    const dit = texte(String(e.message ?? ""))
+    const cause = signatureEchec(dit, { retirer: e.retirer ?? [] })
     const cle = `${classe}|${cause}`
-    const g = groupes.get(cle) ?? { classe, cause, n: 0, projets: [], dernier: 0 }
+    const g = groupes.get(cle) ?? { classe, cause, exemple: cause, n: 0, projets: [], dernier: 0, reessaie: true }
     g.n += 1
-    g.dernier = Math.max(g.dernier, e.le)
+    if (e.le >= g.dernier) {
+      g.dernier = e.le
+      g.exemple = signatureEchec(dit, { retirer: e.retirer ?? [], nombres: true })
+    }
+    g.reessaie = g.reessaie && Boolean(e.reessaie)
     if (e.nom && !g.projets.includes(e.nom)) g.projets.push(e.nom)
     groupes.set(cle, g)
   }

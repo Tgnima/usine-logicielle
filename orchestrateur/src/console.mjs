@@ -25,7 +25,7 @@ import { repondreDansLeFil } from "./conversation.mjs"
 import { decrireApercu, garderApercu, mettreAJourUsine, prolongerApercu, retirerApercu, supprimerProjet } from "./cycle.mjs"
 import { etatUsine, lireSanteServeur, resumeEtat } from "./sante.mjs"
 import { bilanMois, bilanProjet, budgetMensuel, budgetProjet, ecrireReglage, evolution, lireReglage, montant, reglagesCouts } from "./couts.mjs"
-import { ajouterDomaine, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
+import { ajouterDomaine, enregistrementDns, ipServeur, listerDomaines, retirerDomaine } from "./domaines.mjs"
 import { portier, quiEstConnecte } from "./portier.mjs"
 import { envoiDisponible } from "./courriel.mjs"
 import { ajouterConnecteur, effacerCleConnecteur, listerConnecteurs, poserCleConnecteur, reglerConnecteur, retirerConnecteur, testerConnecteur } from "./connecteurs.mjs"
@@ -179,7 +179,8 @@ async function detailProjet(ctx, id) {
     production_choix: choixProduction(config, p.production ? JSON.parse(p.production) : null),
     production_texte: p.production ? decrireChoix(JSON.parse(p.production)) : null,
     domaines: listerDomaines(db, id),
-    domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id),
+    // nom : le nom à créer chez le fournisseur (null quand seul le nom complet est sûr, domaines.mjs).
+    domaines_liste: db.prepare("SELECT hote, statut, message, verifie_le FROM domaines WHERE projet_id = ? AND statut != 'retire' ORDER BY id").all(id).map((d) => ({ ...d, nom: enregistrementDns(d.hote).nom })),
     ip_serveur: (await ipServeur(config).catch(() => []))[0] ?? null,
     // Chaque capture porte son lot : le volet « Produit » les montre lot par lot.
     captures: capturesProjet(ctx, id).map((c) => ({ ...c, lot: t.find((x) => x.cle === c.tache)?.lot ?? null })),

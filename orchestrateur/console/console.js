@@ -121,8 +121,9 @@ const etat = {
   departPublic: null, // le point de départ choisi pour créer un public (decrire, documents, github, fiche)
   jetons: null, // les jetons « depuis ma machine »
   jetonCree: null, // le jeton qui vient d'être créé, montré une seule fois
-  envoyes: new Map(), // la file d'attention : les actions déjà envoyées (clé → { le, texte }), tant qu'elles y restent
-  consigneOuverte: null, // la décision dont la saisie « Autre consigne » est ouverte (Visibilité)
+  envoyes: new Map(), // la file d'attention : les actions déjà envoyées (clé → { le, texte, projet }), tant qu'elles y restent
+  consignesOuvertes: new Set(), // les décisions dont la saisie « Autre consigne » est ouverte (Visibilité)
+  brouillons: new Map(), // la consigne tapée pour chaque décision (id → texte) : elle survit à chaque nouveau rendu
 }
 
 // Les réglages ont un sous-menu (Base44, Unify) : l'équipe, l'utilisation et l'historique y vivent.
@@ -786,7 +787,8 @@ function etapesTache(t, noms) {
 function blocDecision(p, e) {
   const d = e.presentation
   const avecConsigne = d.options.some((o) => o.cle === "A")
-  // Une décision cliquée part au bout de 5 s (Annuler d'ici là), comme dans la file d'attention.
+  // Une décision cliquée part au bout de 5 s (Annuler d'ici là), comme dans la file d'attention. Pendant
+  // ce délai, la consigne reste lisible (en lecture seule) et les options restent à leur place, désactivées.
   const attente = decisionsEnCours.lire(e.id)
   const envoyee = etat.envoyes.get(`decision:${e.id}`)
   return html`<section class="carte carte-p pile decision" aria-labelledby="decision-${e.id}">
@@ -795,10 +797,10 @@ function blocDecision(p, e) {
     <p style="margin:0;color:var(--texte)">L'usine s'est arrêtée parce que ${d.raison}.</p>
     ${d.vu.length ? html`<div><strong style="font-size:14px">Ce que le contrôle a vu</strong><ul class="vu">${d.vu.map((x) => html`<li>${nettoyer(x)}</li>`)}</ul></div>` : ""}
     ${d.pourquoi ? html`<div class="message info"><span><strong>L'usine recommande : ${d.options.find((o) => o.recommande)?.libelle ?? ""}.</strong> ${d.pourquoi}</span></div>` : ""}
-    ${avecConsigne && !attente && !envoyee ? html`<label class="titre-champ" for="consigne-${e.id}">Ta consigne pour l'agent <span class="aide" style="font-weight:400">· facultative, utilisée si l'usine reprend</span></label>
-      <textarea id="consigne-${e.id}" class="champ" rows="2" placeholder="Ex. : filtre sur la date du dernier email envoyé, pas sur la date de création du contact."></textarea>` : ""}
-    ${envoyee ? html`<p class="envoye" role="status">${envoyee.texte}</p>` : attente ? ligneAttenteDecision(e.id, attente) : html`<div class="options-decision">${d.options.map((o) => html`<button type="button" class="choix-decision${o.recommande ? " recommande" : ""}" data-action="decider" data-id="${e.id}" data-choix="${o.cle}" data-libelle="${o.libelle}" data-tache="${e.tache ?? ""}">
-      <strong>${o.libelle}${o.recommande ? html` <span class="badge bleu">recommandé</span>` : ""}</strong><span>${o.consequence || o.detail}</span></button>`)}</div>`}
+    ${avecConsigne && !envoyee ? html`<label class="titre-champ" for="consigne-${e.id}">Ta consigne pour l'agent <span class="aide" style="font-weight:400">· facultative, utilisée si l'usine reprend</span></label>
+      <textarea id="consigne-${e.id}" class="champ" rows="2" data-consigne="${e.id}" placeholder="Ex. : filtre sur la date du dernier email envoyé, pas sur la date de création du contact." ${attente ? "readonly" : ""}>${etat.brouillons.get(e.id) ?? ""}</textarea>` : ""}
+    ${envoyee ? html`<p class="envoye" role="status" tabindex="-1" id="envoye-decision-${e.id}" data-repli="#principal">${envoyee.texte}</p>`
+      : html`${optionsDecision(e.id, d.options, { tache: e.tache, projet: p.id, attente })}${attente ? ligneAttenteDecision(e.id, attente) : ""}`}
     ${REORIENTABLES.includes(p.statut) ? html`<button type="button" class="lien-btn" style="align-self:flex-start;padding-left:0" data-action="ouvrir-reorienter">Ou changer de direction pour tout le projet</button>` : ""}
   </section>`
 }
@@ -1139,7 +1141,7 @@ function blocProduction(p) {
           ${p.domaines_liste.map((d) => html`<div class="pile" style="border:1px solid ${d.statut === "actif" ? "var(--trait)" : "var(--signal-trait)"};border-radius:10px;padding:12px;gap:8px">
             <div class="barre"><span class="mono" style="font-weight:500">${d.hote}</span>${d.statut === "actif" ? html`<span class="badge vert">actif</span>` : d.statut === "certificat" ? html`<span class="badge bleu">certificat en cours</span>` : html`<span class="badge orange">en attente du DNS</span>`}</div>
             ${d.statut === "attente_dns" ? html`<div style="font-size:13px">Crée cet enregistrement chez ton fournisseur de domaine :</div>
-              <div class="dns mono"><span>type</span><span>nom</span><span>valeur</span><span>A</span><span>${d.hote.split(".").length > 2 ? d.hote.split(".").slice(0, -2).join(".") : "@"}</span><span>${p.ip_serveur ?? "IP du serveur"}</span></div>
+              <div class="dns mono"><span>type</span><span>${d.nom ? "nom" : "nom complet"}</span><span>valeur</span><span>A</span><span>${d.nom ?? d.hote}</span><span>${p.ip_serveur ?? "IP du serveur"}</span></div>
               <div class="aide">${d.message ?? "vérifié toutes les 2 minutes"}</div>` : ""}
             <div><button type="button" class="btn btn-d btn-petit" data-action="retirer-domaine" data-hote="${d.hote}">Retirer</button></div>
           </div>`)}
@@ -1939,7 +1941,7 @@ function blocAttente(v) {
   const l = v.attend
   const c = compteAttente(l)
   return html`<section class="pile" aria-labelledby="v-attend">
-    <div class="rangee"><h2 id="v-attend">Ce qui t'attend</h2>${c.total ? html`<span class="badge orange">${c.total}</span>` : ""}${c.reparer ? html`<span class="badge rouge">${c.reparer} à réparer</span>` : ""}</div>
+    <div class="rangee"><h2 id="v-attend" tabindex="-1">Ce qui t'attend</h2>${c.total ? html`<span class="badge orange">${c.total}</span>` : ""}${c.reparer ? html`<span class="badge rouge">${c.reparer} à réparer</span>` : ""}</div>
     ${l.length ? GROUPES_ATTENTE.map(([g, nom]) => {
       const elements = l.filter((x) => groupeAttente(x) === g)
       return elements.length ? html`<div class="groupe-attente ${g}"><h3 class="surtitre">${nom} · ${elements.length}</h3>
@@ -1963,9 +1965,9 @@ function elementAttente(x, v) {
 // l'enregistrement exact à créer. Déjà envoyée (par la page, ou notée par le serveur) : on le dit.
 function actionAttente(x) {
   const envoye = etat.envoyes.get(cleAttente(x)) ?? x.envoye
-  if (envoye) return html`<p class="envoye" role="status">${envoye.texte}${envoye.le ? ` à ${heureParis(envoye.le)}` : ""} : la file se met à jour toute seule.</p>`
-  if (x.decision) return choixSurPlace(x.decision)
-  if (x.type === "decision") return html`<p class="aide" style="margin:0">Le projet change de direction : cette décision attend le nouveau plan, sur la page du projet.</p>`
+  // Le focus y passe quand la décision part (envoyerDecision) ; quand l'élément quitte la file, il revient au titre.
+  if (envoye) return html`<p class="envoye" role="status" tabindex="-1" id="envoye-${cleAttente(x).replace(/[^a-z0-9-]/gi, "-")}" data-repli="#v-attend">${envoye.texte}${envoye.le ? ` à ${heureParis(envoye.le)}` : ""} : la file se met à jour toute seule.</p>`
+  if (x.decision) return choixSurPlace(x.decision, x.projet)
   const a = x.action
   if (!a) return ""
   if (a.type === "relancer") return html`<div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-attente" data-id="${a.projet}" data-cle="${cleAttente(x)}">${a.libelle}</button><span class="aide">${x.refait}</span></div>`
@@ -1973,34 +1975,47 @@ function actionAttente(x) {
   if (a.type === "commande") return html`<div><strong style="font-size:14px">${a.libelle}</strong><div class="aide">${a.aide}</div><pre class="commande mono">${a.commandes.join("\n")}</pre></div>`
   if (a.type === "enregistrement" && x.enregistrement) {
     const e = x.enregistrement
-    return html`<dl class="enregistrement"><div><dt>Type</dt><dd class="mono">${e.type}</dd></div><div><dt>Nom</dt><dd class="mono">${e.nom}</dd></div><div><dt>Valeur</dt><dd class="mono">${e.valeur ?? "l'adresse IP du serveur"}</dd></div></dl>`
+    // Le nom à créer seulement quand il est sûr (domaines.mjs) ; le nom complet, toujours.
+    return html`<dl class="enregistrement"><div><dt>Type</dt><dd class="mono">${e.type}</dd></div>${e.nom ? html`<div><dt>Nom</dt><dd class="mono">${e.nom}</dd></div>` : ""}<div><dt>Nom complet</dt><dd class="mono">${e.hote}</dd></div><div><dt>Valeur</dt><dd class="mono">${e.valeur ?? "l'adresse IP du serveur"}</dd></div></dl>`
   }
   return ""
 }
 
 // Une décision prise sur place : l'option recommandée et sa conséquence d'abord, puis les autres, puis
 // « Autre consigne » quand l'option A reprend la fonction. Le clic ne part pas tout de suite (5 s, Annuler).
-function choixSurPlace(d) {
+function choixSurPlace(d, projet = null) {
   const attente = decisionsEnCours.lire(d.id)
-  if (attente) return ligneAttenteDecision(d.id, attente)
   const a = d.options.find((o) => o.cle === "A")
-  const boutons = html`<div class="options-decision">${d.options.map((o) => html`<button type="button" class="choix-decision${o.recommande ? " recommande" : ""}" data-action="decider" data-id="${d.id}" data-choix="${o.cle}" data-libelle="${o.libelle}" data-tache="${d.tache ?? ""}">
-    <strong>${o.libelle}${o.recommande ? html` <span class="badge bleu">recommandé</span>` : ""}</strong><span>${o.consequence}</span></button>`)}</div>`
-  if (!d.consigne || !a) return boutons
-  if (etat.consigneOuverte !== d.id) return html`${boutons}<button type="button" class="lien-btn" style="align-self:flex-start;padding-left:0" data-action="consigne-ouvrir" data-id="${d.id}">Autre consigne</button>`
+  const boutons = optionsDecision(d.id, d.options, { tache: d.tache, projet, attente })
+  const fin = attente ? ligneAttenteDecision(d.id, attente) : ""
+  if (!d.consigne || !a) return html`${boutons}${fin}`
+  // Fermée, la consigne tapée reste gardée (etat.brouillons) : le lien le dit.
+  if (!etat.consignesOuvertes.has(d.id)) return html`${boutons}<button type="button" class="lien-btn" style="align-self:flex-start;padding-left:0" data-action="consigne-ouvrir" data-id="${d.id}" ${attente ? "disabled" : ""}>${etat.brouillons.get(d.id)?.trim() ? "Reprendre ta consigne" : "Autre consigne"}</button>${fin}`
   return html`${boutons}<div class="pile" style="gap:6px">
     <label class="titre-champ" for="consigne-l-${d.id}">Ta consigne pour l'agent</label>
-    <textarea id="consigne-l-${d.id}" class="champ" rows="2" placeholder="Ex. : garde la pagination actuelle, change seulement le tri."></textarea>
-    <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="decider" data-id="${d.id}" data-choix="A" data-avec-consigne="1" data-libelle="${a.libelle}" data-tache="${d.tache ?? ""}">${a.libelle} avec cette consigne</button>
-      <button type="button" class="lien-btn" data-action="consigne-fermer" data-id="${d.id}">Fermer</button></div>
-  </div>`
+    <textarea id="consigne-l-${d.id}" class="champ" rows="2" data-consigne="${d.id}" placeholder="Ex. : garde la pagination actuelle, change seulement le tri." ${attente ? "readonly" : ""}>${etat.brouillons.get(d.id) ?? ""}</textarea>
+    <div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="decider" data-id="${d.id}" data-choix="A" data-avec-consigne="1" data-libelle="${a.libelle}" data-tache="${d.tache ?? ""}" data-projet="${projet ?? ""}" ${attente ? "disabled" : ""}>${a.libelle} avec cette consigne</button>
+      <button type="button" class="lien-btn" data-action="consigne-fermer" data-id="${d.id}" ${attente ? "disabled" : ""}>Fermer</button></div>
+  </div>${fin}`
 }
 
-// La décision en attente d'envoi : ce qui va partir, et Annuler avec le temps qui reste.
+// Les options d'une décision (file d'attention et page du projet). Pendant le délai, elles restent à leur
+// place, désactivées, et celle qui part est marquée « choisie » : un second clic tombe sur un bouton
+// inerte, jamais sur l'option voisine ni sur Annuler.
+function optionsDecision(id, options, { tache = null, projet = null, attente = null } = {}) {
+  return html`<div class="options-decision">${options.map((o) => {
+    const choisie = attente?.choix === o.cle
+    return html`<button type="button" class="choix-decision${o.recommande ? " recommande" : ""}${choisie ? " choisie" : ""}" data-action="decider" data-id="${id}" data-choix="${o.cle}" data-libelle="${o.libelle}" data-tache="${tache ?? ""}" data-projet="${projet ?? ""}" ${attente ? "disabled" : ""}>
+    <strong>${o.libelle}${o.recommande ? html` <span class="badge bleu">recommandé</span>` : ""}${choisie ? html` <span class="badge orange">choisie</span>` : ""}</strong><span>${o.consequence || o.detail || ""}</span></button>`
+  })}</div>`
+}
+
+// La décision en attente d'envoi : ce qui va partir, dans combien de secondes, et Annuler. Le départ est
+// aussi annoncé aux lecteurs d'écran (annoncer, au clic).
 function ligneAttenteDecision(id, d) {
   const reste = Math.max(0, Math.ceil((d.fin - Date.now()) / 1000))
-  return html`<div class="decision-attente"><span>${d.quoi}</span>
-    <button type="button" class="btn btn-s btn-petit" data-action="annuler-decision" data-id="${id}" aria-label="Annuler : ${d.quoi}">Annuler (<span data-compte="${id}" aria-hidden="true">${reste}</span> s)</button></div>`
+  return html`<div class="decision-attente" data-attente="${id}"><span>${d.quoi} : part dans <span data-compte="${id}">${reste}</span> s</span>
+    <button type="button" class="btn btn-s btn-petit" data-action="annuler-decision" data-id="${id}" aria-label="Annuler : ${d.quoi}">Annuler</button></div>`
 }
 
 function carteProduit(x) {
@@ -2249,7 +2264,7 @@ function blocSemaine(v) {
     <div class="barre"><h2 id="v-semaine">7 derniers jours</h2><span class="aide">${periode}</span></div>
     <div class="chiffres">
       ${chiffre("Fonctions ajoutées", nombre(w.fusions), reussis, avantReussis)}
-      ${chiffre("Refus du contrôle", nombre(w.refus), w.essais ? `sur ${essais(w.essais)}, versions refaites` : "aucune version refaite", p ? `semaine d'avant : ${nombre(p.refus)}` : "")}
+      ${chiffre("Refus du contrôle", nombre(w.refus), w.refus ? `sur ${essais(w.essais)}, versions refaites` : w.essais ? `sur ${essais(w.essais)}, aucune version refaite` : "aucune version refaite", p ? `semaine d'avant : ${nombre(p.refus)}` : "")}
       ${chiffre("Décisions demandées", nombre(w.escalades), w.escalades ? "l'usine a demandé de l'aide" : "aucune aide demandée", p ? `semaine d'avant : ${nombre(p.escalades)}` : "")}
       ${chiffre("Coût au prix public", w.cout_api_texte, w.cout_incomplet ? "ce qu'aurait coûté l'IA (une partie sans prix connu)" : "ce qu'aurait coûté l'IA", p ? `semaine d'avant : ${p.cout_api_texte}` : "")}
       ${chiffre("Temps de calcul", `${nombre(w.heures, 1)} h`, "IA au travail", p ? `semaine d'avant : ${nombre(p.heures, 1)} h` : "")}
@@ -2284,7 +2299,9 @@ function blocSemaine(v) {
 // Ce qui a échoué (mises en ligne, projets en échec), regroupé par cause, avec sa classe (bilan.mjs).
 // Une erreur passagère relancée avec succès ne compte plus : une ligne discrète la mentionne.
 const CLASSES_ECHEC = {
-  passager: ["Passager", "réseau ou GitHub, l'usine réessaie", "bleu"],
+  // « L'usine réessaie » seulement pour un groupe qu'elle relance vraiment seule (g.reessaie, visibilite.mjs) :
+  // un projet en échec ou une mise en ligne escaladée attendent quelqu'un.
+  passager: ["Passager", "un incident passager : une relance suffit en général", "bleu"],
   environnement: ["Environnement", "mémoire ou disque du serveur", "orange"],
   configuration: ["Configuration", "une clé ou un compte à régler", "orange"],
   code: ["Code", "le code du produit ou de l'usine", "rouge"],
@@ -2297,8 +2314,10 @@ function blocEchecs(w) {
   const discret = n ? `${n} erreur${n > 1 ? "s" : ""} passagère${n > 1 ? "s" : ""} ${quand}, relancée${n > 1 ? "s" : ""} avec succès.` : ""
   return html`<div class="carte carte-p pile"><h3 class="surtitre">Ce qui a échoué, par cause</h3>
     ${e.groupes.length ? html`<ul class="echecs">${e.groupes.map((g) => {
-      const [nom, sens, ton] = CLASSES_ECHEC[g.classe] ?? [g.classe, "", ""]
-      return html`<li><span class="badge ${ton}">${nom}</span><span class="echec-cause">${g.cause}</span><span class="mono" style="text-align:right">${g.n}</span>
+      const [nom, classe, ton] = CLASSES_ECHEC[g.classe] ?? [g.classe, "", ""]
+      const sens = g.classe === "passager" && g.reessaie ? "un incident passager : l'usine réessaie seule" : classe
+      // L'exemple : le dernier message réel, avec ses nombres ; la cause (avec N) ne sert qu'à regrouper.
+      return html`<li><span class="badge ${ton}">${nom}</span><span class="echec-cause">${g.exemple ?? g.cause}</span><span class="mono" style="text-align:right">${g.n}</span>
         <span class="aide echec-detail">${sens}${g.projets.length ? ` · ${g.projets.join(", ")}` : ""} · la dernière fois le ${momentParis(g.dernier)}</span></li>`
     })}</ul>`
       : html`<p class="aide" style="margin:0">Aucune mise en ligne ni aucun projet en échec sur ces 7 jours.</p>`}
@@ -2343,7 +2362,9 @@ function rendre() {
   // Un élément sans clé (ni data-*, ni id) ne se retrouve pas : on ne donne pas le focus au premier venu.
   if (cleFocus && cleFocus !== "|||||") {
     const cible = [...m.querySelectorAll("button, a, input, select, textarea, [tabindex]")].find((x) => cleDe(x) === cleFocus)
-    cible?.focus({ preventScroll: true })
+    // Disparu (une décision partie qui quitte la liste) : le focus va à son repli, pas en haut de la page.
+    if (cible) cible.focus({ preventScroll: true })
+    else if (a.dataset?.repli) $(a.dataset.repli)?.focus({ preventScroll: true })
   }
   const j2 = $("#journal")
   if (j2 && enBas) j2.scrollTop = j2.scrollHeight
@@ -2386,7 +2407,12 @@ async function charger({ silencieux = false } = {}) {
     if (["accueil", "personas", "projet"].includes(r.vue)) taches.push(api("GET", "personas").then((x) => { if (frais()) { etat.personas = x.personas; rendre() } }))
     if (r.vue === "persona") charge(`personas/${r.id}`, "persona")
     if (sec === "historique") charge(`historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`, "historique")
-    if (r.vue === "projet") charge(`projets/${r.id}`, "projet")
+    if (r.vue === "projet") taches.push(api("GET", `projets/${r.id}`).then((x) => {
+      if (!frais()) return
+      etat.projet = x
+      oublierDecisions((cle, v) => v.projet === x.id && !x.escalades.some((e) => cle === `decision:${e.id}`))
+      rendre()
+    }))
     // Visibilité : un échec se montre sur la page (les derniers chiffres restent, avec leur heure).
     if (r.vue === "visibilite") {
       // Le projet de la vue « tâche par tâche » : celui de l'adresse, celui choisi, sinon le plus récemment travaillé.
@@ -2395,6 +2421,7 @@ async function charger({ silencieux = false } = {}) {
         if (!frais()) return
         etat.visibilite = x
         etat.visibiliteErreur = null
+        oublierDecisions((cle) => !x.attend.some((y) => cleAttente(y) === cle))
         rendre()
         const id = etat.visibiliteProjet ?? x.projets_taches?.[0]?.id
         if (id) return api("GET", `visibilite/projets/${Number(id)}`).then((m) => {
@@ -2439,7 +2466,8 @@ function enSaisie() {
   if (etat.planModifie || etat.confirmer || etat.occupe) return true
   if ([...document.querySelectorAll("#principal video")].some((v) => !v.paused)) return true
   if ([...document.querySelectorAll("#principal input[type=checkbox]")].some((x) => x.checked !== x.defaultChecked)) return true
-  return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio]):not([type=checkbox])")].some((x) => x.value && x.defaultValue !== x.value)
+  // La consigne d'une décision est gardée dans l'état (etat.brouillons) : hors du champ, elle ne bloque rien.
+  return [...document.querySelectorAll("#principal textarea, #principal input:not([type=radio]):not([type=checkbox])")].some((x) => x.value && x.defaultValue !== x.value && !x.matches("[data-consigne]"))
 }
 
 function bloquer(oui) {
@@ -2574,8 +2602,22 @@ function prevenir(resume) {
     }
   }
   etat.vus = cles
-  // Une action envoyée reste signalée tant que son élément est dans la file.
-  for (const cle of etat.envoyes.keys()) if (!tout.some((x) => cleAttente(x) === cle)) etat.envoyes.delete(cle)
+  // Une action envoyée reste signalée tant que son élément est dans la file. Une décision, elle, attend que
+  // la liste dessinée soit relue (Visibilité, page du projet : oublierDecisions) : la file arrive avant,
+  // et ses boutons reviendraient le temps que cette liste arrive.
+  for (const cle of etat.envoyes.keys()) if (!cle.startsWith("decision:") && !tout.some((x) => cleAttente(x) === cle)) etat.envoyes.delete(cle)
+}
+// Les décisions envoyées qui ont quitté la liste relue (absente(cle, envoi)) ne sont plus signalées.
+function oublierDecisions(absente) {
+  for (const [cle, v] of etat.envoyes) if (cle.startsWith("decision:") && absente(cle, v)) etat.envoyes.delete(cle)
+}
+
+// Une annonce pour les lecteurs d'écran (#annonce, aria-live, invisible) : rien ne bouge dans la page.
+function annoncer(texte) {
+  const zone = $("#annonce")
+  if (!zone) return
+  zone.textContent = ""
+  setTimeout(() => { zone.textContent = texte }, 50)
 }
 
 // --- Décider sur place, avec « Annuler » pendant 5 s ---------------------------------------------
@@ -2613,19 +2655,57 @@ const decisionsEnCours = decisionsDifferees(envoyerDecision)
 
 async function envoyerDecision(id, d) {
   const cle = `decision:${id}`
-  etat.envoyes.set(cle, { le: new Date().toISOString(), texte: `${d.quoi} : décision envoyée` })
-  if (!enSaisie()) rendre()
+  etat.envoyes.set(cle, { le: new Date().toISOString(), texte: `${d.quoi} : décision envoyée`, projet: d.projet ?? null })
+  // Le focus était sur Annuler : il passe au texte qui le remplace, pas en haut de la page.
+  const avaitLeFocus = Boolean(document.activeElement?.closest?.(`[data-attente="${id}"]`))
+  // Pendant une saisie ailleurs, on ne redessine pas : seule la ligne d'attente change.
+  if (enSaisie()) marquerEnvoyee(id)
+  else rendre()
+  if (avaitLeFocus) $(`#envoye-decision-${id}`)?.focus({ preventScroll: true })
   try {
     const r = await api("POST", `escalades/${id}`, { choix: d.choix, texte: d.texte })
     if (r?.ok === false) etat.envoyes.delete(cle)
+    else {
+      // Partie : sa consigne n'a plus d'objet.
+      etat.brouillons.delete(id)
+      etat.consignesOuvertes.delete(id)
+    }
     etat.message = r?.ok === false ? { type: "info", texte: r.message } : { type: "ok", texte: `${d.quoi} : décision transmise, l'usine reprend.` }
   } catch (e) {
     etat.envoyes.delete(cle)
     etat.message = { type: "erreur", texte: e.message }
   }
-  // Pendant une saisie ailleurs, on ne redessine pas : le message s'affiche, la page suivra.
-  if (enSaisie()) return afficherMessages()
+  // Pendant une saisie ailleurs, on ne redessine pas : le message s'affiche, la page suivra. Une décision
+  // refusée ne reste pas marquée « envoyée ».
+  if (enSaisie()) {
+    const p = !etat.envoyes.has(cle) && $(`#envoye-decision-${id}`)
+    if (p) p.textContent = `${d.quoi} : pas envoyée.`
+    return afficherMessages()
+  }
   await charger({ silencieux: true })
+}
+
+// La décision partie, sans redessiner la page : sa ligne d'attente devient « … : décision envoyée ».
+// Plus de bouton Annuler qui ne ferait plus rien.
+function marquerEnvoyee(id) {
+  const ligne = $(`[data-attente="${id}"]`)
+  if (!ligne) return
+  const p = document.createElement("p")
+  p.className = "envoye"
+  p.id = `envoye-decision-${id}`
+  p.tabIndex = -1
+  p.setAttribute("role", "status")
+  p.textContent = etat.envoyes.get(`decision:${id}`)?.texte ?? "Décision envoyée"
+  ligne.replaceWith(p)
+}
+
+// Une décision : un seul clic compte. Le second clic d'un double clic, et tout clic à moins de
+// GARDE_DECISION d'un lancement ou d'une annulation (Entrée tenue, clics rapprochés), ne font rien : sans
+// cela, le bouton qui prend la place du premier recevrait le second.
+const GARDE_DECISION = 400
+let derniereBascule = 0
+function clicIgnore(action, { detail = 0, maintenant = Date.now(), derniere = 0 } = {}) {
+  return ["decider", "annuler-decision"].includes(action) && (detail > 1 || maintenant - derniere < GARDE_DECISION)
 }
 
 // Le temps qui reste, chaque quart de seconde, sans redessiner la page.
@@ -2830,35 +2910,50 @@ const ACTIONS = {
   // Une décision (page du projet ou file d'attention) : elle part au bout de 5 s, sauf Annuler (decisionsDifferees).
   decider: (el) => {
     const id = Number(el.dataset.id)
-    const champ = el.dataset.avecConsigne ? $(`#consigne-l-${id}`) : $(`#consigne-${id}`)
-    const texte = el.dataset.choix === "A" ? champ?.value.trim() ?? "" : ""
-    if (el.dataset.avecConsigne && !texte) return champ?.focus()
-    const quoi = `${el.dataset.libelle || `Option ${el.dataset.choix}`}${el.dataset.tache ? ` ${el.dataset.tache}` : ""}${texte ? " avec ta consigne" : ""}`
-    if (!decisionsEnCours.lancer(id, { choix: el.dataset.choix, texte, quoi })) return
-    etat.consigneOuverte = null
+    // La consigne affichée pour cette décision (page du projet, ou « Autre consigne » ouverte) : A l'emporte,
+    // que le clic vienne de la carte A ou de « … avec cette consigne ».
+    const champ = el.dataset.avecConsigne ? $(`#consigne-l-${id}`) : ($(`#consigne-${id}`) ?? $(`#consigne-l-${id}`))
+    const tapee = champ?.value.trim() ?? ""
+    if (el.dataset.avecConsigne && !tapee) return champ?.focus()
+    const texte = el.dataset.choix === "A" ? tapee : ""
+    // Une consigne tapée qui ne part pas (B ou C, ou saisie refermée) : la ligne d'attente le dit, et le
+    // brouillon reste gardé pour une annulation.
+    const sans = (tapee || (etat.brouillons.get(id) ?? "").trim()) && !texte ? " (ta consigne n'est pas transmise)" : ""
+    const quoi = `${el.dataset.libelle || `Option ${el.dataset.choix}`}${el.dataset.tache ? ` ${el.dataset.tache}` : ""}${texte ? " avec ta consigne" : sans}`
+    if (!decisionsEnCours.lancer(id, { choix: el.dataset.choix, texte, quoi, projet: Number(el.dataset.projet) || null })) return
+    derniereBascule = Date.now()
     rendre()
     $(`[data-action=annuler-decision][data-id="${id}"]`)?.focus()
+    annoncer(`${quoi} : part dans 5 secondes. Annuler pour l'arrêter.`)
     suivreDecisions()
   },
   "annuler-decision": (el) => {
     const id = Number(el.dataset.id)
     const d = decisionsEnCours.annuler(id)
-    if (!d) return
+    if (!d) {
+      // Déjà partie : le dire, plutôt qu'un bouton sans effet.
+      if (etat.envoyes.has(`decision:${id}`)) {
+        etat.message = { type: "info", texte: "Trop tard : la décision est déjà partie." }
+        afficherMessages()
+      }
+      return
+    }
+    derniereBascule = Date.now()
     etat.message = { type: "info", texte: `${d.quoi} : annulé, rien n'a été envoyé.` }
-    // La consigne revient dans son champ.
-    if (d.texte && !$(`#consigne-${id}`)) etat.consigneOuverte = id
+    // La consigne est restée dans son champ (etat.brouillons) ; le focus revient au choix annulé.
     rendre()
-    const champ = $(`#consigne-${id}`) ?? $(`#consigne-l-${id}`)
-    if (champ && d.texte) champ.value = d.texte
-    $(`[data-action=decider][data-id="${id}"]`)?.focus()
+    const retour = (d.texte && $(`[data-action=decider][data-id="${id}"][data-avec-consigne]`)) || $(`[data-action=decider][data-id="${id}"][data-choix="${d.choix}"]`)
+    retour?.focus()
   },
   "consigne-ouvrir": (el) => {
-    etat.consigneOuverte = Number(el.dataset.id)
+    const id = Number(el.dataset.id)
+    etat.consignesOuvertes.add(id)
     rendre()
-    $(`#consigne-l-${etat.consigneOuverte}`)?.focus()
+    $(`#consigne-l-${id}`)?.focus()
   },
+  // Fermer la saisie ne jette pas la consigne : « Reprendre ta consigne » la rouvre telle quelle.
   "consigne-fermer": (el) => {
-    etat.consigneOuverte = null
+    etat.consignesOuvertes.delete(Number(el.dataset.id))
     rendre()
     $(`[data-action=consigne-ouvrir][data-id="${el.dataset.id}"]`)?.focus()
   },
@@ -3108,6 +3203,7 @@ document.addEventListener("click", (e) => {
   if (etat.menuProjet && !e.target.closest("#menu-projet")) { etat.menuProjet = false; $("#menu-projet")?.removeAttribute("open") }
   const el = e.target.closest("[data-action]")
   if (!el) return
+  if (clicIgnore(el.dataset.action, { detail: e.detail, derniere: derniereBascule })) return e.preventDefault()
   if (el.dataset.action === "confirmer" && el.dataset.quoi === "abandonner") {
     if (!window.confirm("Abandonner ce plan ? Rien n'a encore été créé.")) return
     return ACTIONS.abandonner(el)
@@ -3116,7 +3212,14 @@ document.addEventListener("click", (e) => {
   ACTIONS[el.dataset.action]?.(el)
 })
 
+// Une touche Entrée (ou Espace) tenue sur une décision ne répète pas le clic : un seul clic compte.
+document.addEventListener("keydown", (e) => {
+  if (e.repeat && (e.key === "Enter" || e.key === " ") && e.target.closest?.("[data-action=decider], [data-action=annuler-decision]")) e.preventDefault()
+})
+
 document.addEventListener("input", (e) => {
+  // La consigne d'une décision : gardée dans l'état, elle survit à chaque nouveau rendu.
+  if (e.target.matches?.("textarea[data-consigne]")) etat.brouillons.set(Number(e.target.dataset.consigne), e.target.value)
   if (e.target.closest("[data-form=plan]") && e.target.matches("[data-lot]") && !etat.planModifie) {
     etat.planEdition = syncPlan(planCourant())
     etat.planEditionId = etat.projet.id
