@@ -81,6 +81,8 @@ const etat = {
   sante: null,
   visibilite: null, // la page Visibilité : ce qui attend, les produits, l'usine maintenant, la semaine
   visibiliteErreur: null, // le dernier échec de chargement de cette page
+  visibiliteProjet: null, // le projet de la vue « tâche par tâche » (null : le plus récemment travaillé)
+  modelesProjet: null, // ses lots, ses tâches et leurs modèles
   acces: null,
   reglages: null,
   premiersPas: null, // les étapes restantes pour que l'usine soit prête
@@ -146,6 +148,8 @@ function lireRoute() {
   // « Nouveau projet » n'est plus une page : la saisie de l'accueil prend le focus.
   if (h.startsWith("/nouveau")) return { vue: "accueil", nouveau: true }
   if (h === "/projets") return { vue: "projets" }
+  const mv = h.match(/^\/visibilite\/projets\/(\d+)/)
+  if (mv) return { vue: "visibilite", projet: Number(mv[1]) }
   if (h.startsWith("/visibilite")) return { vue: "visibilite" }
   const mp = h.match(/^\/personas\/(\d+)/)
   if (mp) return { vue: "persona", id: Number(mp[1]) }
@@ -951,7 +955,8 @@ function ongletAvancement(p) {
         <div class="jauge" role="progressbar" aria-valuemin="0" aria-valuemax="${comptees.length}" aria-valuenow="${faites}" aria-label="Fonctions ajoutées"><span style="width:${Math.round((faites / comptees.length) * 100)}%"></span></div></div>` : ""}
     </section>
     ${tachesLot.length ? html`<details class="carte carte-p" id="lot-detail" ${etat.lotOuvert ? "open" : ""}><summary class="barre" style="cursor:pointer"><strong>Lot ${lotCourant} · ${plan.lots[lotCourant - 1]?.nom ?? ""}</strong><span class="aide">${tachesLot.filter((t) => t.statut === "fusionnee").length} sur ${tachesLot.length} · voir</span></summary>
-      <ul class="taches" style="margin-top:10px">${tachesLot.map((t) => html`<li><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></details>` : ""}`
+      <ul class="taches" style="margin-top:10px">${tachesLot.map((t) => html`<li><span class="titre">${t.titre}</span><span class="st ${(STT[t.statut] ?? ["", ""])[1]}">${(STT[t.statut] ?? [t.statut])[0]}</span></li>`)}</ul></details>` : ""}
+    ${p.taches.length ? html`<a class="aide" href="#/visibilite/projets/${p.id}" data-quoi="modeles-du-projet">Quel modèle a fait chaque tâche, lot par lot →</a>` : ""}`
 }
 
 // L'aperçu : une galerie sobre ; un clic agrandit.
@@ -2002,11 +2007,9 @@ function blocUsine(v) {
   </section>`
 }
 
-// Sur 7 jours : quel modèle a fait quel travail (par modèle), puis les dernières fonctions avec leurs modèles.
+// Sur 7 jours : quel modèle a fait quel travail, par modèle.
 // Les mots d'une tâche sont ceux de la page projet (STATUTS_TACHE) ; la couleur suit leur ton.
 const TONS_TACHE = { ok: "vert", actif: "bleu" }
-// Un modèle par ligne : un nom ne se coupe pas en deux.
-const listeModeles = (noms) => (noms.length ? noms.map((n, i) => html`${i ? html`<br>` : ""}${insecable(n)}`) : html`<span class="aide">—</span>`)
 function blocModelesSemaine(w) {
   if (!w.modeles?.length) return ""
   // Le travail s'écrit une fois pour toutes ses lignes (rowspan) : le groupe se voit, sans cellule vide.
@@ -2021,15 +2024,47 @@ function blocModelesSemaine(w) {
           ${m.cout_api_texte ? html`<td><span class="mono">${m.cout_api_texte}</span>${m.prix_inconnu ? html`<div class="sous">incomplet : une partie sans prix connu</div>` : ""}</td>` : html`<td class="aide">prix inconnu</td>`}
           <td class="mono">${m.heures ? `${nombre(m.heures, 1)} h` : "—"}</td></tr>`)}</tbody></table></div>
       <p class="aide" style="margin:0;padding:10px 16px 14px">Une utilisation est un appel du modèle pour ce travail. « — » en calcul : le temps est compté avec un autre modèle du même passage.</p>
-    </div>
-    ${w.fonctions?.length ? html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Qui a fait les dernières fonctions</h3>
-      <div class="tableau" tabindex="0" role="region" aria-label="Les dernières fonctions et leurs modèles" data-quoi="tableau-fonctions"><table style="min-width:720px">
-        <thead><tr><th scope="col">Fonction</th><th scope="col">Construite par</th><th scope="col">Contrôlée par</th><th scope="col">Design relu par</th><th scope="col">Où elle en est</th></tr></thead>
-        <tbody>${w.fonctions.map((f) => html`<tr>
-          <td style="min-width:220px"><div class="sous">${f.projet} · <span class="mono">${f.cle}</span></div><a class="lien-projet" href="#/projets/${f.projet_id}" data-quoi="fonction-${f.projet_id}-${f.cle}" aria-label="${f.projet}, fonction ${f.cle} : ${f.titre}">${f.titre}</a></td>
-          <td class="modeles-fonction">${listeModeles(f.construite)}</td><td class="modeles-fonction">${listeModeles(f.controlee)}</td><td class="modeles-fonction">${listeModeles(f.design)}</td>
-          <td><span class="badge ${TONS_TACHE[(STATUTS_TACHE[f.statut] ?? ["", ""])[1]] ?? (f.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[f.statut] ?? [f.statut])[0]}</span></td></tr>`)}</tbody></table></div>
-    </div>` : ""}`
+    </div>`
+}
+
+// Les modèles, tâche par tâche : un projet, ses lots, et pour chaque tâche tous les modèles qui y
+// ont travaillé (avec le nombre de passages), plus les sous-agents de l'agent quand ils sont notés.
+const TRAVAUX_COLONNES = [["construction", "Construction"], ["securite", "Relecture sécurité"], ["controle", "Contrôle"], ["design", "Design"]]
+const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`
+function celluleTravail(t) {
+  if (!t?.passages) return html`<span class="aide">—</span>`
+  return html`${t.modeles.map((m, i) => html`${i ? html`<br>` : ""}${insecable(m.nom)} <span class="aide">× ${m.passages}</span>`)}
+    ${t.dans_le_passage.length ? html`<div class="sous">avec ${t.dans_le_passage.map(insecable).join(", ")} dans le même passage</div>` : ""}`
+}
+function celluleSousAgents(s) {
+  if (!s.passages_notes) return html`<span class="aide">non noté</span>`
+  if (!s.liste.length) return html`aucun <span class="aide">(${pluriel(s.passages_notes, "passage noté")})</span>`
+  return html`${s.liste.map((x, i) => html`${i ? html`<br>` : ""}<span title="${x.description}">${x.type}</span> <span class="aide">× ${x.fois}</span>${x.modeles.length ? html`<div class="sous">${x.modeles.map(insecable).join(", ")}</div>` : x.modele_demande ? html`<div class="sous">demandé : ${x.modele_demande}</div>` : ""}`)}`
+}
+function blocModelesProjet(v) {
+  const projets = v.projets_taches ?? []
+  if (!projets.length) return ""
+  const id = etat.visibiliteProjet ?? projets[0].id
+  const m = etat.modelesProjet?.projet?.id === id ? etat.modelesProjet : null
+  const depuis = m?.sous_agents_depuis
+  return html`<section class="pile" aria-labelledby="v-taches">
+    <div class="barre"><h2 id="v-taches">Les modèles, tâche par tâche</h2>
+      <div class="rangee"><label class="aide" for="v-projet">Projet</label>
+        <select id="v-projet" class="champ champ-petit" data-choix="projet-modeles">${projets.map((p) => html`<option value="${p.id}" ${p.id === id ? "selected" : ""}>${p.nom}</option>`)}</select></div></div>
+    <p class="aide" style="margin:0">Pour chaque tâche, chaque modèle qui y a travaillé et son nombre de passages (une correction en ajoute un). ${depuis
+      ? `Les sous-agents de l'agent qui construit sont notés depuis le ${momentParis(depuis)} ; avant, l'usine ne gardait que les modèles.`
+      : "Les sous-agents de l'agent qui construit seront notés à partir de sa prochaine tâche ; avant, l'usine ne gardait que les modèles."}</p>
+    ${!m ? html`<div class="carte chargement">Chargement…</div>` : !m.lots.length ? html`<div class="carte vide">Ce projet n'a pas encore de tâche.</div>`
+      : m.lots.map((lot) => html`<div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">${lot.nom}</h3>
+        <div class="tableau" tabindex="0" role="region" aria-label="${lot.nom} : les modèles de chaque tâche" data-quoi="tableau-lot-${lot.numero}"><table style="min-width:900px">
+          <thead><tr><th scope="col">Tâche</th>${TRAVAUX_COLONNES.map(([, nom]) => html`<th scope="col">${nom}</th>`)}<th scope="col">Sous-agents</th><th scope="col">Où elle en est</th></tr></thead>
+          <tbody>${lot.taches.map((t) => html`<tr>
+            <th scope="row" style="min-width:200px;font-size:14px;color:var(--encre);font-weight:600;white-space:normal"><span class="mono aide">${t.cle}</span> ${t.titre}${t.approche ? html`<div class="sous">${pluriel(t.approche, "changement")} d'approche</div>` : ""}</th>
+            ${TRAVAUX_COLONNES.map(([cle]) => html`<td class="modeles-fonction">${celluleTravail(t.travaux[cle])}</td>`)}
+            <td class="modeles-fonction">${celluleSousAgents(t.sous_agents)}</td>
+            <td><span class="badge ${TONS_TACHE[(STATUTS_TACHE[t.statut] ?? ["", ""])[1]] ?? (t.statut === "bloquee" ? "orange" : "")}">${(STATUTS_TACHE[t.statut] ?? [t.statut])[0]}</span></td></tr>`)}</tbody></table></div>
+      </div>`)}
+  </section>`
 }
 
 function blocSemaine(v) {
@@ -2082,7 +2117,7 @@ function vueVisibilite() {
     ${messageGlobal()}
     <div><h1>Visibilité</h1><p class="chapeau">${v ? `Mis à jour à ${heureParis(v.le)}, heure de Paris, puis toutes les 15 secondes.` : "Les heures sont celles de Paris."}</p></div>
     ${v && erreur ? html`<div class="message erreur"><span>La dernière mise à jour n'a pas abouti (${erreur}). Les chiffres datent de ${heureParis(v.le)} ; la page réessaie toute seule.</span></div>` : ""}
-    ${v ? html`${blocAttente(v)}${blocProductions(v)}${blocUsine(v)}${blocSemaine(v)}`
+    ${v ? html`${blocAttente(v)}${blocProductions(v)}${blocUsine(v)}${blocSemaine(v)}${blocModelesProjet(v)}`
       : erreur ? html`<div class="carte vide">Impossible de lire l'état de l'usine pour l'instant (${erreur}). La page réessaie toute seule.</div>`
       : html`<div class="chargement">Chargement…</div>`}`
 }
@@ -2154,7 +2189,26 @@ async function charger({ silencieux = false } = {}) {
     if (sec === "historique") charge(`historique?projet=${encodeURIComponent(etat.histoFiltre.projet)}&type=${encodeURIComponent(etat.histoFiltre.type)}`, "historique")
     if (r.vue === "projet") charge(`projets/${r.id}`, "projet")
     // Visibilité : un échec se montre sur la page (les derniers chiffres restent, avec leur heure).
-    if (r.vue === "visibilite") taches.push(api("GET", "visibilite").then((x) => { if (frais()) { etat.visibilite = x; etat.visibiliteErreur = null; rendre() } }, (e) => { if (frais()) { etat.visibiliteErreur = e.message; rendre() } }))
+    if (r.vue === "visibilite") {
+      // Le projet de la vue « tâche par tâche » : celui de l'adresse, celui choisi, sinon le plus récemment travaillé.
+      if (r.projet) etat.visibiliteProjet = r.projet
+      taches.push(api("GET", "visibilite").then((x) => {
+        if (!frais()) return
+        etat.visibilite = x
+        etat.visibiliteErreur = null
+        rendre()
+        const id = etat.visibiliteProjet ?? x.projets_taches?.[0]?.id
+        if (id) return api("GET", `visibilite/projets/${Number(id)}`).then((m) => {
+          if (!frais()) return
+          etat.modelesProjet = m
+          rendre()
+          if (etat.allerAuxTaches) {
+            etat.allerAuxTaches = false
+            $("#v-taches")?.scrollIntoView()
+          }
+        }, () => {})
+      }, (e) => { if (frais()) { etat.visibiliteErreur = e.message; rendre() } }))
+    }
     // Le bilan de santé nourrit la pastille du haut : une fois par minute suffit, hors des pages qui le détaillent.
     if (["utilisation", "etat"].includes(sec) || Date.now() - etat.santeLe > 60_000) taches.push(api("GET", "sante").then((x) => { etat.sante = x; etat.santeLe = Date.now(); rendre() }))
     if (sec === "equipe" || r.vue === "demarrer") charge("acces", "acces")
@@ -2746,6 +2800,19 @@ document.addEventListener("input", (e) => {
 })
 
 // Le lot des captures se choisit dans une liste.
+// Visibilité : le projet de la vue « tâche par tâche ». L'adresse suit, sans recharger ni remonter la page.
+document.addEventListener("change", (e) => {
+  if (e.target.dataset?.choix !== "projet-modeles") return
+  const id = Number(e.target.value)
+  if (!Number.isInteger(id) || id <= 0) return
+  etat.visibiliteProjet = id
+  etat.modelesProjet = null
+  history.replaceState(null, "", `#/visibilite/projets/${id}`)
+  etat.route = lireRoute()
+  rendre()
+  charger({ silencieux: true })
+})
+
 document.addEventListener("change", (e) => {
   const cle = e.target.dataset?.filtreCaptures
   if (cle && etat.filtreCaptures) { etat.filtreCaptures[cle] = e.target.value; rendre() }
@@ -3028,6 +3095,8 @@ window.addEventListener("keydown", (e) => {
 // --- Démarrage ---------------------------------------------------------------------------
 window.addEventListener("hashchange", () => {
   etat.route = lireRoute()
+  // Venir sur les modèles d'un projet (depuis sa page) : la vue « tâche par tâche » s'affiche une fois chargée.
+  etat.allerAuxTaches = etat.route.vue === "visibilite" && Boolean(etat.route.projet)
   $("#cote").classList.remove("ouvert")
   $("[data-action=menu]")?.setAttribute("aria-expanded", "false")
   etat.message = null

@@ -31,8 +31,6 @@ const CAUSE_MAX = 60
 const TEXTE_MAX = 300
 // Une version se montre par les 7 premiers caractères de son sha.
 const SHA_COURT = 7
-// Les dernières fonctions montrées avec leurs modèles.
-const FONCTIONS_MAX = 8
 // Les longueurs des noms venus de la base ou du contrat.
 const MODELE_MAX = 60
 const ROLE_MAX = 40
@@ -376,8 +374,6 @@ function septJours(ctx, produits, maintenant) {
   let inconnu = false
   // Les modèles au travail : un compte par travail et par modèle (moteur compris : la passerelle se paie à l'usage).
   const parModele = new Map()
-  // Les fonctions travaillées, la plus récente en dernier : quels modèles pour chaque travail.
-  const parTache = new Map()
   for (const c of db.prepare("SELECT projet_id, tache_id, role, moteur, modele, cout_api_usd, duree_s, le, id FROM consommations WHERE le >= ? ORDER BY id").all(depuis)) {
     if (!dansLaFenetre(c.le)) continue
     if (c.cout_api_usd === null) inconnu = true
@@ -393,34 +389,11 @@ function septJours(ctx, produits, maintenant) {
     m.usd += c.cout_api_usd ?? 0
     m.duree_s += c.duree_s ?? 0
     if (c.cout_api_usd === null) m.prix_inconnu = true
-    if (c.tache_id) {
-      m.taches.add(c.tache_id)
-      const t = parTache.get(c.tache_id) ?? new Map()
-      parTache.delete(c.tache_id)
-      parTache.set(c.tache_id, t)
-      if (!t.has(c.role)) t.set(c.role, new Set())
-      t.get(c.role).add(nomModele(c.moteur, c.modele))
-    }
+    if (c.tache_id) m.taches.add(c.tache_id)
   }
   const heures = (s) => Math.round(s / 360) / 10
   const cout = (u) => montant(rc, versDevise(rc, u), { decimales: versDevise(rc, u) >= 100 ? 0 : 2 })
   const verifications = totaux.fusions + totaux.refus
-  // Un modèle « non noté » ne s'affiche que s'il est seul pour ce travail.
-  const nomsDe = (t, role) => {
-    const n = [...(t.get(role) ?? [])]
-    const connus = n.filter((x) => !x.endsWith("modèle non noté"))
-    return connus.length ? connus : n
-  }
-  // Le double des fonctions montrées est lu : celles d'un projet supprimé sont écartées avant de couper.
-  const ids = [...parTache.keys()].slice(-FONCTIONS_MAX * 2).reverse()
-  const infos = ids.length ? db.prepare(`SELECT t.id, t.cle, t.titre, t.statut, t.projet_id, p.nom FROM taches t JOIN projets p ON p.id = t.projet_id
-      WHERE p.statut != 'supprime' AND t.id IN (${ids.map(() => "?").join(",")})`).all(...ids) : []
-  const fonctions = ids.flatMap((id) => {
-    const t = infos.find((x) => x.id === id)
-    if (!t) return []
-    const roles = parTache.get(id)
-    return [{ projet_id: t.projet_id, projet: texte(t.nom ?? `Projet ${t.projet_id}`), cle: texte(t.cle, CLE_MAX), titre: texte(t.titre, TITRE_MAX), statut: texte(t.statut, CLE_MAX), construite: nomsDe(roles, "agent"), controlee: nomsDe(roles, "verificateur"), design: nomsDe(roles, "designer"), securite: nomsDe(roles, "relecteur-securite") }]
-  }).slice(0, FONCTIONS_MAX)
   return {
     du: jours[0],
     au: jours.at(-1),
@@ -448,10 +421,104 @@ function septJours(ctx, produits, maintenant) {
         cout_api: m.prix_inconnu && !m.usd ? null : versDevise(rc, m.usd), cout_api_texte: m.prix_inconnu && !m.usd ? null : cout(m.usd), prix_inconnu: m.prix_inconnu, heures: heures(m.duree_s),
       }))
       .sort((a, b) => ordreTravail(a.role) - ordreTravail(b.role) || b.utilisations - a.utilisations || a.nom.localeCompare(b.nom, "fr")),
-    fonctions,
   }
 }
 const ordreTravail = (role) => (ORDRE_TRAVAUX.includes(role) ? ORDRE_TRAVAUX.indexOf(role) : ORDRE_TRAVAUX.length)
+
+// --- Les modèles, tâche par tâche -------------------------------------------------------------
+// Pour un projet, lot par lot : chaque tâche, tous les modèles qui y ont travaillé (par travail,
+// avec le nombre de passages), et les sous-agents de l'agent quand ils ont été notés.
+//   Un passage : les lignes d'un même travail notées à la même seconde (enregistrer() note un
+//   passage d'un coup, une ligne par modèle). Le modèle qui porte la durée est celui du passage ;
+//   un autre modèle du même passage a servi dedans (un sous-agent ou un appel interne).
+const TRAVAUX_TACHE = [["construction", "agent"], ["securite", "relecteur-securite"], ["controle", "verificateur"], ["design", "designer"]]
+const SOUS_AGENTS_TACHE_MAX = 20
+const tableExiste = (db, nom) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(nom))
+
+export function modelesDuProjet(ctx, projetId) {
+  const { db } = ctx
+  const p = db.prepare("SELECT id, nom, plan FROM projets WHERE id = ? AND statut != 'supprime'").get(projetId)
+  if (!p) return null
+  let lotsPlan = []
+  try {
+    lotsPlan = JSON.parse(p.plan ?? "null")?.lots ?? []
+  } catch {}
+  const taches = db.prepare("SELECT id, cle, lot, titre, statut, tentative, approche FROM taches WHERE projet_id = ? ORDER BY lot, id").all(p.id)
+  // Les passages de chaque tâche, par travail : tache -> role -> le -> lignes.
+  const passages = new Map()
+  for (const c of db.prepare("SELECT tache_id, role, moteur, modele, duree_s, le FROM consommations WHERE projet_id = ? AND tache_id IS NOT NULL ORDER BY id").all(p.id)) {
+    const t = passages.get(c.tache_id) ?? passages.set(c.tache_id, new Map()).get(c.tache_id)
+    const r = t.get(c.role) ?? t.set(c.role, new Map()).get(c.role)
+    const l = r.get(c.le) ?? r.set(c.le, []).get(c.le)
+    l.push(c)
+  }
+  const agents = tableExiste(db, "agents_tache")
+    ? db.prepare("SELECT tache_id, principal, type, description, modele_demande, modeles, le FROM agents_tache WHERE projet_id = ? ORDER BY id").all(p.id)
+    : []
+  const lireModeles = (x) => {
+    try {
+      const l = JSON.parse(x)
+      return Array.isArray(l) ? l.filter((m) => typeof m === "string") : []
+    } catch {
+      return []
+    }
+  }
+  const travauxDe = (tacheId) => {
+    const roles = passages.get(tacheId) ?? new Map()
+    return Object.fromEntries(TRAVAUX_TACHE.map(([cle, role]) => {
+      const parModele = new Map()
+      const internes = new Set()
+      const liste = [...(roles.get(role) ?? new Map()).values()]
+      for (const lignes of liste) {
+        // Le modèle du passage : celui qui porte la durée (la première ligne de l'appel).
+        const tri = [...lignes].sort((a, b) => (b.duree_s ?? 0) - (a.duree_s ?? 0))
+        const nom = nomModele(tri[0].moteur, tri[0].modele)
+        parModele.set(nom, (parModele.get(nom) ?? 0) + 1)
+        for (const autre of tri.slice(1)) {
+          const n = nomModele(autre.moteur, autre.modele)
+          if (n !== nom) internes.add(n)
+        }
+      }
+      return [cle, { passages: liste.length, modeles: [...parModele].map(([nom, n]) => ({ nom, passages: n })), dans_le_passage: [...internes] }]
+    }))
+  }
+  const sousAgentsDe = (tacheId) => {
+    const lignes = agents.filter((a) => a.tache_id === tacheId)
+    const notes = lignes.filter((a) => a.principal === 1).length
+    const groupes = new Map()
+    for (const a of lignes.filter((x) => x.principal !== 1)) {
+      const modeles = lireModeles(a.modeles).map((m) => nomModele("claude-code", m))
+      const cle = `${a.type}|${modeles.join(",")}`
+      const g = groupes.get(cle) ?? groupes.set(cle, { type: texte(a.type, MODELE_MAX), modeles, modele_demande: a.modele_demande ? texte(a.modele_demande, MODELE_MAX) : null, fois: 0, description: "" }).get(cle)
+      g.fois += 1
+      g.description = texte(a.description, TITRE_MAX)
+    }
+    return { passages_notes: notes, liste: [...groupes.values()].slice(0, SOUS_AGENTS_TACHE_MAX) }
+  }
+  const numeros = [...new Set(taches.map((t) => t.lot))].sort((a, b) => a - b)
+  const premier = agents.length ? iso(agents.reduce((m, a) => (a.le < m ? a.le : m), agents[0].le)) : null
+  return {
+    projet: { id: p.id, nom: texte(p.nom ?? `Projet ${p.id}`) },
+    // Depuis quand les sous-agents de ce projet sont notés (null : jamais encore).
+    sous_agents_depuis: premier,
+    lots: numeros.map((n) => ({
+      numero: n,
+      nom: texte(typeof lotsPlan[n - 1]?.nom === "string" ? lotsPlan[n - 1].nom : `Lot ${n}`, TITRE_MAX),
+      taches: taches.filter((t) => t.lot === n).map((t) => ({
+        cle: texte(t.cle, CLE_MAX), titre: texte(t.titre, TITRE_MAX), statut: texte(t.statut, CLE_MAX), tentative: t.tentative, approche: t.approche,
+        travaux: travauxDe(t.id),
+        sous_agents: sousAgentsDe(t.id),
+      })),
+    })),
+  }
+}
+
+// Les projets qui ont des tâches, le plus récemment travaillé d'abord (le choix de la vue « tâche par tâche »).
+function projetsAvecTaches(db) {
+  return db.prepare(`SELECT p.id, p.nom, MAX(COALESCE(c.id, 0)) AS dernier FROM projets p JOIN taches t ON t.projet_id = p.id
+      LEFT JOIN consommations c ON c.tache_id = t.id WHERE p.statut != 'supprime' GROUP BY p.id ORDER BY dernier DESC, p.id DESC`).all()
+    .map((p) => ({ id: p.id, nom: texte(p.nom ?? `Projet ${p.id}`) }))
+}
 
 // --- La page entière ---------------------------------------------------------------------
 // aTraiter : les décisions, plans, questions et livraisons en attente (console.mjs).
@@ -468,5 +535,7 @@ export function visibilite(ctx, { aTraiter = [], maintenant = Date.now(), proces
     apercus: parc.apercus,
     usine: usineMaintenant(ctx, sante, lireStatut(ctx.config), produits, maintenant, processeurs),
     semaine: septJours(ctx, produits, maintenant),
+    // Les projets à choisir dans la vue « tâche par tâche » ; le premier est le plus récemment travaillé.
+    projets_taches: projetsAvecTaches(ctx.db),
   }
 }

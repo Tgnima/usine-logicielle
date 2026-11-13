@@ -46,7 +46,7 @@ import { proteges } from "./profil.mjs"
 import { compteGithub, premiersPas } from "./premiers-pas.mjs"
 import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recevoirManifeste } from "./forge-github.mjs"
 import { adresseTableau } from "./slack-couts.mjs"
-import { iso, visibilite } from "./visibilite.mjs"
+import { iso, modelesDuProjet, visibilite } from "./visibilite.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
@@ -371,6 +371,12 @@ const ROUTES = [
   ["GET", /^\/api\/sante$/, (ctx) => santeEtCouts(ctx)],
   // La page Visibilité : ce qui attend, l'état réel des produits, l'usine maintenant, les 7 derniers jours (visibilite.mjs).
   ["GET", /^\/api\/visibilite$/, (ctx) => visibilite(ctx, { aTraiter: aTraiter(ctx) })],
+  // Un projet, lot par lot : les modèles de chaque tâche et les sous-agents de l'agent.
+  ["GET", /^\/api\/visibilite\/projets\/(\d{1,9})$/, (ctx, [id]) => {
+    const r = modelesDuProjet(ctx, Number(id))
+    if (!r) throw erreur(404, "Projet introuvable.")
+    return r
+  }],
   ["GET", /^\/api\/projets\/(\d+)$/, (ctx, [id]) => detailProjet(ctx, Number(id))],
   // Le direct : ce que fait l'agent (ou le vérificateur) sur la tâche en cours du projet.
   ["GET", /^\/api\/projets\/(\d+)\/direct$/, (ctx, [id]) => direct(ctx, ctx.db.prepare("SELECT * FROM taches WHERE projet_id = ? AND statut IN ('en_cours', 'verification') ORDER BY id LIMIT 1").get(Number(id)))],
