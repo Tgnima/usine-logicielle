@@ -29,7 +29,8 @@ principal() {
   demande=${1:-${canal:-stable}}
 
   echo "• Lecture des versions sur GitHub…"
-  git fetch -q --prune origin "+main:refs/remotes/origin/main" "+refs/tags/v*:refs/tags/v*"
+  # Sans --prune : avec, la lecture échouait sur un serveur en Git 2.34 (Ubuntu 22.04).
+  git fetch -q origin "+main:refs/remotes/origin/main" "+refs/tags/v*:refs/tags/v*"
 
   if [ "$demande" = "--liste" ]; then
     versions | head -15
@@ -92,7 +93,9 @@ principal() {
     bash secrets.sh dechiffrer
   fi
   # Les réglages ajoutés à .env.example depuis l'installation (facultatifs : rien n'est écrit).
-  nouveaux=$(grep -oE '^[A-Z_]+=' .env.example | tr -d = | while read -r k; do grep -qE "^$k=" .env || echo "$k"; done | tr '\n' ' ')
+  # Les secrets n'en sont pas : secrets.sh les retire de .env une fois chiffrés.
+  secrets=" $(grep -E '^SECRETS=' secrets.sh | grep -oE '[A-Z_]+' | tail -n +2 | tr '\n' ' ') "
+  nouveaux=$(grep -oE '^[A-Z_]+=' .env.example | tr -d = | while read -r k; do [[ "$secrets" == *" $k "* ]] || grep -qE "^$k=" .env || echo "$k"; done | tr '\n' ' ')
   [ -n "$nouveaux" ] && echo "• Réglages nouveaux, facultatifs (voir .env.example) : $nouveaux"
 
   # 4. Reconstruire et redémarrer (le réseau de l'hébergeur a des coupures : 3 essais).

@@ -753,7 +753,7 @@ async function verifierMiseAJour() {
   let f
   for (const jeton of jetonsMiseAJour(sources)) {
     // main, et les étiquettes des versions publiées (vX.Y.Z).
-    f = await git(["fetch", "-q", "--prune", `https://github.com/${DEPOT_USINE}.git`, "+main:refs/remotes/github/main", "+refs/tags/v*:refs/tags/v*"], { git: { jeton }, minutes: 3 })
+    f = await git(["fetch", "-q", `https://github.com/${DEPOT_USINE}.git`, "+main:refs/remotes/github/main", "+refs/tags/v*:refs/tags/v*"], { git: { jeton }, minutes: 3 })
     if (f.code === 0) {
       if (miseAJour.source !== origineJeton(jeton, sources)) log(`Mise à jour de l'usine : dépôt lu avec ${origineJeton(jeton, sources)}.`)
       miseAJour = { ...miseAJour, source: origineJeton(jeton, sources) }
@@ -772,10 +772,22 @@ async function verifierMiseAJour() {
   // version publiée ; sans version publiée, rien n'est proposé (jamais main par défaut).
   const version = CANAL === "stable" ? derniereVersion((await git(["tag", "-l", "v*"])).sortie.split("\n")) : null
   const cible = CANAL === "main" ? "refs/remotes/github/main" : version ? `refs/tags/${version}` : null
-  if (cible) await git(["update-ref", "refs/remotes/github/cible", `${cible}^{commit}`])
-  else await git(["update-ref", "-d", "refs/remotes/github/cible"])
+  if (!cible) await git(["update-ref", "-d", "refs/remotes/github/cible"])
   // HEAD..cible : rien de proposé si le serveur est déjà au-delà (jamais de retour en arrière).
-  const commits = cible ? (await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/cible"])).sortie.split("\n").filter(Boolean) : []
+  // Une cible illisible est une erreur, jamais une liste de changements (le message de git
+  // était compté comme autant de commits).
+  let commits = []
+  if (cible) {
+    const r = await git(["update-ref", "refs/remotes/github/cible", `${cible}^{commit}`])
+    const l = r.code === 0 ? await git(["log", "--format=%h %s", "HEAD..refs/remotes/github/cible"]) : r
+    if (l.code !== 0) {
+      const message = `version cible illisible (${cible}) : ${l.sortie.trim().split("\n")[0]}`.slice(0, 400)
+      if (miseAJour.erreur?.message !== message) log(`Vérification de mise à jour : ${message}`)
+      miseAJour = { ...miseAJour, erreur: { message, depuis: miseAJour.erreur?.depuis ?? horodatage(), le: horodatage() } }
+      return
+    }
+    commits = l.sortie.split("\n").filter(Boolean)
+  }
   const actuelle = (await git(["describe", "--tags", "--exact-match", "--match", "v*", "HEAD"])).sortie.trim()
   miseAJour = { ...miseAJour, erreur: null, canal: CANAL, cible: CANAL === "main" ? "main" : version, disponible: commits.length, commits: commits.slice(0, 15), version: VERSION_TEXTE.test(actuelle) ? actuelle : (await git(["rev-parse", "--short", "HEAD"])).sortie.trim(), verifie_le: horodatage() }
 }
