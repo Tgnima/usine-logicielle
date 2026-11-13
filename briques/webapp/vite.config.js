@@ -7,6 +7,7 @@ import tailwindcss from "@tailwindcss/vite"
 // « @/ » désigne client/src (les imports des composants shadcn/ui).
 export default defineConfig({
   root: "client",
+  envDir: fileURLToPath(new URL(".", import.meta.url)),
   plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": fileURLToPath(new URL("./client/src", import.meta.url)) } },
   build: { outDir: "../dist", emptyOutDir: true },

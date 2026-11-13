@@ -5,18 +5,21 @@
 //   - limitation des requêtes par adresse (429 au-delà) ;
 //   - erreurs : jamais de détail technique vers le visiteur.
 
+const posthogHost = process.env.POSTHOG_HOST
+const posthogDomain = posthogHost ? new URL(posthogHost).hostname.split(".").slice(-2).join(".") : null
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  `script-src 'self'${posthogDomain ? ` https://*.${posthogDomain}` : ""}`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob:",
-  "connect-src 'self'",
+  `connect-src 'self'${posthogHost ? ` ${posthogHost}` : ""}`,
+  posthogDomain ? "worker-src 'self' blob:" : null,
   "frame-ancestors 'self'",
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
-].join("; ")
+].filter(Boolean).join("; ")
 
 export function entetes() {
   return (_req, res, next) => {

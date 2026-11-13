@@ -1,11 +1,14 @@
 // Point d'entrée du serveur : l'API sous /api, l'interface (construite par Vite)
 // pour tout le reste.
 import express from "express"
+import { setupExpressErrorHandler } from "posthog-node"
 import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { routes } from "./routes/index.js"
 import { entetes, gestionErreurs, limiter } from "./securite.js"
+import { posthog } from "./posthog.js"
+import { fermerJournauxPostHog, journalPostHog } from "./posthog-logs.js"
 
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
 let meta = null
@@ -33,8 +36,10 @@ export function creerApp() {
     try {
       const { db } = await import("./db.js")
       db().prepare("SELECT 1").get()
+      journalPostHog("INFO", "health_check_succeeded", { "health_check.status": "ok" })
       res.json({ ok: true })
     } catch (error) {
+      journalPostHog("ERROR", "health_check_failed", { "health_check.status": "unavailable" })
       console.error("Santé :", error)
       res.status(503).json({ ok: false, erreur: "base de données indisponible" })
     }
@@ -68,6 +73,9 @@ export function creerApp() {
     })
   }
 
+  // PostHog doit voir les exceptions qu'Express intercepte avant la réponse générique.
+  if (posthog) setupExpressErrorHandler(posthog, app)
+
   // Les erreurs restent explicites pour qui exploite (journal), jamais un détail
   // technique pour le visiteur ; une erreur métier garde son message (securite.js).
   app.use(gestionErreurs())
@@ -79,5 +87,23 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // Données de démo et tâches de fond : dans server/demarrage.js (modifiable).
   const { auDemarrage } = await import("./demarrage.js")
   await auDemarrage()
-  creerApp().listen(port, () => console.log(`Serveur prêt sur le port ${port}`))
+  const serveur = creerApp().listen(port, () => {
+    journalPostHog("INFO", "server_started", { "server.port": port })
+    console.log(`Serveur prêt sur le port ${port}`)
+  })
+
+  let arretEnCours = false
+  const arreter = () => {
+    if (arretEnCours) return
+    arretEnCours = true
+    serveur.close(() => {
+      void Promise.allSettled([
+        fermerJournauxPostHog(),
+        posthog?.shutdown(2_500),
+      ]).finally(() => process.exit(0))
+    })
+    setTimeout(() => process.exit(0), 3_000).unref()
+  }
+  process.once("SIGINT", arreter)
+  process.once("SIGTERM", arreter)
 }
