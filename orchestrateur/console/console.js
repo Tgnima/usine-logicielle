@@ -2126,16 +2126,26 @@ function blocSemaine(v) {
   const max = Math.max(1, ...w.jours.map((j) => Math.max(j.fusions, j.refus)))
   const meme = w.du.slice(0, 7) === w.au.slice(0, 7)
   const periode = `du ${jourCourt(w.du, meme ? { day: "numeric" } : { day: "numeric", month: "long" })} au ${jourCourt(w.au, { day: "numeric", month: "long" })}`
-  const chiffre = (titre, valeur, aide) => html`<div class="carte"><span class="aide">${titre}</span><span class="chiffre">${valeur}</span>${aide ? html`<span class="aide">${aide}</span>` : ""}</div>`
+  // Chaque chiffre avec la semaine d'avant (« avant ») ; un taux avec son effectif, et comparé seulement
+  // avec assez d'essais des deux côtés (bilan.mjs : sous le seuil, « trop peu pour comparer »).
+  const chiffre = (titre, valeur, aide, avant = "") => html`<div class="carte"><span class="aide">${titre}</span><span class="chiffre">${valeur}</span>${aide ? html`<span class="aide">${aide}</span>` : ""}${avant ? html`<span class="aide avant">${avant}</span>` : ""}</div>`
   const long = (j) => jourCourt(j.jour, { weekday: "long", day: "numeric", month: "long" })
+  const p = w.precedente
+  const c = w.comparaison
+  const essais = (n) => (n ? `${nombre(n)} essai${n > 1 ? "s" : ""}` : "aucun essai")
+  // Un pourcentage seulement avec assez d'essais : « 2 sur 3 » dit mieux que « 67 % ».
+  const reussis = w.essais ? `sur ${essais(w.essais)}${c && w.essais >= c.seuil ? ` · ${c.actuel.pct} % réussis` : ""}` : "aucun essai"
+  const avantReussis = !p ? "" : !p.essais ? "semaine d'avant : aucun essai"
+    : c?.comparable ? `semaine d'avant : ${nombre(p.fusions)} sur ${essais(p.essais)} (${c.avant.pct} %)`
+    : html`semaine d'avant : ${nombre(p.fusions)} sur ${essais(p.essais)} · <span title="Moins de ${c?.seuil ?? 10} essais d'un côté : un pourcentage ne voudrait rien dire">trop peu pour comparer</span>`
   return html`<section class="pile" aria-labelledby="v-semaine">
     <div class="barre"><h2 id="v-semaine">7 derniers jours</h2><span class="aide">${periode}</span></div>
     <div class="chiffres">
-      ${chiffre("Fonctions ajoutées", nombre(w.fusions), w.acceptes_pct !== null ? `${w.acceptes_pct} % des contrôles réussis` : "aucun contrôle")}
-      ${chiffre("Refus du contrôle", nombre(w.refus), w.refus ? "versions refaites" : "aucune version refaite")}
-      ${chiffre("Décisions demandées", nombre(w.escalades), w.escalades ? "l'usine a demandé de l'aide" : "aucune aide demandée")}
-      ${chiffre("Coût au prix public", w.cout_api_texte, w.cout_incomplet ? "ce qu'aurait coûté l'IA (une partie sans prix connu)" : "ce qu'aurait coûté l'IA")}
-      ${chiffre("Temps de calcul", `${nombre(w.heures, 1)} h`, "IA au travail")}
+      ${chiffre("Fonctions ajoutées", nombre(w.fusions), reussis, avantReussis)}
+      ${chiffre("Refus du contrôle", nombre(w.refus), w.essais ? `sur ${essais(w.essais)}, versions refaites` : "aucune version refaite", p ? `semaine d'avant : ${nombre(p.refus)}` : "")}
+      ${chiffre("Décisions demandées", nombre(w.escalades), w.escalades ? "l'usine a demandé de l'aide" : "aucune aide demandée", p ? `semaine d'avant : ${nombre(p.escalades)}` : "")}
+      ${chiffre("Coût au prix public", w.cout_api_texte, w.cout_incomplet ? "ce qu'aurait coûté l'IA (une partie sans prix connu)" : "ce qu'aurait coûté l'IA", p ? `semaine d'avant : ${p.cout_api_texte}` : "")}
+      ${chiffre("Temps de calcul", `${nombre(w.heures, 1)} h`, "IA au travail", p ? `semaine d'avant : ${nombre(p.heures, 1)} h` : "")}
     </div>
     <div class="colonnes">
       <div class="carte carte-p pile colonne-large"><h3 class="surtitre">Jour par jour</h3>
@@ -2150,6 +2160,7 @@ function blocSemaine(v) {
         : html`<p class="aide" style="margin:0">Aucun refus sur ces 7 jours.</p>`}
       </div>
     </div>
+    ${blocEchecs(w)}
     <div class="carte"><h3 class="surtitre" style="padding:14px 16px 0">Par produit</h3>
       ${w.produits.length ? html`<div class="tableau" tabindex="0" role="region" aria-label="Par produit, sur 7 jours" data-quoi="tableau-produits"><table style="min-width:620px">
         <thead><tr><th>Produit</th><th>Fonctions ajoutées</th><th>Refus</th><th>Décisions</th><th title="Ce qu'aurait coûté le calcul au tarif public">Coût au prix public</th><th>Calcul</th></tr></thead>
@@ -2161,6 +2172,31 @@ function blocSemaine(v) {
     </div>
     ${blocModelesSemaine(w)}
   </section>`
+}
+
+// Ce qui a échoué (mises en ligne, projets en échec), regroupé par cause, avec sa classe (bilan.mjs).
+// Une erreur passagère relancée avec succès ne compte plus : une ligne discrète la mentionne.
+const CLASSES_ECHEC = {
+  passager: ["Passager", "réseau ou GitHub, l'usine réessaie", "bleu"],
+  environnement: ["Environnement", "mémoire ou disque du serveur", "orange"],
+  configuration: ["Configuration", "une clé ou un compte à régler", "orange"],
+  code: ["Code", "le code du produit ou de l'usine", "rouge"],
+}
+function blocEchecs(w) {
+  const e = w.echecs
+  if (!e) return ""
+  const n = e.passageres?.aujourdhui ? e.passageres.aujourdhui : e.passageres?.semaine ?? 0
+  const quand = e.passageres?.aujourdhui ? "aujourd'hui" : "ces 7 jours"
+  const discret = n ? `${n} erreur${n > 1 ? "s" : ""} passagère${n > 1 ? "s" : ""} ${quand}, relancée${n > 1 ? "s" : ""} avec succès.` : ""
+  return html`<div class="carte carte-p pile"><h3 class="surtitre">Ce qui a échoué, par cause</h3>
+    ${e.groupes.length ? html`<ul class="echecs">${e.groupes.map((g) => {
+      const [nom, sens, ton] = CLASSES_ECHEC[g.classe] ?? [g.classe, "", ""]
+      return html`<li><span class="badge ${ton}">${nom}</span><span class="echec-cause">${g.cause}</span><span class="mono" style="text-align:right">${g.n}</span>
+        <span class="aide echec-detail">${sens}${g.projets.length ? ` · ${g.projets.join(", ")}` : ""} · la dernière fois le ${momentParis(g.dernier)}</span></li>`
+    })}</ul>`
+      : html`<p class="aide" style="margin:0">Aucune mise en ligne ni aucun projet en échec sur ces 7 jours.</p>`}
+    ${discret ? html`<p class="aide" style="margin:0">${discret}</p>` : ""}
+  </div>`
 }
 
 function vueVisibilite() {
