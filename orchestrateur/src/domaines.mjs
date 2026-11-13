@@ -42,9 +42,16 @@ export async function ipServeur(config) {
   return resolve4(`connexion.${config.domaine.base}`).catch(() => [])
 }
 
+// L'enregistrement à créer chez le fournisseur du nom de domaine : un A vers le serveur. Le nom est
+// la partie avant le domaine (« app » pour app.client.fr), « @ » pour le domaine lui-même.
+export function enregistrementDns(hote, ips = []) {
+  const nom = hote.split(".").length > 2 ? hote.split(".").slice(0, -2).join(".") : "@"
+  return { type: "A", nom, hote, valeur: ips[0] ?? null }
+}
+
 export function instructionsDns(hote, ips) {
-  const sous = hote.split(".").length > 2 ? hote.split(".").slice(0, -2).join(".") : "@"
-  return `Chez ton fournisseur de nom de domaine, crée cet enregistrement :\n• type *A* · nom *${sous}* (soit \`${hote}\`) · valeur *${ips[0] ?? "l'adresse IP du serveur"}*\nS'il existe déjà un enregistrement A ou CNAME pour \`${hote}\`, remplace-le. La propagation prend de quelques minutes à quelques heures : l'usine vérifie toute seule toutes les 2 minutes et te prévient ici.`
+  const e = enregistrementDns(hote, ips)
+  return `Chez ton fournisseur de nom de domaine, crée cet enregistrement :\n• type *A* · nom *${e.nom}* (soit \`${hote}\`) · valeur *${e.valeur ?? "l'adresse IP du serveur"}*\nS'il existe déjà un enregistrement A ou CNAME pour \`${hote}\`, remplace-le. La propagation prend de quelques minutes à quelques heures : l'usine vérifie toute seule toutes les 2 minutes et te prévient ici.`
 }
 
 export async function ajouterDomaine(ctx, projetId, hote, par) {

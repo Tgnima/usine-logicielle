@@ -190,7 +190,17 @@ export async function etatUsine(ctx) {
     ajouter(`${l.moteur === "codex" ? "Codex" : "Claude"} · ${nomMode(l.mode)}`, "alerte", `${pourquoi} ; l'usine passe par la façon suivante, ou se met en pause sans consommer de tentative`)
   }
   c.push(...applications)
+  retenirEtatUsine(c)
   return { composants: c, serveur: s }
+}
+
+// Le dernier bilan des composants (la surveillance le refait chaque minute, la page État à chaque
+// visite) : la file d'attention (attention.mjs) le lit sans refaire les appels réseau. null tant
+// qu'aucun bilan n'a été fait depuis le démarrage.
+let dernierBilan = null
+export const dernierEtatUsine = () => dernierBilan
+export function retenirEtatUsine(composants, le = Date.now()) {
+  dernierBilan = { composants, le }
 }
 
 // Le tri d'un passage de la surveillance : les changements confirmés et les états à garder.

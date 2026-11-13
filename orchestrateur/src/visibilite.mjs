@@ -15,6 +15,7 @@ import { adresses } from "./config.mjs"
 import { lireReglage, montant, reglagesCouts, versDevise } from "./couts.mjs"
 import { limitesEnCours, MODES, modeleJuge, MOTEURS_RELAIS, nomMode, relais } from "./moteurs.mjs"
 import { lireSanteServeur, SONDE_PERIMEE_S } from "./sante.mjs"
+import { groupeDe, ordonner, produitsAReparer } from "./attention.mjs"
 
 // Les jours du bilan se comptent à l'heure de Paris : un refus à 00 h 30 le 9 novembre (heure
 // de Paris) compte le 9, même s'il est noté le 8 à 23 h 30 en temps universel.
@@ -190,22 +191,16 @@ function parcProduits(sante, produits, config, maintenant) {
 }
 
 // --- Ce qui t'attend -------------------------------------------------------------------
-// Les décisions, plans, questions et livraisons (aTraiter de console.mjs), et les produits en
-// panne ou en alerte. Une décision passe d'abord, puis ce qui est cassé, puis le reste.
-const ORDRE_ATTENTE = { decision: 0, panne: 1, alerte: 2, sonde: 3, plan: 4, questions: 5, livre: 6 }
+// La file d'attention (attention.mjs) : Décider, Débloquer, Réparer. aTraiter en donne tout sauf
+// les produits (elementsAttente, par console.mjs) ; ici s'ajoutent les produits en panne et la sonde.
+// La même fonction sert l'accueil (fileAttente) et cette page : le même total partout.
 function ceQuiAttend(aTraiter, parc) {
-  const liste = aTraiter.map((x) => ({ ...x, depuis: iso(x.depuis), lien: `#/projets/${x.projet}` }))
-  const { sonde } = parc
-  if (sonde.muette) liste.push({ type: "sonde", projet: null, titre: "L'état des produits est inconnu", detail: "le serveur n'a pas pu lire l'état des applications à la dernière vérification", depuis: sonde.le, lien: "#/reglages/etat" })
-  else if (sonde.perimee) liste.push({ type: "sonde", projet: null, titre: "Les produits ne sont plus vérifiés", detail: "la dernière vérification des applications est trop ancienne : leur état réel est inconnu", depuis: sonde.le, lien: "#/reglages/etat" })
-  else {
-    for (const x of [...parc.productions, ...parc.apercus]) {
-      if (x.etat !== "panne" && x.etat !== "alerte") continue
-      const ou = x.environnement === "apercu" ? "aperçu" : "production"
-      liste.push({ type: x.etat, projet: x.projet_id, titre: `${x.nom} · ${ou} ${x.etat === "panne" ? "en panne" : "à surveiller"}`, detail: x.raison, depuis: null, lien: x.projet_id ? `#/projets/${x.projet_id}` : "#/reglages/etat" })
-    }
-  }
-  return liste.map((x, i) => [x, i]).sort(([a, i], [b, j]) => (ORDRE_ATTENTE[a.type] ?? 9) - (ORDRE_ATTENTE[b.type] ?? 9) || i - j).map(([x]) => x)
+  const liste = aTraiter.map((x) => ({ ...x, groupe: x.groupe ?? groupeDe(x.type), depuis: iso(x.depuis), lien: x.lien ?? `#/projets/${x.projet}` }))
+  return ordonner([...liste, ...produitsAReparer(parc)])
+}
+// La file complète, pour l'accueil, le titre de l'onglet et les notifications (GET /api/resume).
+export function fileAttente(ctx, { aTraiter = [], maintenant = Date.now() } = {}) {
+  return ceQuiAttend(aTraiter, parcProduits(lireSanteServeur(ctx.config), projetsParSlug(ctx.db), ctx.config, maintenant))
 }
 
 // --- Les modèles : qui fait quoi ---------------------------------------------------------
@@ -454,7 +449,7 @@ function septJours(ctx, produits, maintenant) {
 const ordreTravail = (role) => (ORDRE_TRAVAUX.includes(role) ? ORDRE_TRAVAUX.indexOf(role) : ORDRE_TRAVAUX.length)
 
 // --- La page entière ---------------------------------------------------------------------
-// aTraiter : les décisions, plans, questions et livraisons en attente (console.mjs).
+// aTraiter : la file d'attention sans les produits (elementsAttente d'attention.mjs, par console.mjs).
 export function visibilite(ctx, { aTraiter = [], maintenant = Date.now(), processeurs = availableParallelism() } = {}) {
   const produits = projetsParSlug(ctx.db)
   const sante = lireSanteServeur(ctx.config)
