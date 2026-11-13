@@ -16,6 +16,9 @@
 //     IBAN, adresses IP, jetons et clés masqués, longueur limitée), et un événement ne porte que
 //     des valeurs simples (nombres, booléens, textes courts nettoyés) ;
 //   - sans clé, rien ne part. Sous node --test non plus, sauf si le test fournit son propre fetch.
+//
+// Les clés peuvent changer en marche (reconfigurer) : une clé collée dans la console sert tout de
+// suite, sans redémarrage ; une clé retirée arrête l'envoi et vide la file de ce service.
 import { randomUUID } from "node:crypto"
 import { inspect } from "node:util"
 
@@ -196,9 +199,12 @@ export function creerObservabilite({
   // Sous node --test, rien ne part vers les vrais services.
   const horsReseau = Boolean(process.env.NODE_TEST_CONTEXT) && !fetchFourni
   const envoyer = fetchFourni ?? globalThis.fetch
-  const dsn = horsReseau ? null : lireDsn(sentryDsn)
-  const jeton = horsReseau ? "" : String(posthogJeton ?? "").trim()
-  const hote = (/^https?:\/\//.test(posthogHote) ? posthogHote : `https://${posthogHote}`).replace(/\/+$/, "")
+  // Les clés en service : modifiées seulement par cles() (au départ, puis par reconfigurer()).
+  let dsn = null
+  let jeton = ""
+  let hote = ""
+  let auth = ""
+  let reglees = { sentryDsn: "", posthogJeton: "", posthogHote: "" }
   const laVersion = () => {
     try {
       return (typeof version === "function" ? version() : version) || null
@@ -206,15 +212,37 @@ export function creerObservabilite({
       return null
     }
   }
-  const auth = dsn ? `Sentry sentry_version=7, sentry_client=usine-logicielle/1, sentry_key=${dsn.cle}` : ""
 
   const files = { erreurs: [], evenements: [], journaux: [] }
-  const comptes = Object.fromEntries(["erreurs", "evenements", "journaux", "battement"].map((c) => [c, { envoyes: 0, echecs: 0, perdus: 0, ignores: 0, joignable: null, dernier_echec: null }]))
+  const compteNeuf = () => ({ envoyes: 0, echecs: 0, perdus: 0, ignores: 0, joignable: null, dernier_ok: null, dernier_echec: null })
+  const comptes = Object.fromEntries(["erreurs", "evenements", "journaux", "battement"].map((c) => [c, compteNeuf()]))
   let minuterie = null
   let vidage = null
   let sentryEnPauseJusqua = 0
   const vues = new Map() // empreinte d'une erreur -> dernier envoi (doublons : une fois par heure)
   let fenetre = { debut: Date.now(), n: 0 }
+  cles({ sentryDsn, posthogJeton, posthogHote })
+
+  // Poser les clés. Une clé qui change remet à zéro les compteurs de son service (ils décrivent
+  // l'ancienne) ; une clé retirée vide la file de son service (rien ne pourrait plus partir).
+  function cles({ sentryDsn: s = reglees.sentryDsn, posthogJeton: p = reglees.posthogJeton, posthogHote: h = reglees.posthogHote } = {}) {
+    const nouvelles = { sentryDsn: String(s ?? "").trim(), posthogJeton: String(p ?? "").trim(), posthogHote: String(h ?? "").trim() || "eu.i.posthog.com" }
+    const change = { sentry: nouvelles.sentryDsn !== reglees.sentryDsn, posthog: nouvelles.posthogJeton !== reglees.posthogJeton || nouvelles.posthogHote !== reglees.posthogHote }
+    reglees = nouvelles
+    dsn = horsReseau ? null : lireDsn(nouvelles.sentryDsn)
+    jeton = horsReseau ? "" : nouvelles.posthogJeton
+    hote = (/^https?:\/\//.test(nouvelles.posthogHote) ? nouvelles.posthogHote : `https://${nouvelles.posthogHote}`).replace(/\/+$/, "")
+    auth = dsn ? `Sentry sentry_version=7, sentry_client=usine-logicielle/1, sentry_key=${dsn.cle}` : ""
+    if (change.sentry) {
+      for (const c of ["erreurs", "battement"]) comptes[c] = compteNeuf()
+      sentryEnPauseJusqua = 0
+      vues.clear()
+    }
+    if (change.posthog) for (const c of ["evenements", "journaux"]) comptes[c] = compteNeuf()
+    if (!dsn) files.erreurs.length = 0
+    if (!jeton) files.evenements.length = files.journaux.length = 0
+    return change
+  }
 
   const demarrer = () => {
     if (minuterie) return
@@ -238,6 +266,7 @@ export function creerObservabilite({
     if (ok) {
       if (c.joignable === false) signaler(`Observabilité : ${LIBELLES[canal]} de nouveau envoyés.`)
       c.envoyes += n
+      c.dernier_ok = new Date().toISOString()
     } else {
       if (c.joignable !== false) signaler(`Observabilité : envoi des ${LIBELLES[canal]} impossible (${nettoyer(detail, 200)}) ; les suivants sont ignorés sans bruit jusqu'au retour.`)
       c.echecs += n
@@ -263,15 +292,15 @@ export function creerObservabilite({
     if (vidage) return vidage
     vidage = (async () => {
       const envois = []
-      if (files.evenements.length) {
+      if (files.evenements.length && jeton) {
         const lot = files.evenements.splice(0, 500)
         envois.push(poster("evenements", `${hote}/batch/`, JSON.stringify({ api_key: jeton, batch: lot }), { "content-type": "application/json" }, lot.length))
       }
-      if (files.journaux.length) {
+      if (files.journaux.length && jeton) {
         const lot = files.journaux.splice(0, 1000)
         envois.push(poster("journaux", `${hote}/i/v1/logs`, JSON.stringify(corpsJournaux(lot)), { "content-type": "application/json", authorization: `Bearer ${jeton}` }, lot.length))
       }
-      if (files.erreurs.length && Date.now() >= sentryEnPauseJusqua) {
+      if (files.erreurs.length && dsn && Date.now() >= sentryEnPauseJusqua) {
         // Une erreur par enveloppe (le format n'en admet qu'une) : 10 au plus par passage.
         const lot = files.erreurs.splice(0, 10)
         envois.push((async () => {
@@ -374,12 +403,15 @@ export function creerObservabilite({
   // rejetée sans gestionnaire en devient une : comportement par défaut de Node, gardé). Après
   // une exception non attrapée, le processus s'arrête comme avant (code 1), une fois l'erreur partie.
   let branche = false
+  // Branché même sans clé : une clé posée plus tard dans la console sert aussitôt. Sans clé,
+  // console.error écrit comme avant et rien d'autre ne se passe.
   function brancherProcessus() {
-    if (!dsn || branche) return
+    if (branche) return
     branche = true
     const ecrire = console.error.bind(console)
     console.error = (...args) => {
       ecrire(...args)
+      if (!dsn) return
       try {
         const err = args.find((a) => a instanceof Error)
         const texte = args.filter((a) => a !== err).map(versTexte).join(" ").trim()
@@ -394,7 +426,18 @@ export function creerObservabilite({
     })
   }
 
-  const etat = () => ({ sentry: Boolean(dsn), posthog: Boolean(jeton), files: Object.fromEntries(Object.entries(files).map(([k, f]) => [k, f.length])), ...structuredClone(comptes) })
+  // Changer les clés en marche : seuls les champs donnés changent. Renvoie ce qui a changé.
+  // Une file en cours d'envoi part avec l'ancienne clé ; tout ce qui suit prend la nouvelle.
+  const reconfigurer = (nouvelles = {}) => cles(nouvelles)
 
-  return { actif: { sentry: Boolean(dsn), posthog: Boolean(jeton) }, erreur, incident, evenement, journal, battement, vider, arreter, brancherProcessus, etat }
+  // Jamais une clé : seulement si elle est là, l'hôte PostHog (public) et les compteurs.
+  const etat = () => ({ sentry: Boolean(dsn), posthog: Boolean(jeton), posthog_hote: hote.replace(/^https?:\/\//, ""), files: Object.fromEntries(Object.entries(files).map(([k, f]) => [k, f.length])), ...structuredClone(comptes) })
+
+  return {
+    // Un accesseur : la valeur suit les reconfigurations.
+    get actif() {
+      return { sentry: Boolean(dsn), posthog: Boolean(jeton) }
+    },
+    erreur, incident, evenement, journal, battement, vider, arreter, brancherProcessus, reconfigurer, etat,
+  }
 }

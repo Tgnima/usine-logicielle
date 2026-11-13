@@ -3,7 +3,8 @@
 //   - un battement de cœur par minute : le seul moniteur cron du plan gratuit de Sentry ;
 //   - chaque ligne du journal (noter, db.mjs) devient un événement PostHog « journal » : le type,
 //     le projet, la tâche, et ce qu'ils ont consommé (table consommations). Jamais le texte du message.
-// Les clés sont des secrets (sentry_dsn, posthog_token : secrets.sh) ; sans elles, rien ne part.
+// Les clés : celles du serveur au démarrage (sentry_dsn, posthog_token : secrets.sh), puis celles
+// de la console dès que la base est ouverte (services.mjs, appliquerServices). Sans clé, rien ne part.
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { creerObservabilite } from "../../commun/observabilite.mjs"
@@ -33,15 +34,27 @@ export const obs = creerObservabilite({
 
 export const MONITEUR = "usine-orchestrateur"
 
+const decrire = (o) => (!o.actif.sentry && !o.actif.posthog ? "pas de clé Sentry ni PostHog, rien n'est envoyé" : [o.actif.sentry && "Sentry (erreurs, battement de cœur)", o.actif.posthog && "PostHog (journal)"].filter(Boolean).join(", "))
+const battre = (o = obs) => (o.actif.sentry ? o.battement(MONITEUR).catch(() => false) : Promise.resolve(false))
+
 // Au démarrage : les erreurs du processus, puis un battement tout de suite et chaque minute.
+// La minuterie tourne même sans clé : une clé posée plus tard dans la console bat aussitôt.
+let minuterie = null
 export function demarrerObservabilite() {
   obs.brancherProcessus()
-  if (!obs.actif.sentry && !obs.actif.posthog) return console.log("Observabilité : pas de clé Sentry ni PostHog, rien n'est envoyé.")
-  console.log(`Observabilité : ${[obs.actif.sentry && "Sentry (erreurs, battement de cœur)", obs.actif.posthog && "PostHog (journal)"].filter(Boolean).join(", ")}.`)
-  if (!obs.actif.sentry) return
-  const battre = () => obs.battement(MONITEUR).catch(() => {})
+  console.log(`Observabilité : ${decrire(obs)}.`)
   battre()
-  setInterval(battre, 60_000).unref()
+  minuterie ??= setInterval(() => battre(), 60_000)
+  minuterie.unref?.()
+}
+
+// Changer les clés en marche (console). Une clé Sentry nouvelle bat tout de suite : le moniteur
+// passe au vert sans attendre la minute suivante.
+export function reglerObservabilite(cles, o = obs) {
+  const change = o.reconfigurer(cles)
+  if (change.sentry || change.posthog) console.log(`Observabilité : ${decrire(o)}.`)
+  if (change.sentry) battre(o)
+  return change
 }
 
 // Les propriétés de l'événement d'une ligne du journal : des identifiants et des nombres, rien

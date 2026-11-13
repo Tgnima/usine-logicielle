@@ -10,6 +10,7 @@ import { chargerConfig } from "./config.mjs"
 import { ouvrirDb, plan as lirePlan, obtenir } from "./db.mjs"
 import { brancherEnvCommun, brancherJetons, sante } from "./travaux.mjs"
 import { appliquerModeles, envFournisseurs, migrerCoffre, protegeParAxmaril } from "./fournisseurs.mjs"
+import { appliquerServices } from "./services.mjs"
 import { brancherForge } from "./forge-github.mjs"
 import { preparerDepotEtat } from "./github.mjs"
 import { demarrerFabrique } from "./fabrique.mjs"
@@ -38,6 +39,12 @@ const ctx = { config, db, notifier: notificateurConsole(), livraison }
 appliquerModeles(ctx)
 console.log(protegeParAxmaril(ctx) ? "Coffre : protégé par la clé maîtresse d'AXMARIL." : "Coffre : clé du serveur (AXMARIL non branché).")
 migrerCoffre(ctx)
+// Sentry et PostHog : les clés posées dans la console remplacent celles du serveur (services.mjs).
+try {
+  appliquerServices(ctx)
+} catch (e) {
+  console.error("Services (Sentry, PostHog) :", e.message)
+}
 // GitHub : l'application de l'usine, si elle est connectée (sinon le jeton du serveur).
 await brancherForge(ctx).catch((e) => console.error("GitHub (application) :", e.message))
 brancherJetons(config)

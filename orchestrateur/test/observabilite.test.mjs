@@ -271,3 +271,40 @@ test("file pleine : les plus vieux éléments sont perdus, comptés", async () =
   assert.equal(o.etat().files.evenements, 0) // arreter() vide tout, lot après lot
   assert.equal(JSON.parse(f.appels[0].corps).batch[0].properties.i, 5)
 })
+
+test("reconfigurer : une clé posée en marche sert tout de suite ; retirée, l'envoi s'arrête et la file se vide", async () => {
+  const f = fauxFetch()
+  const o = creerObservabilite({ service: "usine-orchestrateur", fetch: f, signaler: silencieux })
+  assert.deepEqual(o.actif, { sentry: false, posthog: false })
+  assert.deepEqual(o.reconfigurer({ sentryDsn: DSN, posthogJeton: JETON }), { sentry: true, posthog: true })
+  assert.deepEqual(o.actif, { sentry: true, posthog: true })
+  assert.equal(o.erreur(new Error("panne après la pose")), true)
+  assert.equal(o.evenement("journal", { type: "fusion" }), true)
+  await o.vider()
+  assert.deepEqual(f.appels.map((a) => new URL(a.url).pathname).sort(), ["/api/4500000000000002/envelope/", "/batch/"])
+  assert.match(o.etat().erreurs.dernier_ok, /^\d{4}-\d\d-\d\dT/)
+  assert.match(o.etat().evenements.dernier_ok, /^\d{4}-\d\d-\d\dT/)
+  // Seuls les champs donnés changent : retirer le jeton PostHog garde Sentry.
+  o.evenement("journal", { type: "en-attente" })
+  assert.deepEqual(o.reconfigurer({ posthogJeton: "" }), { sentry: false, posthog: true })
+  assert.deepEqual(o.actif, { sentry: true, posthog: false })
+  assert.equal(o.etat().files.evenements, 0, "la file d'un service retiré est vidée")
+  assert.equal(o.etat().evenements.envoyes, 0, "les compteurs décrivent la nouvelle clé")
+  assert.equal(o.etat().erreurs.envoyes, 1, "ceux de Sentry, inchangé, restent")
+  assert.equal(o.evenement("x"), false)
+  // La même clé une deuxième fois : rien ne change.
+  assert.deepEqual(o.reconfigurer({ sentryDsn: DSN }), { sentry: false, posthog: false })
+})
+
+test("reconfigurer : sous node --test sans faux fetch, rien ne part même avec une clé posée en marche", () => {
+  const o = creerObservabilite({ service: "x", signaler: silencieux })
+  o.reconfigurer({ sentryDsn: DSN, posthogJeton: JETON })
+  assert.deepEqual(o.actif, { sentry: false, posthog: false })
+})
+
+test("etat : l'hôte PostHog (public) se lit, jamais une clé", () => {
+  const o = instance({ fetch: fauxFetch(), posthogHote: "https://ph.exemple.fr/" })
+  const e = JSON.stringify(o.etat())
+  assert.equal(o.etat().posthog_hote, "ph.exemple.fr")
+  assert.ok(!e.includes("cle0publique") && !e.includes(JETON), e)
+})
