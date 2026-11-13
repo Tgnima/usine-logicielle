@@ -21,6 +21,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets } from "./deploiement.mjs"
+import { lireBoite, valeurBoite } from "./boite.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
 import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
@@ -83,6 +84,20 @@ const obs = creerObservabilite({
   signaler: (texte) => log(texte),
 })
 obs.brancherProcessus()
+
+// La boîte (boite.mjs) : les clés posées dans la console passent avant celles du serveur. Relue à
+// chaque bilan de santé (30 s) et avant chaque déploiement : une clé collée dans la console sert
+// ici en 30 s au plus, sans redémarrage.
+const BOITE = env.BOITE_DIR ?? "/boite"
+let boite = null
+function appliquerBoite() {
+  boite = lireBoite(BOITE)
+  obs.reconfigurer({
+    sentryDsn: valeurBoite(boite, "SENTRY_DSN", secret("sentry_dsn")),
+    posthogJeton: valeurBoite(boite, "POSTHOG_TOKEN", secret("posthog_token")),
+    posthogHote: valeurBoite(boite, "POSTHOG_HOTE", "") || env.POSTHOG_HOTE || "eu.i.posthog.com",
+  })
+}
 
 // Le jeton passe par la configuration git de l'environnement : jamais dans les
 // arguments (visibles dans ps) ni dans .git/config.
@@ -219,9 +234,13 @@ function variables(s) {
   // L'observabilité du produit (server/observabilite.js de la brique) : le même DSN et le même jeton
   // pour tous, des clés d'envoi seulement ; le produit et son environnement l'étiquettent.
   Object.assign(v, { USINE_PRODUIT: s.produit, USINE_ENVIRONNEMENT: s.environnement, USINE_VERSION: s.sha.slice(0, 12) })
-  if (secret("sentry_dsn")) v.SENTRY_DSN = secret("sentry_dsn")
-  if (secret("posthog_token")) v.POSTHOG_TOKEN = secret("posthog_token")
-  if (env.POSTHOG_HOTE) v.POSTHOG_HOTE = env.POSTHOG_HOTE
+  // La boîte d'abord (clés de la console ; une clé vide coupe l'envoi), puis le serveur.
+  const dsn = valeurBoite(boite, "SENTRY_DSN", secret("sentry_dsn"))
+  const jeton = valeurBoite(boite, "POSTHOG_TOKEN", secret("posthog_token"))
+  const hotePosthog = valeurBoite(boite, "POSTHOG_HOTE", "") || env.POSTHOG_HOTE
+  if (dsn) v.SENTRY_DSN = dsn
+  if (jeton) v.POSTHOG_TOKEN = jeton
+  if (hotePosthog) v.POSTHOG_HOTE = hotePosthog
   return v
 }
 // Un fichier d'environnement privé, effacé dès que le conteneur est créé : les secrets (SMTP, clé
@@ -401,6 +420,7 @@ const versionServie = (actuel) => (actuel?.conteneur ? { hote: actuel.hote, hote
 
 async function tour() {
   const souhaits = await synchroniserEtat()
+  appliquerBoite()
   const statut = lireStatut()
   for (const s of souhaits) {
     if (!valide(s)) {
@@ -427,7 +447,8 @@ async function tour() {
     ecrireStatut(statut)
     try {
       const r = s.environnement === "apercu" ? await deployerApercu(s) : await deployerProduction(s, actuel?.conteneur ? actuel : null)
-      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", chemins_publics: r.publics ?? [], conteneur: r.conteneur, couleur: r.couleur ?? null, le: horodatage() }
+      // boite : la version des clés de la console reçue par ce conteneur (jamais une empreinte des valeurs).
+      statut[cle] = { etat: "ok", sha: s.sha, demande_le: s.demande_le, hote: s.hote, hote_mails: s.hote_mails ?? null, acces: s.acces ?? "protege", chemins_publics: r.publics ?? [], conteneur: r.conteneur, couleur: r.couleur ?? null, boite: boite?.version ?? null, le: horodatage() }
       ecrireStatut(statut)
       await regenererCaddy(statut)
       if (r.ancien) {
@@ -500,6 +521,12 @@ async function retirer(cle, s) {
 }
 
 // --- La santé du serveur et des conteneurs ---------------------------------------------
+// Ce que le déployeur envoie vraiment à Sentry et PostHog (la console l'affiche) : jamais une clé.
+function resumeObservabilite() {
+  const e = obs.etat()
+  const canal = (c) => ({ envoyes: e[c].envoyes, echecs: e[c].echecs, joignable: e[c].joignable, dernier_ok: e[c].dernier_ok, dernier_echec: e[c].dernier_echec })
+  return { sentry: e.sentry, posthog: e.posthog, erreurs: canal("erreurs"), evenements: canal("evenements"), journaux: canal("journaux") }
+}
 const FICHIER_SANTE = join(ETAT, "sante.json")
 let placeProduits = {}
 let dernierEntretien = null
@@ -560,6 +587,8 @@ async function ecrireSante() {
     mise_a_jour: miseAJour,
     boucle_le: boucleLe, // la fin du dernier tour de déploiement : un tour bloqué se voit
     applications: etatApplications, // la sonde des produits (sonderProduits), produit par produit
+    boite: boite ? { version: boite.version, le: boite.le } : null,
+    observabilite: resumeObservabilite(),
   }
   writeFileSync(`${FICHIER_SANTE}.tmp`, JSON.stringify(sante, null, 2))
   renameSync(`${FICHIER_SANTE}.tmp`, FICHIER_SANTE)
@@ -573,6 +602,7 @@ async function bilanSante() {
   if (santeEnCours) return
   santeEnCours = true
   try {
+    appliquerBoite()
     await ecrireSante()
   } catch (e) {
     log(`Santé : ${e.message}`)
@@ -841,6 +871,10 @@ async function isolerProduits() {
 
 mkdirSync(ETAT, { recursive: true })
 mkdirSync(join(SRV, "produits"), { recursive: true })
+if (existsSync(BOITE) && !lireBoite(BOITE)) {
+  for (let i = 0; i < 30 && !lireBoite(BOITE); i++) await pause(2_000)
+  log(lireBoite(BOITE) ? "Boîte de la console lue." : "Boîte de la console absente après 60 s : les clés du serveur servent en attendant.")
+}
 await bilanSante()
 setInterval(bilanSante, 30_000)
 await isolerProduits().catch((e) => log(`Isolement des produits : ${e.message}`))

@@ -4,16 +4,24 @@
 // de chaque travail de l'atelier et du vérificateur, où tourne le code des produits. Les clés
 // d'ici n'y vont jamais ; chacune déclare qui la reçoit (destinataires), et rien d'autre ne la lit.
 //
+// Vers le déployeur et les applications, elles passent par la boîte : un volume en mémoire vive
+// (tmpfs), que l'orchestrateur écrit et que le déployeur lit (deployeur/boite.mjs). Elle ne
+// contient que les clés destinées au déployeur ou aux applications, posées ou coupées dans la
+// console ; une clé absente de la boîte laisse servir la valeur du serveur.
+//
 // Trois états par clé :
 //   - posée dans la console : chiffrée dans le coffre, comme les clés des IA (fournisseurs.mjs) ;
 //   - coupée : une valeur vide explicite, qui l'emporte sur celle du serveur (« Couper l'envoi ») ;
 //   - absente : la valeur du serveur (secrets.sh) sert, comme avant.
 // Une valeur saisie n'est jamais renvoyée : seulement ses 4 derniers caractères, la date et l'auteur.
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { lireDsn } from "../../commun/observabilite.mjs"
 import { secret } from "./config.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { noter } from "./db.mjs"
 import { chiffrer, dechiffrer } from "./fournisseurs.mjs"
+import { redemanderEtat } from "./github.mjs"
 import { MONITEUR, obs, reglerObservabilite } from "./observabilite.mjs"
 
 const erreur = (code, message, extra = {}) => Object.assign(new Error(message), { code, ...extra })
@@ -46,12 +54,13 @@ export function validerHotePosthog(brut) {
 }
 
 // --- Le registre ------------------------------------------------------------------------------
-// destinataires : qui reçoit la clé. Pour l'instant l'orchestrateur seul ; le déployeur et les
-// applications gardent la valeur du serveur.
+// destinataires : qui reçoit la clé (orchestrateur, deployeur, applications). Seules celles qui vont
+// au déployeur ou aux applications entrent dans la boîte.
+const TOUS = ["orchestrateur", "deployeur", "applications"]
 export const CLES_SERVICES = {
-  SENTRY_DSN: { service: "sentry", libelle: "Clé d'envoi Sentry (DSN)", secret: true, serveur: () => secret("sentry_dsn"), valider: validerDsn, destinataires: ["orchestrateur"] },
-  POSTHOG_TOKEN: { service: "posthog", libelle: "Jeton de projet PostHog", secret: true, serveur: () => secret("posthog_token"), valider: validerJetonPosthog, destinataires: ["orchestrateur"] },
-  POSTHOG_HOTE: { service: "posthog", libelle: "Région PostHog", secret: false, serveur: () => process.env.POSTHOG_HOTE ?? "", defaut: "eu.i.posthog.com", valider: validerHotePosthog, destinataires: ["orchestrateur"] },
+  SENTRY_DSN: { service: "sentry", libelle: "Clé d'envoi Sentry (DSN)", secret: true, serveur: () => secret("sentry_dsn"), valider: validerDsn, destinataires: TOUS },
+  POSTHOG_TOKEN: { service: "posthog", libelle: "Jeton de projet PostHog", secret: true, serveur: () => secret("posthog_token"), valider: validerJetonPosthog, destinataires: TOUS },
+  POSTHOG_HOTE: { service: "posthog", libelle: "Région PostHog", secret: false, serveur: () => process.env.POSTHOG_HOTE ?? "", defaut: "eu.i.posthog.com", valider: validerHotePosthog, destinataires: TOUS },
 }
 // La clé principale de chaque service : celle que « Couper l'envoi » vide.
 export const SERVICES = {
@@ -89,14 +98,54 @@ export function valeurService(ctx, nom) {
   return { valeur: "", source: "aucune", illisible }
 }
 
-// Appliquer à l'orchestrateur ce qui sert vraiment : tout de suite, sans redémarrage.
-export function appliquerServices(ctx, regler = reglerObservabilite) {
+// --- La boîte vers le déployeur -----------------------------------------------------------------
+// version : un compteur, augmenté à chaque changement fait dans la console. Le déployeur note dans
+// statut.json la version reçue par chaque conteneur : jamais une empreinte des valeurs (une
+// empreinte courte d'un mot de passe se casserait hors ligne).
+export const versionBoite = (ctx) => Number(lireReglage(ctx.db, "boite_version", "0")) || 0
+const changerVersion = (ctx) => ecrireReglage(ctx.db, "boite_version", String(versionBoite(ctx) + 1))
+
+// Le contenu : les clés posées (leur valeur) ou coupées (vide) dans la console, pour le déployeur
+// et les applications. Une clé illisible (coffre verrouillé) n'y entre pas : le serveur sert.
+export function contenuBoite(ctx) {
+  const cles = {}
+  for (const [nom, d] of Object.entries(CLES_SERVICES)) {
+    if (!d.destinataires.some((x) => x === "deployeur" || x === "applications")) continue
+    const { valeur, source } = valeurService(ctx, nom)
+    if (source === "console" || source === "coupe") cles[nom] = valeur
+  }
+  return { version: versionBoite(ctx), le: new Date().toISOString(), cles }
+}
+
+let boiteAbsente = false
+// dossier : config.boiteDir (BOITE_DIR, /app/boite par défaut) ; sans dossier (tests), rien n'est écrit.
+export function ecrireBoite(ctx, dossier = ctx.config?.boiteDir) {
+  if (!dossier) return false
+  try {
+    mkdirSync(dossier, { recursive: true, mode: 0o700 })
+    const fichier = join(dossier, "deployeur.json")
+    writeFileSync(`${fichier}.tmp`, JSON.stringify(contenuBoite(ctx)), { mode: 0o600 })
+    renameSync(`${fichier}.tmp`, fichier)
+    boiteAbsente = false
+    return true
+  } catch (e) {
+    // Une installation sans le volume (docker-compose.yml d'avant) : le serveur sert, on le dit une fois.
+    if (!boiteAbsente) console.log(`Boîte du déployeur indisponible (${e.code ?? e.message}) : le déployeur garde les clés du serveur.`)
+    boiteAbsente = true
+    return false
+  }
+}
+
+// Appliquer ce qui sert vraiment : à l'orchestrateur tout de suite, au déployeur par la boîte.
+export function appliquerServices(ctx, regler = reglerObservabilite, { boite = true } = {}) {
   const v = (nom) => {
     const r = valeurService(ctx, nom)
     if (r.illisible) console.error(`Services : ${CLES_SERVICES[nom].libelle} illisible (coffre verrouillé ?) ; la valeur du serveur sert.`)
     return r.valeur
   }
-  return regler({ sentryDsn: v("SENTRY_DSN"), posthogJeton: v("POSTHOG_TOKEN"), posthogHote: v("POSTHOG_HOTE") })
+  const change = regler({ sentryDsn: v("SENTRY_DSN"), posthogJeton: v("POSTHOG_TOKEN"), posthogHote: v("POSTHOG_HOTE") })
+  if (boite) ecrireBoite(ctx)
+  return change
 }
 
 export function poserService(ctx, nom, valeur, par, { confirme = false } = {}, regler = reglerObservabilite) {
@@ -108,8 +157,9 @@ export function poserService(ctx, nom, valeur, par, { confirme = false } = {}, r
   const quand = { le: new Date().toISOString(), par }
   ecrireReglage(ctx.db, cleReglage(nom), JSON.stringify(def.secret ? { ...chiffrer(ctx, v), fin: v.slice(-4), ...quand } : { valeur: v, ...quand }))
   noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} posée dans la console par ${par}${horsUE ? " (hors d'Europe, confirmé)" : ""}` })
+  changerVersion(ctx)
   appliquerServices(ctx, regler)
-  return { ok: true, message: `${def.libelle} enregistrée : l'usine s'en sert dès maintenant. Le déployeur et les applications gardent pour l'instant celle du serveur.` }
+  return { ok: true, message: `${def.libelle} enregistrée : l'usine s'en sert dès maintenant, le déployeur dans la minute. Les applications la recevront à leur prochaine mise en ligne, ou par « Appliquer ».` }
 }
 
 // Retirer ce que la console a posé (valeur ou coupure) : la valeur du serveur reprend.
@@ -118,6 +168,7 @@ export function retirerService(ctx, nom, par, regler = reglerObservabilite) {
   if (!def) throw erreur(400, "Réglage inconnu.")
   ctx.db.prepare("DELETE FROM reglages WHERE cle = ?").run(cleReglage(nom))
   noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} retirée de la console par ${par}` })
+  changerVersion(ctx)
   appliquerServices(ctx, regler)
   const reprend = valeurService(ctx, nom).source === "serveur"
   return { ok: true, message: reprend ? `${def.libelle} retirée : la valeur du serveur reprend.` : `${def.libelle} retirée.` }
@@ -129,6 +180,7 @@ export function couperService(ctx, service, par, regler = reglerObservabilite) {
   if (!s) throw erreur(400, "Service inconnu.")
   ecrireReglage(ctx.db, cleReglage(s.principale), JSON.stringify({ coupe: true, le: new Date().toISOString(), par }))
   noter(ctx.db, { projet: null, type: "reglage", message: `${s.libelle} : envoi coupé dans la console par ${par}` })
+  changerVersion(ctx)
   appliquerServices(ctx, regler)
   return { ok: true, message: `${s.libelle} : plus rien n'est envoyé par l'usine. « Retirer » rend la main à la valeur du serveur.` }
 }
@@ -188,11 +240,70 @@ export async function testerService(ctx, service, { instance = obs, fetch: envoy
   return r
 }
 
+// --- Appliquer aux applications --------------------------------------------------------------
+// Pas de nouveau mécanisme dans le déployeur : on redemande le même état (même version du code)
+// avec une nouvelle date ; le déployeur le redéploie avec les clés du moment. Construction en
+// cache (l'image porte le sha), bascule blue/green habituelle pour une production. Rien de secret
+// ne part sur GitHub : seulement une date.
+const lireJson = (fichier) => {
+  try {
+    return JSON.parse(readFileSync(fichier, "utf8"))
+  } catch {
+    return null
+  }
+}
+const nomProduit = (ctx, slug) => ctx.db.prepare("SELECT nom FROM projets WHERE slug = ?").get(slug)?.nom ?? slug
+
+// Les applications en ligne et la version des clés qu'elles ont reçue.
+export function applicationsEtCles(ctx) {
+  const statut = lireJson(join(ctx.config.etatDir ?? "/app/etat", "statut.json")) ?? {}
+  const version = versionBoite(ctx)
+  return Object.entries(statut).filter(([, s]) => s?.etat === "ok" && s.conteneur).map(([cle, s]) => {
+    const [environnement, slug] = cle.split("/")
+    return { cle, environnement, slug, nom: nomProduit(ctx, slug), a_jour: version === 0 || s.boite === version }
+  })
+}
+
+let applicationEnCours = false
+export async function appliquerAuxApplications(ctx, par, { confirme = false, redemander = redemanderEtat } = {}) {
+  if (confirme !== true) throw erreur(400, "Redémarrer les applications doit être confirmé.")
+  if (applicationEnCours) return { ok: false, message: "C'est déjà en cours." }
+  const aFaire = applicationsEtCles(ctx).filter((a) => !a.a_jour)
+  if (!aFaire.length) return { ok: true, message: "Toutes les applications ont déjà les clés de la console." }
+  applicationEnCours = true
+  ;(async () => {
+    for (const a of aFaire) {
+      const chemin = a.environnement === "production" ? `production/${a.slug}.json` : `apercus/${a.slug}.json`
+      try {
+        await redemander(ctx.config, chemin, `${a.nom} (${a.environnement === "production" ? "production" : "aperçu"}) : nouvelles clés de la console (${par})`, { viaPR: a.environnement === "production" })
+      } catch (e) {
+        noter(ctx.db, { projet: null, type: "erreur", message: `Clés de la console : ${a.nom} pas redemandé (${e.message})` })
+      }
+    }
+  })().catch((e) => console.error("Appliquer les clés :", e.message)).finally(() => (applicationEnCours = false))
+  noter(ctx.db, { projet: null, type: "reglage", message: `Clés de la console appliquées à ${aFaire.length} application(s) par ${par}` })
+  return { ok: true, message: `${aFaire.length} application(s) vont redémarrer avec les clés de la console, dans les minutes qui viennent : ${aFaire.map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`).join(", ")}.` }
+}
+
 // --- Ce que la console affiche (jamais une valeur secrète) ------------------------------------
 const CANAUX = { sentry: ["battement", "erreurs"], posthog: ["evenements", "journaux"] }
+const CANAUX_DEPLOYEUR = { sentry: ["erreurs"], posthog: ["evenements", "journaux"] }
 export function etatServices(ctx, instance = obs) {
   const etat = instance.etat()
+  const sante = lireJson(join(ctx.config.etatDir ?? "/app/etat", "sante.json"))
+  const version = versionBoite(ctx)
+  const applications = applicationsEtCles(ctx)
+  // Le déployeur : a-t-il lu la dernière boîte, et ce qu'il envoie vraiment.
+  const deployeur = (id) => {
+    const o = sante?.observabilite
+    if (!o) return { connu: false }
+    const a_jour = version === 0 || sante.boite?.version === version
+    const envoi = Object.fromEntries(CANAUX_DEPLOYEUR[id].map((c) => [c, o[c] ? { ...o[c], dernier_echec: o[c].dernier_echec ? { le: o[c].dernier_echec.le, message: traduireEchec(id, o[c].dernier_echec.detail) } : null } : null]))
+    return { connu: true, a_jour, actif: Boolean(o[id]), envoi, le: sante.le }
+  }
   return {
+    version_boite: version,
+    applications: { total: applications.length, a_jour: applications.filter((a) => a.a_jour).length, en_retard: applications.filter((a) => !a.a_jour).map((a) => ({ nom: a.nom, environnement: a.environnement })), en_cours: applicationEnCours },
     services: Object.entries(SERVICES).map(([id, s]) => ({
       id,
       libelle: s.libelle,
@@ -218,6 +329,7 @@ export function etatServices(ctx, instance = obs) {
         }
       }),
       envoi: Object.fromEntries(CANAUX[id].map((c) => [c, { envoyes: etat[c].envoyes, echecs: etat[c].echecs, joignable: etat[c].joignable, dernier_ok: etat[c].dernier_ok, dernier_echec: etat[c].dernier_echec ? { le: etat[c].dernier_echec.le, message: traduireEchec(id, etat[c].dernier_echec.detail) } : null }])),
+      deployeur: deployeur(id),
       test: lireTest(ctx, id),
     })),
   }

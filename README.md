@@ -320,6 +320,11 @@ docker compose exec orchestrateur node src/cli.mjs production 1
     conteneurs.
   - Les produits reçoivent les mêmes clés. Rien de personnel ne sort : adresses email,
     téléphones, IBAN, adresses IP et jetons sont masqués (`commun/observabilite.mjs`).
+  - Les clés se posent aussi dans la console (Réglages, Intégrations, Sentry ou PostHog), sans
+    SSH ni redémarrage : chiffrées dans le coffre, elles servent tout de suite à l'orchestrateur,
+    au déployeur dans les 30 s (par la boîte, un volume en mémoire vive), et aux applications à
+    leur prochaine mise en ligne ou par « Appliquer ». « Couper l'envoi » l'emporte sur la valeur
+    du serveur ; « Retirer » la rend.
 
 ## Le proposer à d'autres
 

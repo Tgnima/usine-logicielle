@@ -98,6 +98,28 @@ les secrets et l'installation. Les corrections sont dans la branche `securite/au
   n'ouvre aucun port et ne lance rien sans `valide()`. Le dépôt d'état reste la source de
   confiance : qui peut y écrire déploie.
 
+## Les clés réglées dans la console (Sentry, PostHog)
+
+- **Au repos**, dans le coffre de la console (AES-256-GCM, scellé par AXMARIL quand il est
+  branché), comme les clés des IA. La console ne renvoie que les 4 derniers caractères, la date
+  et l'auteur ; chaque pose est notée au journal.
+- **Registre à part** (`CLES_SERVICES`, `orchestrateur/src/services.mjs`) : ces clés ne partent
+  jamais dans l'environnement des travaux de l'atelier ni du vérificateur, où tourne le code des
+  produits (test : `services.test.mjs`).
+- **Vers le déployeur**, par la boîte : un volume tmpfs (`boite`, `docker-compose.yml`) écrit par
+  l'orchestrateur, lu par le déployeur, monté nulle part ailleurs (test :
+  `services-boite.test.mjs`). Elle ne contient que les clés destinées au déployeur ou aux
+  applications, posées ou coupées dans la console. Le déployeur ne lit que la liste blanche
+  `CLES_BOITE` (`deployeur/boite.mjs`). Rien n'est écrit sur le disque ni sur GitHub ; le statut
+  de chaque conteneur ne garde qu'un numéro de version, jamais une empreinte des valeurs.
+- **Vers les applications**, rien ne change : `--env-file`, effacé aussitôt. Ce sont des clés
+  d'envoi seulement (voir plus haut).
+- **Coffre verrouillé** (AXMARIL arrêté) : la clé de la console est illisible, elle n'entre pas
+  dans la boîte, et la valeur du serveur sert partout.
+- **Après un redémarrage du serveur**, la boîte est vide jusqu'à ce que l'orchestrateur la
+  réécrive. Le déployeur l'attend une minute avant son premier tour, puis garde les valeurs du
+  serveur.
+
 ## Appliquer sur un serveur existant
 
 L'usine en place a besoin de deux nouveaux jetons (`atelier_token`, `verificateur_token`). Tant

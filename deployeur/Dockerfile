@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker /usr/local/libexec/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
 WORKDIR /app
-COPY deployeur/server.mjs deployeur/chemins.mjs deployeur/deploiement.mjs deployeur/jetons.mjs deployeur/observation.mjs deployeur/sonde.mjs ./
+COPY deployeur/server.mjs deployeur/boite.mjs deployeur/chemins.mjs deployeur/deploiement.mjs deployeur/jetons.mjs deployeur/observation.mjs deployeur/sonde.mjs ./
 # Le module d'envoi vers Sentry et PostHog, au même endroit relatif que dans le dépôt (../commun).
 COPY commun/observabilite.mjs /commun/observabilite.mjs
 CMD ["node", "server.mjs"]

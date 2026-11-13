@@ -1690,8 +1690,25 @@ function envoisService(s) {
   const lignes = Object.entries(s.envoi).map(([canal, c]) => html`<li><strong>${NOMS_CANAUX[canal] ?? canal}</strong> : ${c.joignable === false && c.dernier_echec
     ? html`les envois échouent depuis ${heureParis(c.dernier_echec.le)}. ${c.dernier_echec.message}`
     : c.dernier_ok ? `dernier envoi réussi ${ilYa(c.dernier_ok)}.` : "rien d'envoyé depuis le démarrage."}</li>`)
-  return html`<div class="pile" style="gap:6px"><ul style="margin:0;padding-left:18px;font-size:14px">${lignes}</ul>
-    <div class="aide">L'usine se sert de cette clé. Le déployeur et les applications utilisent encore celle du serveur.</div></div>`
+  return html`<div class="pile" style="gap:6px"><ul style="margin:0;padding-left:18px;font-size:14px">${lignes}</ul>${destinatairesService(s)}</div>`
+}
+
+// Qui d'autre se sert de la clé : le déployeur (relit la boîte toutes les 30 s) et les applications
+// (à leur prochaine mise en ligne, ou par « Appliquer »).
+function destinatairesService(s) {
+  const d = s.deployeur
+  const ap = etat.services?.applications
+  const echec = d?.connu ? Object.values(d.envoi ?? {}).find((c) => c?.joignable === false && c.dernier_echec) : null
+  const dernier = d?.connu ? Object.values(d.envoi ?? {}).map((c) => c?.dernier_ok).filter(Boolean).sort().at(-1) : null
+  const ligneDeployeur = !d?.connu ? "Le déployeur : pas encore de nouvelles."
+    : !d.a_jour ? "Le déployeur : pas encore reçu la dernière clé (il la lit dans la minute)."
+    : echec ? html`Le déployeur : ses envois échouent depuis ${heureParis(echec.dernier_echec.le)}. ${echec.dernier_echec.message}`
+    : dernier ? `Le déployeur : dernier envoi réussi ${ilYa(dernier)}.` : "Le déployeur : clé reçue, rien d'envoyé pour l'instant."
+  const ligneApplis = !ap?.total ? "Aucune application en ligne pour l'instant."
+    : ap.a_jour === ap.total ? `Les applications : ${ap.total} sur ${ap.total} ont la dernière clé.`
+    : html`Les applications : ${ap.a_jour} sur ${ap.total} ont la dernière clé. Les autres la recevront à leur prochaine mise en ligne.
+      ${ap.en_cours ? html`<span class="aide">Redémarrage demandé…</span>` : html`<button type="button" class="btn btn-s btn-petit" data-action="appliquer-services">Appliquer maintenant</button>`}`
+  return html`<ul style="margin:0;padding-left:18px;font-size:14px"><li>${ligneDeployeur}</li><li>${ligneApplis}</li></ul>`
 }
 
 function boutonsService(s) {
@@ -2534,6 +2551,12 @@ const ACTIONS = {
   "couper-service": (el) => {
     if (!confirmer(`Couper l'envoi vers ${el.dataset.service === "sentry" ? "Sentry" : "PostHog"} ? L'usine n'y enverra plus rien, même avec la clé du serveur, jusqu'à ce que tu cliques sur « Retirer ».`)) return
     return agir(() => api("POST", `services/${el.dataset.service}/couper`, {}))
+  },
+  "appliquer-services": () => {
+    const ap = etat.services?.applications
+    const liste = (ap?.en_retard ?? []).map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`).join(", ")
+    if (!confirmer(`Redémarrer ${ap?.en_retard?.length ?? 0} application(s) avec les clés de la console : ${liste} ? Même version du code ; une production passe comme à chaque mise en ligne (sauvegarde des données, puis bascule).`)) return
+    return agir(() => api("POST", "services/appliquer", { confirme: true }))
   },
   "retirer-service": (el) => {
     if (!confirmer("Retirer ce réglage de la console ? Celui du serveur, s'il y en a un, reprendra.")) return

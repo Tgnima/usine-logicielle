@@ -171,6 +171,16 @@ export async function supprimerEtat(config, chemin, message) {
   return true
 }
 
+// Redemande le même état souhaité (même version du code), avec une nouvelle date : le déployeur
+// le redéploie (decisionDeploiement), par exemple avec de nouvelles clés. Faux s'il n'existe pas.
+export async function redemanderEtat(config, chemin, message, { viaPR = false } = {}) {
+  const actuel = await lireEtat(config, chemin)
+  if (!actuel?.content) return false
+  const objet = JSON.parse(Buffer.from(actuel.content, "base64").toString("utf8"))
+  await ecrireEtat(config, chemin, { ...objet, demande_le: new Date().toISOString() }, { message, viaPR })
+  return true
+}
+
 // Écrit un état souhaité. Direct sur main pour un aperçu ; par pull request
 // (aussitôt fusionnée, puisqu'un humain vient de valider) pour la production :
 // chaque mise en production laisse ainsi une trace relisible.

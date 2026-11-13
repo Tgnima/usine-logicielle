@@ -38,6 +38,8 @@ services:
       - etat:/app/etat:ro
       # Le jeton GitHub de courte durée (application GitHub de l'usine), pour le déployeur.
       - jetons:/app/jetons
+      # La boîte : les clés posées dans la console (Sentry, PostHog…), pour le déployeur. En mémoire.
+      - boite:/app/boite
     depends_on: [atelier-1, verificateur, portier]
     mem_limit: 256m
     networks: [usine]
@@ -95,6 +97,7 @@ services:
       - etat:/etat
       - deployeur-srv:/srv
       - jetons:/jetons:ro
+      - boite:/boite:ro
       - ${USINE_DIR:-./.usine-dir-absent}:${USINE_DIR:-/usine-dir-absent}
     mem_limit: 512m
     networks: [usine, produits]
@@ -167,6 +170,13 @@ volumes:
   orchestrateur-data:
   etat:
   jetons:
+  # Les clés posées dans la console, de l'orchestrateur (qui l'écrit, utilisateur node) vers le
+  # déployeur (qui la lit) : en mémoire vive seulement, jamais sur le disque. Vidée quand plus aucun
+  # conteneur ne la monte ; l'orchestrateur la réécrit à son démarrage. Jamais montée dans
+  # l'atelier ni le vérificateur, où tourne le code des agents.
+  boite:
+    driver: local
+    driver_opts: { type: tmpfs, device: tmpfs, o: "size=1m,uid=1000,gid=1000,mode=0700" }
   deployeur-srv:
   portier-data:
   caddy-data:

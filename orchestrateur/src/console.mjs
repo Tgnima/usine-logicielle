@@ -48,7 +48,7 @@ import { demarrerConnexion, etatForge, oublierForge, recevoirInstallation, recev
 import { adresseTableau } from "./slack-couts.mjs"
 import { iso, visibilite } from "./visibilite.mjs"
 import { connecterChatGPT, effacerIdentifiant, etatChatGPT, etatFournisseurs, poserIdentifiant, reglerModeles, reglerModes, reglerRelais, testerFournisseurs } from "./fournisseurs.mjs"
-import { couperService, etatServices, poserService, retirerService, testerService } from "./services.mjs"
+import { appliquerAuxApplications, couperService, etatServices, poserService, retirerService, testerService } from "./services.mjs"
 
 const STATIQUE = fileURLToPath(new URL("../console/", import.meta.url))
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" }
@@ -546,6 +546,7 @@ const ROUTES = [
   ["DELETE", /^\/api\/services\/cles\/(SENTRY_DSN|POSTHOG_TOKEN|POSTHOG_HOTE)$/, (ctx, [nom], _c, qui) => retirerService(ctx, nom, qui.email)],
   ["POST", /^\/api\/services\/(sentry|posthog)\/couper$/, (ctx, [service], _c, qui) => couperService(ctx, service, qui.email)],
   ["POST", /^\/api\/services\/(sentry|posthog)\/tester$/, (ctx, [service]) => testerService(ctx, service)],
+  ["POST", /^\/api\/services\/appliquer$/, (ctx, _p, c, qui) => appliquerAuxApplications(ctx, qui.email, { confirme: c.confirme === true })],
 
   // Google Drive : le compte de service avec qui l'entreprise partage ses dossiers (google-drive.mjs).
   ["GET", /^\/api\/drive$/, (ctx) => etatDrive(ctx)],
