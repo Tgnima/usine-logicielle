@@ -76,4 +76,10 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 - Les scripts envoyés aux serveurs de travaux s'écrivent avec `q()` et `ecrireFichier()` (travaux.mjs).
 - Un changement de la console (`orchestrateur/console/`) passe par l’agent `designer-console` (`.claude/agents/`, avec `node scripts/controle-console.mjs`) ; un changement de route, par `auditeur-backend`.
 - Commentaires et messages en français.
-- Tests : `cd orchestrateur && npm test`.
+- Tests : `cd orchestrateur && npm test` (aussi `portier`, `deployeur`, `briques/webapp`) ; la CI
+  (`.github/workflows/tests.yml`) les lance sur chaque PR.
+- **Versions** : tout changement visible ou tout geste à faire (nouveau secret, nouveau réglage)
+  va dans la section « Non publié » de `CHANGELOG.md`. Un nouveau réglage de `.env` va aussi dans
+  `.env.example` (`update.sh` le signale). Une version se publie par une étiquette `vX.Y.Z`
+  (README, « Contribuer et publier une version ») ; les usines sur le canal `stable` ne voient
+  que les étiquettes.

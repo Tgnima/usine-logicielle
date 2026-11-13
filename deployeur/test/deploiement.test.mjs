@@ -39,7 +39,7 @@ test("mise à jour : un secret nouveau absent du serveur l'arrête avant toute m
   assert.equal(r.code, 3, r.sortie)
   assert.doesNotMatch(r.sortie, /@@ SUITE/)
   assert.match(r.sortie, /Secrets absents du serveur : posthog_token sentry_dsn \./)
-  assert.match(r.sortie, /sudo bash secrets\.sh dechiffrer/)
+  assert.match(r.sortie, /« bash secrets\.sh dechiffrer »/)
 })
 
 test("mise à jour : une vérification impossible (Docker, git) ne bloque pas", () => {

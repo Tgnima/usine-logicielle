@@ -80,14 +80,18 @@ bash secrets.sh migrer
 
 manque=()
 etat=$(bash secrets.sh verifier)
-for v in GITHUB_TOKEN WORKER_TOKEN ATELIER_TOKEN VERIFICATEUR_TOKEN; do echo "$etat" | grep -qE "^$v +rempli" || manque+=("$v"); done
-[ -n "$(valeur DEPOT_ETAT)" ] || manque+=("DEPOT_ETAT")
+# Seuls les jetons internes sont indispensables (générés par secrets.sh) : GitHub, les modèles
+# et Slack se branchent aussi depuis la console, après l'installation.
+for v in WORKER_TOKEN ATELIER_TOKEN VERIFICATEUR_TOKEN PORTIER_SECRET PORTIER_API_TOKEN; do echo "$etat" | grep -qE "^$v +rempli" || manque+=("$v"); done
 if [ ${#manque[@]} -gt 0 ]; then
   echo
   echo "Il manque : ${manque[*]}"
   echo "Colle les valeurs dans .env (nano .env), puis relance : bash install.sh"
   echo "(Elles y seront chiffrées puis effacées : .env ne garde jamais un secret.)"
   exit 1
+fi
+if ! echo "$etat" | grep -qE "^GITHUB_TOKEN +rempli" || [ -z "$(valeur DEPOT_ETAT)" ]; then
+  echo "• GitHub n'est pas branché sur le serveur : connecte-le dans la console (Premiers pas, « Se connecter avec GitHub »)."
 fi
 # Les fournisseurs d'IA ne sont plus obligatoires ici : ils se posent aussi dans la console.
 echo "$etat" | grep -qE "^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|AI_GATEWAY_API_KEY) +rempli" || echo "• Aucun accès à Claude sur le serveur : pose-le dans la console (Réglages, Fournisseurs d'IA)."
@@ -96,6 +100,10 @@ if echo "$etat" | grep -qE "^SLACK_BOT_TOKEN +rempli" && [ -z "$(valeur ADMIN_US
   echo "• ADMIN_USER_IDS est vide : personne ne pourra valider ni décider depuis Slack (la console, si). Ajoute tes identifiants Slack (U…) dans .env."
 fi
 
+# Une usine qui tourne déjà se met à jour avec update.sh : il attend la fin de la tâche en cours.
+if docker compose ps --status running --services 2>/dev/null | grep -qx orchestrateur; then
+  echo "• L'usine tourne déjà : tout va redémarrer maintenant. Pour une mise à jour, préfère « bash update.sh »."
+fi
 docker volume create "$(valeur CODEX_VOLUME)" >/dev/null  # existe déjà s'il est réutilisé
 echo "• Construction des images (Claude Code, Codex et Playwright en dernière version)…"
 docker compose build --pull
@@ -125,4 +133,5 @@ if [ -n "$ADMIN" ]; then
     echo "Le premier administrateur n'a pas pu être créé : $r"
   fi
 fi
-echo "Usine prête. Journal : docker compose logs -f orchestrateur"
+echo "Usine prête ($(git describe --tags --always 2>/dev/null)). Journal : docker compose logs -f orchestrateur"
+echo "Mises à jour : le bouton « Mettre à jour l'usine » de la console, ou « bash update.sh » (voir CHANGELOG.md)."

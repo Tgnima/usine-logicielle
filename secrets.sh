@@ -92,7 +92,7 @@ lire_chiffres() {
 
 migrer() {
   lire_chiffres
-  local trouves=0 nom valeur
+  local trouves=0 nom valeur proprio
   if [ -f .env ]; then
     for nom in "${SECRETS[@]}"; do
       valeur=$(grep -E "^$nom=" .env | tail -1 | cut -d= -f2- || true)
@@ -119,9 +119,13 @@ migrer() {
   if [ -f .env ] && [ "$trouves" -gt 0 ]; then
     local motif
     motif="^($(IFS='|'; echo "${SECRETS[*]}"))="
+    # .env garde son propriétaire, même avec sudo : sinon « docker compose », lancé par
+    # l'utilisateur du serveur, ne peut plus le lire.
+    proprio=$(stat -c '%u:%g' .env)
     grep -vE "$motif" .env > .env.tmp || true
     mv .env.tmp .env
     chmod 600 .env
+    chown "$proprio" .env
   fi
   echo "• $trouves secret(s) chiffré(s) depuis .env ; .env ne contient plus aucun secret."
   dechiffrer
