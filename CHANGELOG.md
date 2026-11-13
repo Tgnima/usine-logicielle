@@ -12,6 +12,15 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **Déconnexion** : un bouton « Se déconnecter » dans la console. `/_portier/deconnexion`, sur
+  chaque adresse protégée, ferme aussi la session côté serveur : le même cookie, rejoué ensuite,
+  est refusé. Un lien venu d'un autre site demande confirmation. Les sessions ouvertes avant cette
+  version restent valables jusqu'à leur expiration (personne n'est déconnecté par la mise à jour).
+- **Correction** : le chemin de retour de la page de connexion ne peut plus mener vers un autre site
+  (une tabulation, retirée par le navigateur, le permettait).
+
+**À faire** : rien. La table du portier se crée toute seule au démarrage.
+
 ## v1.0.0
 
 La première version publiée. Elle rassemble tout ce qui a été fusionné jusqu'au 13 novembre 2026.
