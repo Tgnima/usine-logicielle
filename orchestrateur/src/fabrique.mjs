@@ -23,6 +23,10 @@ import { decrireDefaut, relireSecurite } from "./relectures.mjs"
 import { facturationsEnCours, nomMode, noterLimites, scriptClaude, signalerFacturation } from "./moteurs.mjs"
 import { REGLE_PYRAMIDE } from "./pyramide.mjs"
 import { SCRIPT_CONTROLE_UI, decrireDefautUi, lireDefautsUi } from "./controle-ui.mjs"
+import { noterPassage, scriptResume } from "./sous-agents.mjs"
+
+// Un résumé des sous-agents d'un passage fait moins de 60 Ko (sous-agents.mjs) : au-delà, il est suspect.
+const RESUME_AGENTS_MAX = 200_000
 
 const fini = (t) => ["fusionnee", "abandonnee"].includes(t.statut)
 
@@ -199,6 +203,7 @@ async function fabriquer(ctx, projet, tache) {
     `cd ${dossier}`,
     ecrireFichier("/tmp/sorties/tache/consigne.md", consigne(ctx, projet, tache)),
     ": > /tmp/sorties/tache/agent.jsonl",
+    "rm -f /tmp/sorties/tache/agents.json",
     // Abonnement, puis clé API, puis passerelle : la première façon qui n'est pas à sa limite.
     scriptClaude(ctx, {
       args: `-p --dangerously-skip-permissions --max-turns 150 --output-format stream-json --verbose`, entree: "/tmp/sorties/tache/consigne.md",
@@ -209,6 +214,8 @@ async function fabriquer(ctx, projet, tache) {
     }),
     // Le dernier évènement (« result ») a la forme de l'ancienne sortie JSON : coûts et résumé.
     "grep '\"type\":\"result\"' /tmp/sorties/tache/agent.jsonl | tail -1 > /tmp/sorties/tache/agent.json",
+    // Le résumé du passage : l'agent, ses modèles et ses sous-agents (sous-agents.mjs). Jamais bloquant.
+    scriptResume("/tmp/sorties/tache/agent.jsonl", "/tmp/sorties/tache/agents.json"),
   ].join("\n"), { minutes, surAvancement: () => {} })
   let resume = ""
   const acces = noterLimites(ctx, "claude-code", agent.marqueurs)
@@ -226,6 +233,17 @@ async function fabriquer(ctx, projet, tache) {
     if (sortie.is_error) resume = `(l'agent signale une erreur) ${resume}`
   } catch {
     resume = "(pas de résumé de l'agent)"
+  }
+  // Qui a travaillé dans ce passage : l'agent et ses sous-agents. Un résumé absent ou illisible n'empêche
+  // rien ; sans accès à Claude (limite), il n'y a pas eu de travail à noter. Le fichier est dans le bac à
+  // sable de l'agent : lu sur ses 200 derniers Ko au plus (au-delà, le JSON coupé est rejeté).
+  if (!limite) {
+    try {
+      const brut = await lireFichier(atelier, jeton, "/tmp/sorties/tache/agents.json", { fin: RESUME_AGENTS_MAX })
+      noterPassage(db, { projet: projet.id, tache: tache.id, role: "agent", tentative: tache.tentative, approche: tache.approche, resume: JSON.parse(brut ?? "null"), secrets: Object.values(config.secrets ?? {}) })
+    } catch (e) {
+      console.error(`Sous-agents de ${tache.cle} non notés :`, e.message)
+    }
   }
   if ("DELAI_DEPASSE" in agent.marqueurs) resume = `(arrêté au bout de ${minutes} min) ${resume}`
   if (limite) {
