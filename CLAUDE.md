@@ -16,6 +16,7 @@ Du prompt au produit en ligne, piloté depuis Slack. Voir `README.md`.
 | `orchestrateur/src/reorientation.mjs` | Changer de direction en cours de fabrication : pause, lots gardés, suite refaite par l'analyste, validation |
 | `orchestrateur/src/slack.mjs` | Slack, et le notificateur console sans Slack |
 | `orchestrateur/src/console.mjs`, `orchestrateur/console/` | La console web (API JSON + interface sans build), servie sur le port 8091 derrière le portier (administrateurs) |
+| `orchestrateur/src/visibilite.mjs` | La page Visibilité de la console (`GET /api/visibilite`), en lecture seule : ce qui attend, l'état réel de chaque produit (sonde de `sante.json`), l'usine maintenant (tâches, `statut.json`, serveur), les 7 derniers jours à l'heure de Paris (journal, consommations, causes des refus) |
 | `deployeur/server.mjs` | Tire le dépôt d'état, construit, déploie (blue/green), Caddy (portier devant chaque site) |
 | `deployeur/observation.mjs` | Ce que le déployeur envoie de chaque produit (module commun) : `etat_produit` toutes les 5 min et à chaque changement, un incident Sentry quand la panne est confirmée (deux sondes de suite), un événement `deploiement` (ok, échec, abandon), les nouvelles lignes des journaux vers PostHog (`service.name` = produit, `deployment.environment`) |
 | `deployeur/deploiement.mjs` | Les décisions du tour : déployer, reprendre un déploiement interrompu (deux fois au plus), sinon l'abandonner ; l'attente de `/api/health` sans suivre de redirection |
