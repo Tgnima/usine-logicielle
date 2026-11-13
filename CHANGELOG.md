@@ -18,6 +18,13 @@ Ce qui est sur `main` sans être encore dans une version.
   version restent valables jusqu'à leur expiration (personne n'est déconnecté par la mise à jour).
 - **Correction** : le chemin de retour de la page de connexion ne peut plus mener vers un autre site
   (une tabulation, retirée par le navigateur, le permettait).
+- **Correction** : `update.sh` et la vérification des mises à jour du déployeur n'utilisent plus
+  `git fetch --prune` : avec, la lecture des versions échouait sur un serveur en Git 2.34 (Ubuntu 22.04).
+- **Correction** : le déployeur ne compte plus un message d'erreur de git comme des changements
+  disponibles (« 3 changements » annoncés alors que tout était à jour) ; une cible illisible est
+  signalée comme une erreur.
+- **Correction** : `update.sh` ne présente plus les secrets (chiffrés, donc absents de `.env`) comme
+  des réglages nouveaux.
 
 **À faire** : rien. La table du portier se crée toute seule au démarrage.
 
