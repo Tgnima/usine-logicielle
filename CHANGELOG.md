@@ -12,6 +12,10 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+## v1.1.1
+
+Ce qui a été fusionné le 16 novembre 2026.
+
 - **Correction** : le cliquet de non-régression n'avait jamais versé un seul test dans les
   produits. L'usine ne lisait pas les marqueurs dont le nom contient un chiffre (`E2E_NOUVEAUX`,
   `E2E_TOTAL`, `E2E_ECHECS`) : les tests écrits par le vérificateur restaient dans son dossier.
