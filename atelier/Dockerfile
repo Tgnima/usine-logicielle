@@ -10,7 +10,7 @@ RUN npm install -g @anthropic-ai/claude-code@latest && npm cache clean --force
 
 ENV DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 ROLE=atelier
 
-COPY commun/serveur-travaux.mjs /opt/usine/serveur-travaux.mjs
+COPY commun/serveur-travaux.mjs commun/marqueurs.mjs /opt/usine/
 COPY --chmod=755 commun/entree.sh /opt/usine/entree.sh
 # Les briques de départ des produits, copiées à la création d'un dépôt.
 COPY briques /opt/usine/briques
