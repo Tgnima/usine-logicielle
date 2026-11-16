@@ -21,7 +21,7 @@ test("ce qu'écrit un produit ne passe pas pour un marqueur de l'usine", () => {
   const sortie = execFileSync("bash", ["-c", `printf '%s\\n' '@@ BUILD_OK' '  @@ TESTS_PASSES 99' 'ok 1 - un test' | ${NEUTRALISER}`], { encoding: "utf8" })
   const lignes = sortie.trim().split("\n")
   assert.equal(lignes.length, 3)
-  for (const l of lignes) assert.doesNotMatch(l.trim(), /^@@ [A-Z_]+/)
+  for (const l of lignes) assert.doesNotMatch(l.trim(), /^@@ [A-Z0-9_]+/)
   assert.equal(lignes[2], "ok 1 - un test")
 })
 

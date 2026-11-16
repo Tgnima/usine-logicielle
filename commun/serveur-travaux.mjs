@@ -19,6 +19,7 @@ import { spawn } from "node:child_process"
 import { randomUUID, timingSafeEqual } from "node:crypto"
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs"
 import { resolve } from "node:path"
+import { marqueurs } from "./marqueurs.mjs"
 
 const PORT = Number(process.env.PORT || 8080)
 // Le jeton propre à ce serveur (ATELIER_TOKEN ou VERIFICATEUR_TOKEN, selon ROLE) ; WORKER_TOKEN,
@@ -72,15 +73,6 @@ function lancer({ script, env = {}, minutes = 30 }) {
   // On ne garde que les 20 derniers travaux.
   if (travaux.size > 20) travaux.delete(travaux.keys().next().value)
   return travail
-}
-
-const marqueurs = (journal) => {
-  const m = {}
-  for (const ligne of journal.split("\n")) {
-    const r = /^@@ ([A-Z_]+)(?: (.*))?$/.exec(ligne.trim())
-    if (r) m[r[1]] = (r[2] ?? "").trim()
-  }
-  return m
 }
 
 const envoyer = (res, statut, corps) => {

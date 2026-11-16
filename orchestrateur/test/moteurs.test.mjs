@@ -59,7 +59,7 @@ test("abonnement épuisé : bascule sur la passerelle dans le même travail, mê
   assert.match(sortie, /@@ LIMITE_ABONNEMENT resets 12:40pm/)
   assert.match(sortie, /@@ MODE_CLAUDE passerelle/)
   assert.match(fichier, /"result":"fini"/)
-  const r = noterLimites(ctx, "claude-code", Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""])))
+  const r = noterLimites(ctx, "claude-code", Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z0-9_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""])))
   assert.equal(r.mode, "passerelle")
   assert.deepEqual(modesDisponibles(ctx, "claude-code"), ["cle", "passerelle"])
 })
@@ -87,7 +87,7 @@ echo '{"type":"result","is_error":true,"api_error_status":429,"result":"You have
   const script = `set -e\nexport PATH="${posix(d)}:$PATH"\n${scriptClaude(ctx, { args: "-p essai", modele: "claude-sonnet-5-5", sortie: posix(join(d, "sortie.jsonl")) })}`
   return spawnSync("bash", ["-c", script], { env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: "jeton-abonnement", ...env }, encoding: "utf8" }).stdout
 }
-const marqueursDe = (sortie) => Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""]))
+const marqueursDe = (sortie) => Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z0-9_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""]))
 
 test("passerelle sans crédit (402) : reconnue, jamais prise pour un travail fait", () => {
   const ctx = ctxDe()

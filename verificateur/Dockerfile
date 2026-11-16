@@ -15,7 +15,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_PATH=/usr/local/lib/node_module
 RUN npx playwright install --with-deps chromium && chmod -R a+rx /ms-playwright
 
 ENV ROLE=verificateur
-COPY commun/serveur-travaux.mjs /opt/usine/serveur-travaux.mjs
+COPY commun/serveur-travaux.mjs commun/marqueurs.mjs /opt/usine/
 COPY --chmod=755 commun/entree.sh /opt/usine/entree.sh
 RUN mkdir -p /travail /tmp/sorties /home/node/.codex && chown -R node:node /travail /tmp/sorties /home/node/.codex
 USER node

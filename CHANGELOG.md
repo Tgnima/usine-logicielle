@@ -12,6 +12,15 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **Correction** : le cliquet de non-régression n'avait jamais versé un seul test dans les
+  produits. L'usine ne lisait pas les marqueurs dont le nom contient un chiffre (`E2E_NOUVEAUX`,
+  `E2E_TOTAL`, `E2E_ECHECS`) : les tests écrits par le vérificateur restaient dans son dossier.
+  Désormais, chaque critère validé qui s'observe dans l'application devient un test de
+  `.usine/e2e/`, rejoué à chaque tâche suivante. Relevé par l'audit du vérificateur du 16 novembre
+  2026 (six bugs plantés dans Vigie Copro).
+
+**À faire** : rien. L'atelier et le vérificateur sont reconstruits par la mise à jour.
+
 ## v1.1.0
 
 Ce qui a été fusionné du 13 au 14 novembre 2026.

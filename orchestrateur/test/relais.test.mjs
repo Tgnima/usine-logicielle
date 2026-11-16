@@ -16,7 +16,7 @@ const ctxDe = (config = {}) => {
   return { db, config: { secours: {}, modeles: { renfort: { modele: "claude-opus-5-5" } }, ...config } }
 }
 const posix = (p) => (process.platform === "win32" ? p.replace(/^([A-Za-z]):/, (_, l) => `/${l.toLowerCase()}`).replaceAll("\\", "/") : p)
-const marqueursDe = (sortie) => Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""]))
+const marqueursDe = (sortie) => Object.fromEntries(sortie.split("\n").map((l) => /^@@ ([A-Z0-9_]+)(?: (.*))?$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2] ?? ""]))
 
 // Le refus réel de la passerelle Vercel sans crédit, vu par Codex (2 nov. 2026).
 const REFUS_CODEX = `{"type":"error","message":"A positive credit balance is required for all requests, including BYOK. 402 insufficient_funds"}`
