@@ -12,6 +12,19 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une
+  régression, sauf si un critère de la tâche en cours change exprès ce comportement. Le vérificateur
+  doit citer ce critère mot pour mot, et l'usine vérifie qu'il existe. Un test qui passe ne se
+  réécrit jamais. Chaque réécriture est dite dans la PR et au journal, et un test qui n'a pas pu être
+  versé aussi.
+- **Le rejeu du cliquet est plafonné** : 15 minutes par vérification par défaut
+  (`autonomie.minutes_cliquet` dans `usine.config.yml`), dans un ordre tiré au sort. Les tests non
+  rejoués faute de temps sont comptés et dits au journal.
+
+**À faire** : rien. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
+commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
+ou le retire de `.usine/e2e/`.
+
 ## v1.1.1
 
 Ce qui a été fusionné le 16 novembre 2026.

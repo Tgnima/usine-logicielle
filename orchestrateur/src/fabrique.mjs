@@ -377,13 +377,27 @@ async function fabriquer(ctx, projet, tache) {
   maj(db, "projets", projet.id, { plancher_tests: Math.max(p.plancher_tests, v.tests) })
   maj(db, "taches", tache.id, { statut: "fusionnee" })
   // Le cliquet : les tests écrits par le vérificateur rejoignent .usine/e2e/ (protégé), rejoués à chaque tâche.
+  // Un test réécrit ne remplace l'ancien que si un critère de la tâche l'explique (vérifié par la porte) ; il est
+  // dit dans la PR et au journal. Un test qui n'a pas pu être versé est dit aussi : rien ne se perd en silence.
   let versés = 0
-  for (const fichier of v.nouveauxTests ?? []) {
+  const ratés = []
+  const remplaces = v.remplaces ?? []
+  const aVerser = [...(v.nouveauxTests ?? []).map((fichier) => ({ fichier })), ...remplaces.map((r) => ({ fichier: r.test, critere: r.critere }))]
+  for (const { fichier, critere } of aVerser) {
     const contenu = await lireFichier(config.verificateur.url, config.secrets.worker, `/tmp/sorties/verif/e2e/${fichier}`).catch(() => null)
-    if (!contenu) continue
-    await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), `Non-régression : ${fichier} (${tache.cle})`, base).then(() => versés++).catch((e) => console.error("Test de non-régression :", e.message))
+    if (!contenu) {
+      ratés.push(fichier)
+      continue
+    }
+    const message = critere ? `Non-régression : ${fichier} réécrit (${tache.cle}, critère : ${critere.slice(0, 120)})` : `Non-régression : ${fichier} (${tache.cle})`
+    await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), message, base).then(() => versés++).catch((e) => {
+      console.error("Test de non-régression :", e.message)
+      ratés.push(fichier)
+    })
   }
-  if (versés) noter(db, { projet: projet.id, tache: tache.id, type: "cliquet", message: `${versés} test(s) de non-régression ajouté(s) (${tache.cle})` })
+  if (remplaces.length) await commentairePR(config, nomDepot, pr.number, `### :repeat: Tests du cliquet réécrits\n\nChaque réécriture s'appuie sur un critère de ${tache.cle}.\n\n${remplaces.map((r) => `- \`${r.test}\` · critère : « ${r.critere} »${r.raison ? ` · ${r.raison}` : ""}`).join("\n")}`).catch(() => {})
+  if (versés) noter(db, { projet: projet.id, tache: tache.id, type: "cliquet", message: `${versés} test(s) de non-régression versé(s) (${tache.cle})${remplaces.length ? `, dont ${remplaces.length} réécrit(s) : ${remplaces.map((r) => `${r.test} (critère : ${r.critere.slice(0, 80)})`).join(" ; ")}` : ""}` })
+  if (ratés.length) noter(db, { projet: projet.id, tache: tache.id, type: "erreur", message: `${tache.cle} : ${ratés.length} test(s) de non-régression non versé(s) dans .usine/e2e : ${ratés.join(" ")}` })
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:verification").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:fusionnee"]).catch(() => {})
   noter(db, { projet: projet.id, tache: tache.id, type: "fusion", message: `${tache.cle} fusionnée (PR #${pr.number}, ${v.tests} tests)` })
