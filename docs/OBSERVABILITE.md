@@ -252,9 +252,12 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
   l'a que si on le lui donne, et aucune consigne des IA ne leur dit de consulter Sentry.
 - **PostHog** : il n'existe pas de connecteur. Aucune IA ne lit les événements ni les journaux
   dans PostHog.
-- **Aucune correction ne part toute seule d'un incident.** Une panne donne une alerte Slack, un
-  sujet Sentry et une ligne « À réparer » dans la file d'attention de la console. C'est une
-  personne qui demande ensuite la correction.
+- **Le pilote des pannes** (`orchestrateur/src/pilote.mjs`, PR #21) lit chaque minute la sonde du
+  déployeur. En mode « corriger » (console, Règles de l'usine), une panne du code d'une application
+  de production fait demander une correction par l'usine elle-même, qui s'arrête à l'aperçu. Par
+  défaut, il observe : il dit ce qu'il aurait fait, sans rien lancer. Une panne donne aussi une
+  alerte Slack, un sujet Sentry et une ligne « À réparer » dans la file d'attention de la console.
+  Le pilote ne lit ni les erreurs de Sentry, ni les pouls de PostHog.
 
 ## Plafonds d'envoi
 
@@ -286,5 +289,5 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
   les retire, la console le montre : « n'envoie rien » ou « non vérifié ».
 - **Une même clé pour tous** : un produit pourrait envoyer des événements au nom d'un autre, ou
   épuiser le quota (voir `docs/SECURITE.md`).
-- **Pas de boucle automatique** de l'incident à la correction (voir « Les IA, les journaux et
-  Sentry »).
+- **Le pilote des pannes ne voit que la sonde du déployeur** : ni les erreurs de Sentry, ni les
+  pouls de PostHog. Il observe par défaut (voir « Les IA, les journaux et Sentry »).
