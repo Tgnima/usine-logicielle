@@ -16,9 +16,9 @@ Ce qui est sur `main` sans être encore dans une version.
   (elle s'arrête à chaque démarrage, répond par une erreur ou ne répond plus) depuis 10 minutes,
   l'usine demande seule une correction. Le lot passe par la fabrique, le vérificateur et la recette,
   puis s'arrête à l'aperçu : la mise en ligne pour de vrai reste à une personne. Une cause hors du
-  code (serveur, mémoire, plusieurs applications à la fois), un plafond atteint (une correction
-  par application et par 24 h, trois pour l'usine) ou une panne qui revient après une correction :
-  un message, et rien d'autre. Trois modes, dans la console (Règles de l'usine) : coupé, observer
+  code (serveur, mémoire, plusieurs applications à la fois), un plafond atteint (trois corrections
+  par 24 h pour l'usine) ou une panne qui revient dans la semaine qui suit une correction
+  automatique de la même application : un message, et rien d'autre. Trois modes, dans la console (Règles de l'usine) : coupé, observer
   (par défaut : il dit ce qu'il aurait fait, sans rien lancer) et corriger. Réglages : section
   `pilote` de `usine.config.yml`.
 - **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une

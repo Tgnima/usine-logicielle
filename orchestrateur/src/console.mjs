@@ -528,7 +528,7 @@ const ROUTES = [
   ["PUT", /^\/api\/reglages\/couts$/, (ctx, _p, c, qui) => enregistrerCouts(ctx, c, qui)],
   // Le pilote des pannes (pilote.mjs) : un mode pris dans une liste fermée.
   ["PUT", /^\/api\/reglages\/pilote$/, (ctx, _p, c, qui) => {
-    const mode = String(c.mode ?? "")
+    const mode = typeof c?.mode === "string" ? c.mode : ""
     if (!MODES_PILOTE.includes(mode)) throw erreur(400, "Choisis un des trois modes du pilote.")
     return reglerPilote(ctx, mode, qui.email)
   }],

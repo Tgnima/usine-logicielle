@@ -130,5 +130,5 @@ finition: true
 pilote:
   mode: observer                   # coupe | observer (dit ce qu'il aurait fait) | corriger
   minutes_avant_action: 10         # une panne plus courte se règle souvent seule (Docker relance l'application)
-  corrections_par_produit_24h: 1   # au-delà, ou si la panne revient après une correction : une personne
+  corrections_par_application: 1   # sur 7 jours ; une panne qui revient dans la semaine : une personne
   corrections_par_jour: 3          # pour toute l'usine

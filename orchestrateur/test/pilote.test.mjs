@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ouvrirDb } from "../src/db.mjs"
 import { ecrireReglage, lireReglage, ouvrirCouts } from "../src/couts.mjs"
-import { JOUR_MS, PAR_PILOTE, RETABLI_MS, choisirAction, classerPanne, deciderPilote, etatPilote, lireMemoirePilote, passagePilote, reglagesPilote, reglerPilote, texteCorrection } from "../src/pilote.mjs"
+import { JOUR_MS, PAR_PILOTE, RECHUTE_MS, RETABLI_MS, choisirAction, classerPanne, correctionsDuJournal, deciderPilote, etatPilote, lireMemoirePilote, passagePilote, reglagesPilote, reglerPilote, texteCorrection } from "../src/pilote.mjs"
 
 const MIN = 60_000
 const T0 = Date.parse("2026-11-18T10:00:00Z")
@@ -41,7 +41,7 @@ test("classerPanne : le code, le serveur, l'attente et l'inconnu", () => {
   assert.equal(classerPanne({ ...boucle, docker: { ...boucle.docker, oom: true } }).classe, "serveur")
   assert.equal(classerPanne({ etat: "panne", raison: "arrêté (exited, code de sortie 137, mémoire dépassée)" }).classe, "serveur")
   assert.equal(classerPanne(boucle, { pannesProduction: 2 }).classe, "serveur")
-  assert.match(classerPanne(boucle, { usine: [{ nom: "disque", etat: "panne", detail: "95 % utilisés" }] }).pourquoi, /disque.*95 %/)
+  assert.match(classerPanne(boucle, { usine: [{ nom: "disque", etat: "panne", detail: "95 % utilisés" }] }).pourquoi, /serveur de l'usine a un problème \(disque\)/)
   assert.equal(classerPanne({ ...boucle, deploiement: "en_cours" }).classe, "attendre")
   assert.equal(classerPanne({ etat: "panne", raison: "conteneur absent" }).classe, "inconnu")
 })
@@ -91,21 +91,53 @@ test("une version qui attend sa mise en ligne : une personne, pas une deuxième 
   assert.match(passages.flat()[0].pourquoi, /attend sa mise en ligne/)
 })
 
-test("plafonds : une correction par application en 24 h, trois pour toute l'usine", () => {
-  const base = { classe: "code", pourquoi: "x", projet: projets.vigie, produit: "vigie", version: "a1b2c3d4e5f6", reglages, maintenant: T0 }
+test("plafonds : trois corrections par 24 h pour toute l'usine ; zéro, c'est aucune", () => {
+  const base = { classe: "code", pourquoi: "x", projet: projets.vigie, produit: "vigie", reglages, maintenant: T0 }
   assert.equal(choisirAction({ ...base, corrections: [] }).type, "corriger")
-  assert.match(choisirAction({ ...base, corrections: [{ produit: "vigie", le: T0 - 2 * 3600_000, version: "a1b2c3d4e5f6" }] }).pourquoi, /plafond.*cette application/)
-  const autres = ["a", "b", "c"].map((produit) => ({ produit, le: T0 - 3600_000, version: "v" }))
-  assert.match(choisirAction({ ...base, corrections: autres }).pourquoi, /plafond.*toute l'usine/)
-  // Au-delà de 24 h, une même version : le plafond est levé.
-  assert.equal(choisirAction({ ...base, corrections: [{ produit: "vigie", le: T0 - JOUR_MS - MIN, version: "a1b2c3d4e5f6" }] }).type, "corriger")
+  const autres = ["a", "b", "c"].map((produit) => ({ produit, le: T0 - 3600_000 }))
+  assert.match(choisirAction({ ...base, corrections: autres }).pourquoi, /3 corrections automatiques en 24 h : c'est son plafond/)
+  assert.equal(choisirAction({ ...base, corrections: autres.map((c) => ({ ...c, le: T0 - JOUR_MS - MIN })) }).type, "corriger", "au-delà de 24 h, le plafond de l'usine est levé")
+  assert.match(choisirAction({ ...base, corrections: [], reglages: { ...reglages, parProduit: 0 } }).pourquoi, /plafonnées à zéro/)
 })
 
-test("une rechute après une correction mise en ligne : une personne, sans deuxième essai", () => {
-  const corrections = [{ produit: "vigie", le: T0 - 2 * JOUR_MS, version: "0000aaaa1111" }]
-  const d = choisirAction({ classe: "code", pourquoi: "x", projet: projets.vigie, produit: "vigie", version: "a1b2c3d4e5f6", corrections, reglages, maintenant: T0 })
+test("une rechute : toute panne dans les 7 jours qui suivent une correction, quelle que soit la version", () => {
+  const base = { classe: "code", pourquoi: "x", projet: projets.vigie, produit: "vigie", reglages, maintenant: T0 }
+  // Mise en ligne, elle n'a pas tenu.
+  assert.equal(choisirAction({ ...base, corrections: [{ produit: "vigie", le: T0 - 2 * JOUR_MS }] }).type, "rechute")
+  // L'analyste n'a rien trouvé à changer, la même version retombe chaque nuit : pas une correction par nuit.
+  const d = choisirAction({ ...base, corrections: [{ produit: "vigie", le: T0 - 20 * 3600_000 }] })
   assert.equal(d.type, "rechute")
   assert.match(d.pourquoi, /ne réessaie pas/)
+  assert.equal(choisirAction({ ...base, corrections: [{ produit: "vigie", le: T0 - RECHUTE_MS - MIN }] }).type, "corriger", "au-delà de 7 jours")
+  assert.equal(choisirAction({ ...base, corrections: [{ produit: "autre", le: T0 - 3600_000 }] }).type, "corriger", "une autre application ne compte pas")
+})
+
+test("une correction est comptée dès qu'elle est décidée ; une observation ne l'est jamais", () => {
+  const { memoire } = derouler(fois(11, { "production/vigie": boucle }))
+  assert.deepEqual(memoire.corrections, [{ produit: "vigie", le: T0 + 10 * MIN }])
+  // Six jours plus tard, la même application retombe : une personne.
+  const apres = derouler(fois(11, { "production/vigie": boucle }), { memoire: { corrections: memoire.corrections }, debut: T0 + 6 * JOUR_MS })
+  assert.deepEqual(apres.passages.flat().map((d) => d.type), ["rechute"])
+})
+
+test("une mémoire illisible : les pannes sont oubliées, les corrections recomptées depuis le journal", () => {
+  const db = ouvrirDb(":memory:")
+  ouvrirCouts(db)
+  db.prepare("INSERT INTO projets (prompt, statut, nom, slug) VALUES ('p', 'en_production', 'Vigie Copro', 'vigie')").run()
+  const sql = (ms) => new Date(ms).toISOString().slice(0, 19).replace("T", " ")
+  const ligne = db.prepare("INSERT INTO journal (projet_id, type, message, le) VALUES (1, 'pilote', ?, ?)")
+  ligne.run("Correction automatique demandée : Vigie Copro est en panne en ligne depuis 10 min.", sql(T0 - JOUR_MS))
+  ligne.run("Observation : l'usine aurait demandé une correction.", sql(T0 - JOUR_MS))
+  ligne.run("Correction automatique demandée : trop ancienne.", sql(T0 - RECHUTE_MS - JOUR_MS))
+  assert.deepEqual(correctionsDuJournal(db, T0), [{ produit: "vigie", le: T0 - JOUR_MS }])
+  ecrireReglage(db, "pilote_memoire", "{pas du json")
+  const m = lireMemoirePilote(db, T0)
+  assert.equal(m.recomptee, true)
+  assert.deepEqual(m.corrections, [{ produit: "vigie", le: T0 - JOUR_MS }])
+  // Une ligne abîmée est écartée, le reste est gardé.
+  ecrireReglage(db, "pilote_memoire", JSON.stringify({ incidents: { "production/vigie": { depuis: "hier" }, "production/acte": { depuis: T0 } }, corrections: [{ produit: "vigie", le: "x" }, { produit: "acte", le: T0 }] }))
+  const n = lireMemoirePilote(db, T0)
+  assert.deepEqual([Object.keys(n.incidents), n.corrections.length, n.recomptee], [["production/acte"], 1, undefined])
 })
 
 test("le retour : 30 minutes de suite en ligne closent la panne ; un retour bref ne compte pas", () => {
@@ -134,7 +166,9 @@ test("la consigne de correction : ce que voit la sonde, un test d'abord, et la m
 
 test("le pilote n'appelle jamais la mise en ligne pour de vrai", () => {
   const source = readFileSync(new URL("../src/pilote.mjs", import.meta.url), "utf8")
-  assert.doesNotMatch(source, /mettreEnProduction|ecrireEtat|production_reglages/)
+  assert.doesNotMatch(source, /mettreEnProduction|ecrireEtat|production_reglages|ctx\.livraison|from "\.\/livraison\.mjs"/)
+  // index.mjs ne lui donne que la demande de corrections.
+  assert.match(readFileSync(new URL("../src/index.mjs", import.meta.url), "utf8"), /demarrerPilote\(ctx, \{ corriger: livraison\.demanderCorrections \}\)/)
 })
 
 test("réglages : le mode de la console passe avant le contrat ; des bornes partout", () => {
@@ -146,7 +180,7 @@ test("réglages : le mode de la console passe avant le contrat ; des bornes part
   assert.equal(reglagesPilote({ pilote: { mode: "corriger" } }, db).mode, "coupe")
   ecrireReglage(db, "pilote_mode", "n'importe quoi")
   assert.equal(reglagesPilote({}, db).mode, "observer")
-  assert.deepEqual(reglagesPilote({ pilote: { minutes_avant_action: 0, corrections_par_produit_24h: 99, corrections_par_jour: "x" } }), { mode: "observer", minutes: 3, parProduit: 5, parJour: 3 })
+  assert.deepEqual(reglagesPilote({ pilote: { minutes_avant_action: 0, corrections_par_application: 99, corrections_par_jour: "x" } }), { mode: "observer", minutes: 3, parProduit: 5, parJour: 3 })
 })
 
 // Un passage réel : sante.json sur disque, une base, une fausse livraison et un faux Slack.
@@ -158,21 +192,19 @@ function essai({ mode = "corriger" } = {}) {
   ecrireReglage(db, "pilote_mode", mode)
   const demandes = []
   const messages = []
-  const ctx = {
-    config: { dataDir: dossier, etatDir: dossier },
-    db,
-    notifier: { alerte: async (texte) => messages.push(texte) },
-    livraison: { demanderCorrections: async (_ctx, id, texte, par) => (demandes.push({ id, texte, par }), { ok: true }) },
-  }
+  const ctx = { config: { dataDir: dossier, etatDir: dossier }, db, notifier: { alerte: async (texte) => messages.push(texte) } }
+  const livraison = { reponse: async () => ({ ok: true }) }
+  const corriger = async (_ctx, id, texte, par) => (demandes.push({ id, texte, par }), livraison.reponse())
   const sonde = (maintenant, produit) => writeFileSync(join(dossier, "sante.json"), JSON.stringify({ le: new Date(maintenant).toISOString(), applications: { le: new Date(maintenant).toISOString(), produits: { "production/vigie": produit } } }))
-  return { ctx, db, demandes, messages, sonde, dossier }
+  const passer = (maintenant) => passagePilote(ctx, { maintenant, corriger })
+  return { ctx, db, demandes, messages, sonde, dossier, livraison, passer }
 }
 
 test("un passage complet : la demande part une fois, avec le pilote pour auteur, et tout est au journal", async () => {
   const e = essai()
   for (let i = 0; i <= 12; i++) {
     e.sonde(T0 + i * MIN, boucle)
-    await passagePilote(e.ctx, { maintenant: T0 + i * MIN })
+    await e.passer(T0 + i * MIN)
   }
   await new Promise((r) => setImmediate(r))
   assert.equal(e.demandes.length, 1)
@@ -181,7 +213,7 @@ test("un passage complet : la demande part une fois, avec le pilote pour auteur,
   assert.equal(lireMemoirePilote(e.db).corrections.length, 1)
   const journal = e.db.prepare("SELECT type, message FROM journal WHERE type = 'pilote'").all()
   assert.equal(journal.length, 1)
-  assert.match(journal[0].message, /Correction automatique demandée : Vigie Copro/)
+  assert.match(journal[0].message, /^Correction automatique demandée : Vigie Copro est en panne en ligne depuis 10 min\. L'application s'arrête à chaque démarrage\.$/)
   // La console voit la panne ouverte et la décision.
   const vu = etatPilote(e.ctx, T0 + 12 * MIN)
   assert.equal(vu.mode, "corriger")
@@ -192,19 +224,19 @@ test("un passage complet : la demande part une fois, avec le pilote pour auteur,
 test("un passage : sonde trop ancienne ou usine à l'arrêt, le pilote ne fait rien", async () => {
   const e = essai()
   e.sonde(T0, boucle)
-  assert.equal(await passagePilote(e.ctx, { maintenant: T0 + 10 * MIN }), null, "sonde vieille de 10 min : état réel inconnu")
+  assert.equal(await e.passer(T0 + 10 * MIN), null, "sonde vieille de 10 min : état réel inconnu")
   writeFileSync(join(e.dossier, "STOP"), "admin")
   e.sonde(T0 + 10 * MIN, boucle)
-  assert.equal(await passagePilote(e.ctx, { maintenant: T0 + 10 * MIN }), null)
+  assert.equal(await e.passer(T0 + 10 * MIN), null)
   assert.equal(lireReglage(e.db, "pilote_memoire"), null)
 })
 
 test("une demande refusée par la livraison : une personne est prévenue", async () => {
   const e = essai()
-  e.ctx.livraison.demanderCorrections = async () => ({ ok: false, message: "Le projet est « corrections »." })
+  e.livraison.reponse = async () => ({ ok: false, message: "Le projet est « corrections »." })
   for (let i = 0; i <= 10; i++) {
     e.sonde(T0 + i * MIN, boucle)
-    await passagePilote(e.ctx, { maintenant: T0 + i * MIN })
+    await e.passer(T0 + i * MIN)
   }
   await new Promise((r) => setImmediate(r))
   assert.equal(e.messages.length, 1)
@@ -215,14 +247,27 @@ test("en observation, un message ; passer en « corriger » pendant la panne la 
   const e = essai({ mode: "observer" })
   for (let i = 0; i <= 10; i++) {
     e.sonde(T0 + i * MIN, boucle)
-    await passagePilote(e.ctx, { maintenant: T0 + i * MIN })
+    await e.passer(T0 + i * MIN)
   }
   assert.equal(e.demandes.length, 0)
   assert.equal(e.messages.length, 1)
   assert.match(e.messages[0], /observation.*aurait demandé une correction.*Rien n'a été lancé/s)
   assert.match(reglerPilote(e.ctx, "corriger", "admin@exemple.test").message, /jusqu'à l'aperçu/)
   e.sonde(T0 + 11 * MIN, boucle)
-  await passagePilote(e.ctx, { maintenant: T0 + 11 * MIN })
+  await e.passer(T0 + 11 * MIN)
   assert.equal(e.demandes.length, 1)
-  assert.match(e.db.prepare("SELECT message FROM journal WHERE type = 'reglage'").get().message, /Pilote des pannes : corriger jusqu'à l'aperçu \(par admin@exemple\.test\)/)
+  assert.match(e.db.prepare("SELECT message FROM journal WHERE type = 'reglage'").get().message, /Pannes des applications en ligne : corriger jusqu'à l'aperçu \(par admin@exemple\.test\)/)
+})
+
+test("coupé, ou sans sonde récente : la console ne montre aucune panne figée", async () => {
+  const e = essai({ mode: "observer" })
+  for (let i = 0; i <= 10; i++) {
+    e.sonde(T0 + i * MIN, boucle)
+    await e.passer(T0 + i * MIN)
+  }
+  assert.equal(etatPilote(e.ctx, T0 + 10 * MIN).pannes.length, 1)
+  assert.equal(etatPilote(e.ctx, T0 + 30 * MIN).pannes.length, 0, "sonde de 20 min : rien de suivi")
+  reglerPilote(e.ctx, "coupe", "admin@exemple.test")
+  assert.equal(etatPilote(e.ctx, T0 + 10 * MIN).pannes.length, 0)
+  assert.deepEqual(lireMemoirePilote(e.db).incidents, {}, "coupé, il oublie les pannes en cours")
 })

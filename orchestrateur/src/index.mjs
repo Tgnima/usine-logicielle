@@ -78,7 +78,8 @@ demarrerSynchronisationPortier(ctx)
 demarrerCycle(ctx)
 demarrerDomaines(ctx)
 surveillerSante(ctx)
-demarrerPilote(ctx)
+// Le pilote ne reçoit que la demande de corrections : il n'a aucun moyen de mettre en ligne.
+demarrerPilote(ctx, { corriger: livraison.demanderCorrections })
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).
 // Elle n'écoute que dans le conteneur.
