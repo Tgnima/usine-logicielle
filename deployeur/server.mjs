@@ -19,13 +19,13 @@ import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
+import { CHEMINS_PUBLICS, blocCaddy, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets, statutEnLigne, versionServie } from "./deploiement.mjs"
 import { lireBoite, valeurBoite, variablesSmtp } from "./boite.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { canal, derniereVersion } from "./versions.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
-import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
+import { CHEMIN_OBSERVABILITE, DELAI_OBSERVABILITE_MS, DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, TAILLE_MAX_OBSERVABILITE, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, lireObservabilite, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
 import { creerObservabilite } from "../commun/observabilite.mjs"
 
 const env = process.env
@@ -368,30 +368,8 @@ async function deployerProduction(s, precedent) {
 }
 
 // --- Caddy ----------------------------------------------------------------------
-// Un site Caddy. Protégé (par défaut) : le portier vérifie chaque requête, sauf
-// les chemins publics ; l'en-tête d'identité ne peut pas venir du visiteur.
-function blocSite(hote, cible, { protege = true, publics = CHEMINS_PUBLICS } = {}) {
-  const site = HTTPS ? hote : `http://${hote}`
-  const entetes = `\theader {\n\t\tStrict-Transport-Security "max-age=31536000"\n\t\tX-Content-Type-Options "nosniff"\n\t\tReferrer-Policy "strict-origin-when-cross-origin"\n\t\tX-Frame-Options "SAMEORIGIN"\n\t\t-Server\n\t}\n`
-  if (!protege) return `${site} {\n\tencode zstd gzip\n${entetes}\trequest_header -X-Usine-Utilisateur\n\treverse_proxy ${cible}\n}`
-  return `${site} {
-\tencode zstd gzip
-${entetes}\trequest_header -X-Usine-Utilisateur
-\thandle /_portier/api/* {
-\t\trespond 404
-\t}
-\thandle /_portier/* {
-\t\treverse_proxy ${PORTIER}
-\t}
-${publics.length ? `\t@public path ${publics.join(" ")}\n\thandle @public {\n\t\treverse_proxy ${cible}\n\t}\n` : ""}\thandle {
-\t\tforward_auth ${PORTIER} {
-\t\t\turi /_portier/verifier
-\t\t\tcopy_headers X-Usine-Utilisateur
-\t\t}
-\t\treverse_proxy ${cible}
-\t}
-}`
-}
+// Un site Caddy : blocCaddy() (chemins.mjs), avec l'adresse du portier et le choix HTTPS du serveur.
+const blocSite = (hote, cible, options = {}) => blocCaddy(hote, cible, { https: HTTPS, portier: PORTIER, ...options })
 
 async function regenererCaddy(statut) {
   const blocs = []
@@ -644,6 +622,30 @@ async function sonderSante(conteneur) {
   }
 }
 
+// /_usine/observabilite : ce que le produit envoie vraiment à Sentry et à PostHog (lireObservabilite,
+// sonde.mjs). Un essai, DELAI_OBSERVABILITE_MS au plus, sans redirection, 8 Ko lus au plus : elle vient du
+// code du produit. Caddy ne sert jamais ce chemin au public (CHEMINS_INTERNES).
+async function sonderObservabilite(conteneur) {
+  try {
+    const res = await fetch(`http://${conteneur}:3000${CHEMIN_OBSERVABILITE}`, { signal: AbortSignal.timeout(DELAI_OBSERVABILITE_MS), redirect: "manual" })
+    let texte = ""
+    if (res.status === 200 && res.body) {
+      const lecteur = res.body.getReader()
+      const decodeur = new TextDecoder()
+      for (;;) {
+        const { done, value } = await lecteur.read()
+        if (done) break
+        texte += decodeur.decode(value, { stream: true })
+        if (texte.length > TAILLE_MAX_OBSERVABILITE) break
+      }
+      await lecteur.cancel().catch(() => {})
+    } else await res.body?.cancel().catch(() => {})
+    return lireObservabilite(res.status, texte)
+  } catch {
+    return lireObservabilite(null, "")
+  }
+}
+
 async function sonderProduits() {
   if (sondeEnCours) return
   sondeEnCours = true
@@ -660,6 +662,8 @@ async function sonderProduits() {
     // Un conteneur parti entre les deux commandes est nommé dans l'erreur d'inspect ; un inspect coupé ou sans démon ne dit rien : relevé sans valeur.
     if (inspect.code !== 0 && inspectIncomplet(noms, conteneurs, inspect.sortie)) return inconnu()
     const http = Object.fromEntries(await Promise.all(conteneurs.filter((c) => c.etat === "running").map(async (c) => [c.nom, await sonderSante(c.nom)])))
+    // Ce que chaque produit qui répond dit de ses envois (Sentry, PostHog).
+    const envois = Object.fromEntries(await Promise.all(conteneurs.filter((c) => http[c.nom]?.code >= 200 && http[c.nom]?.code < 300).map(async (c) => [c.nom, await sonderObservabilite(c.nom)])))
     const t = Date.now()
     const age = (s) => (s.le ? t - new Date(s.le).getTime() : 0)
     // Le serveur construit : un déploiement en cours, ou la reconstruction de l'usine elle-même.
@@ -686,6 +690,8 @@ async function sonderProduits() {
         deploiement: s.etat ?? null,
         docker: c ? { etat: c.etat, sante: c.sante, redemarrages: c.redemarrages, redemarrages_30_min: recents, demarre_le: c.demarre_le, code_sortie: c.code_sortie, oom: c.oom } : null,
         http: c ? http[c.nom] ?? null : null,
+        // null : le produit ne répond pas, on ne sait rien de ses envois.
+        observabilite: c ? envois[c.nom] ?? null : null,
       }
     }
     for (const nom of redemarrages.keys()) if (!conteneurs.some((c) => c.nom === nom)) redemarrages.delete(nom)

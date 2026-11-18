@@ -34,6 +34,13 @@ jobs:
         run: |
           npm install --no-audit --no-fund $(node -p "require('./brique.json').dependances.join(' ')")
           npm test
+      # Le module d'observabilité des dépôts Python repris (briques/reprise), avec sentry-sdk en
+      # dernière version, comme dans un dépôt repris.
+      - name: Module Python des dépôts repris
+        run: |
+          python3 -m venv /tmp/venv-reprise
+          /tmp/venv-reprise/bin/pip install --quiet sentry-sdk
+          /tmp/venv-reprise/bin/python -m unittest -v briques/reprise/test_observabilite.py
 
   configuration:
     runs-on: ubuntu-latest

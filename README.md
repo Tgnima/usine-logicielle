@@ -310,10 +310,28 @@ termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Da
    n'est jamais touché).
 3. **L'inventaire**, avant tout plan : un agent lit le dépôt, trouve sa pile (Node ou Python) et
    ses commandes, le met au contrat d'hébergement (Dockerfile, `$PORT`, `GET /api/health`,
-   `$DATA_DIR`) sans ajouter de fonctionnalité, et dit ce qui marche, ce qui est cassé, ce qui
-   manque. Le **code** éprouve ensuite chaque commande (installation, build, tests, démarrage,
-   santé) : un dépôt qui ne démarre pas s'arrête là, expliqué. Les commandes deviennent le
-   profil du projet (`.usine/profil.json`, protégé), utilisé par l'atelier et le vérificateur.
+   `$DATA_DIR`, et l'observabilité, voir plus bas) sans ajouter de fonctionnalité, et dit ce qui
+   marche, ce qui est cassé, ce qui manque. Le **code** éprouve ensuite chaque commande
+   (installation, build, tests, démarrage, santé, et un vrai pouls) : un dépôt qui ne démarre pas
+   s'arrête là, expliqué. Les commandes deviennent le profil du projet (`.usine/profil.json`,
+   protégé), utilisé par l'atelier et le vérificateur.
+
+   **L'observabilité d'un dépôt repris**, dans sa propre pile. L'agent copie tel quel le module de
+   l'usine dans `usine/` (le fichier est protégé ensuite), l'appelle au démarrage et ajoute la route
+   `GET /_usine/observabilite` :
+   - en Node, `usine/observabilite.mjs`, le module des briques (`demarrerObservabilite()`,
+     `etatObservabilite()`), sans dépendance ;
+   - en Python, `usine/observabilite.py` (`briques/reprise/`, `demarrer_observabilite()`,
+     `etat_observabilite()`). Les erreurs partent par `sentry-sdk`, ajouté aux dépendances, avec
+     `SENTRY_DSN`, `USINE_ENVIRONNEMENT` et `USINE_VERSION`. Ni variables locales, ni code, ni
+     corps de requête ne partent, et le masquage est celui de l'usine
+     (`briques/reprise/cas-masquage.json`, vérifié des deux côtés). Le pouls part vers PostHog : des
+     compteurs, avec `$process_person_profile: false` et `$geoip_disable: true`, comme la brique.
+
+   L'épreuve démarre l'application devant un faux Sentry et un faux PostHog locaux. Elle exige que
+   le module soit intact, qu'un pouls de compteurs arrive dans les secondes qui suivent, et que la
+   route dise l'état des envois. Sinon, l'agent a un second essai, puis la reprise s'arrête,
+   expliquée.
 4. **Le plan** part de l'inventaire et du persona ; on le valide comme d'habitude.
 5. Dans le dépôt : `MISSION.md` (le cap et le hors périmètre) et `ICP.md` (la fiche), tous deux
    protégés, et `docs/INVENTAIRE.md`. **Les scénarios cachés n'y sont jamais** : l'agent qui code
@@ -398,6 +416,29 @@ docker compose exec orchestrateur node src/cli.mjs production 1
     conteneurs.
   - Les produits reçoivent les mêmes clés. Rien de personnel ne sort : adresses email,
     téléphones, IBAN, adresses IP et jetons sont masqués (`commun/observabilite.mjs`).
+  - **Chaque produit envoie lui-même** ses erreurs à Sentry et son pouls à PostHog (toutes les
+    5 minutes, des compteurs seulement), par le module de sa brique (`server/observabilite.js`,
+    branché dans `server/demarrage.js`) ou de sa pile s'il a été repris (`usine/`). Un produit
+    créé avant ce module ne l'a pas : il faut le lui ajouter (le copier depuis la brique et
+    appeler `demarrerObservabilite()` au démarrage).
+  - **Ce que la console montre de chaque application**, dans les fenêtres Sentry et PostHog :
+    pas seulement si elle a reçu la clé, mais si elle s'en sert. Le module de chaque produit
+    répond `GET /_usine/observabilite` : démarré ou non, la clé présente ou non, et la réponse du
+    service à son dernier envoi. La sonde du déployeur lit cette route chaque minute, sur le
+    réseau du produit. Caddy ne la sert jamais au public (`CHEMINS_INTERNES`, `deployeur/chemins.mjs`).
+    La console en tire un état par application : *reçu* (PostHog a accepté un pouls il y a
+    moins de 15 min ; Sentry, la dernière erreur), *en échec* (avec la raison : clé refusée, pas de
+    réponse), *muet*, *n'envoie rien* (module pas démarré, ou `sentry-sdk` manquant), *sans clé*,
+    *en attente*, *prête* (rien à envoyer encore) ou *sans nouvelles*. Une application qui ne
+    publie pas cette route est dite *non vérifié* : son module manque, ou il est plus ancien que
+    cette version (un tel module envoie son pouls sans publier la route). Rien ne
+    prouve alors qu'elle envoie. Limite : PostHog accepte un pouls même avec un jeton inconnu. C'est le
+    bouton « Tester » qui vérifie le jeton.
+  - **Les journaux des conteneurs** sont classés par niveau (`niveauDe`, `deployeur/observation.mjs`).
+    Une exception Python (`Traceback (most recent call last):`, les cadres, puis
+    `ZeroDivisionError: …`) ou Node (`TypeError: …` et sa pile) est une erreur de bout en bout.
+    Une ligne ordinaire qui cite un mot comme « KeyError » au milieu d'une phrase reste une
+    information.
   - Les clés se posent aussi dans la console (Réglages, Intégrations, Sentry ou PostHog), sans
     SSH ni redémarrage : chiffrées dans le coffre, elles servent tout de suite à l'orchestrateur,
     au déployeur dans les 30 s (par la boîte, un volume en mémoire vive), et aux applications à

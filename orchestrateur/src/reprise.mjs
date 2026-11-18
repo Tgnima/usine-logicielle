@@ -9,9 +9,11 @@
 //                     usine/<slug>/integration et rend, à la fin, UNE pull request que la
 //                     personne fusionne elle-même (l'usine ne pousse jamais sur sa branche principale) ;
 //   2. l'INVENTAIRE (avant tout plan) : un agent lit le dépôt, trouve sa pile et ses commandes,
-//      le met au contrat d'hébergement (Dockerfile, $PORT, /api/health, $DATA_DIR) sans ajouter
-//      de fonctionnalité, et dit ce qui marche, ce qui est cassé, ce qui manque au persona.
-//      Le CODE éprouve ensuite chaque commande : installation, build, tests, démarrage, santé.
+//      le met au contrat d'hébergement (Dockerfile, $PORT, /api/health, $DATA_DIR, et l'observabilité :
+//      le module de l'usine pour sa pile dans usine/, ses erreurs vers Sentry, son pouls vers PostHog,
+//      GET /_usine/observabilite) sans ajouter de fonctionnalité, et dit ce qui marche, ce qui est
+//      cassé, ce qui manque au persona. Le CODE éprouve ensuite chaque commande : installation, build,
+//      tests, démarrage, santé, et un vrai pouls reçu par un faux PostHog (CAPTEUR_OBSERVABILITE).
 //      Ces changements (le « socle ») attendent la validation du plan, en patch, côté usine ;
 //   3. l'analyste fait le plan à partir de l'inventaire et du persona ; l'humain le valide ;
 //   4. le socle est poussé sur la branche de base, et la fabrication suit son cours habituel.
@@ -92,6 +94,10 @@ Ta mission, SANS développer de nouvelle fonctionnalité :
    - l'application écoute sur le port donné par la variable PORT ;
    - GET /api/health répond 200 (par exemple {"ok":true}) ; si l'application n'a pas de serveur (un front statique), ajoute un petit serveur dans la même pile qui sert le build et cette route ;
    - elle n'écrit que dans le dossier donné par DATA_DIR (créé s'il manque) ;
+   - ses erreurs partent vers Sentry et son pouls vers PostHog, par le module de l'usine pour SA pile, copié TEL QUEL dans le dossier usine/ du dépôt, sous ce nom (ne le modifie pas : l'usine vérifie qu'il est intact, puis le protège) :
+       node   : cp ${MODULES_OBSERVABILITE.node.source} ${MODULES_OBSERVABILITE.node.cible} (un module ES sans dépendance : import, ou require() depuis Node 22.12) ;
+       python : cp ${MODULES_OBSERVABILITE.python.source} ${MODULES_OBSERVABILITE.python.cible}, et ajoute sentry-sdk aux dépendances que la commande d'installation installe ;
+     lis le mode d'emploi en tête du module. Au démarrage du serveur, avant d'écouter, appelle demarrerObservabilite() (node) ou demarrer_observabilite() (python). Ajoute la route GET /_usine/observabilite, qui répond en JSON etatObservabilite() (node) ou etat_observabilite() (python). Le module lit lui-même SENTRY_DSN, POSTHOG_TOKEN, POSTHOG_HOTE et USINE_* : n'ajoute aucune clé ;
    - un .gitignore qui écarte les dépendances et les builds (node_modules/, .venv/, dist/…).
 3. Au moins un test automatisé doit passer, sans interaction ni réseau. S'il n'y en a aucun, ajoute un test de fumée avec l'outil de test naturel de la pile (node:test, vitest, pytest…).
 4. Si AGENTS.md n'existe pas, crée-le : les conventions que tu observes dans ce code (organisation, nommage, style), en 30 lignes au plus.
@@ -128,10 +134,103 @@ export function porteInventaire(m, inventaire) {
   if (Number(m.TESTS_PASSES ?? 0) === 0) p.push("aucun test ne passe avec la commande de test : il en faut au moins un")
   if (Number(m.TESTS_ECHECS ?? 0) > 0) p.push(`${m.TESTS_ECHECS} test(s) échouent`)
   if (!("DOCKERFILE_OK" in m)) p.push("il n'y a pas de Dockerfile à la racine")
-  if (!("APP_STARTED" in m)) p.push("l'application ne répond pas 200 sur /api/health après le démarrage (PORT=4300)")
+  if (!("APP_STARTED" in m)) p.push(`l'application ne répond pas 200 sur /api/health après le démarrage (PORT=${PORT_EPREUVE})`)
   if (String(m.ECRIT_DANS_CODE ?? "").trim()) p.push(`au démarrage, l'application écrit dans son propre code (${m.ECRIT_DANS_CODE.trim()}) : elle ne doit écrire que dans DATA_DIR`)
+  // L'observabilité : le module de l'usine pour SA pile, intact, et un vrai pouls reçu par le faux PostHog.
+  const module = MODULES_OBSERVABILITE[inventaire.pile]
+  const python = inventaire.pile === "python"
+  if (!(module.marqueur in m)) p.push(`le module d'observabilité de l'usine manque ou a été modifié : copie-le tel quel (cp ${module.source} ${module.cible})`)
+  else if ("APP_STARTED" in m) {
+    if ("SENTRY_PAS_PRET" in m) p.push("sentry-sdk n'est pas installé par la commande d'installation : ajoute-le aux dépendances")
+    if (!("POULS_OK" in m)) p.push(`aucun pouls n'est parti vers PostHog après le démarrage (POSTHOG_TOKEN était fourni) : appelle ${python ? "demarrer_observabilite()" : "demarrerObservabilite()"} au démarrage du serveur`)
+    else if (!("POULS_SUR" in m)) p.push(`le pouls porte autre chose que des compteurs (${String(m.POULS_TEXTE ?? "").trim()}) : il doit partir du module de l'usine, avec $process_person_profile: false et $geoip_disable: true`)
+    if (!("ETAT_OBS_OK" in m)) p.push(`GET /_usine/observabilite ne dit pas l'état des envois : ajoute cette route, qui répond en JSON ${python ? "etat_observabilite()" : "etatObservabilite()"}`)
+  }
   return p
 }
+
+// --- L'observabilité d'un dépôt repris ---------------------------------------------------------
+// Le module de l'usine pour chaque pile, tel que l'atelier l'a (/opt/usine/briques), et sa place
+// dans le dépôt (protégée ensuite : PROTEGES_REPRIS). Il masque comme l'usine. Le marqueur de
+// l'épreuve est propre à chaque pile : un dépôt Node doit avoir le module Node intact.
+export const MODULES_OBSERVABILITE = {
+  node: { source: "/opt/usine/briques/webapp/server/observabilite.js", cible: "usine/observabilite.mjs", marqueur: "MODULE_INTACT_NODE" },
+  python: { source: "/opt/usine/briques/reprise/observabilite.py", cible: "usine/observabilite.py", marqueur: "MODULE_INTACT_PYTHON" },
+}
+// La forme de GET /_usine/observabilite que l'usine sait lire : le même numéro dans la brique
+// (CONTRAT_OBSERVABILITE), le module Python et la sonde du déployeur (un test le vérifie).
+export const CONTRAT_OBSERVABILITE = 1
+// L'épreuve : l'application sur PORT_EPREUVE, un faux Sentry et un faux PostHog locaux sur
+// PORT_CAPTEUR. Le premier pouls part 2 s après le démarrage ; on l'attend DELAI_POULS_EPREUVE_S.
+export const PORT_EPREUVE = 4300
+export const PORT_CAPTEUR = 4301
+export const DELAI_POULS_EPREUVE_S = 30
+const DELAI_ROUTE_EPREUVE_MS = 5_000
+// Un faux jeton, visiblement faux (il ne ressemble pas à un vrai jeton phc_ : rien à masquer).
+export const ENV_EPREUVE_OBSERVABILITE = `SENTRY_DSN=http://epreuve@127.0.0.1:${PORT_CAPTEUR}/1 POSTHOG_TOKEN=phc_epreuve-locale POSTHOG_HOTE=http://127.0.0.1:${PORT_CAPTEUR} USINE_PRODUIT=epreuve USINE_ENVIRONNEMENT=developpement USINE_VERSION=epreuve USINE_PREMIER_POULS_S=2`
+
+// Le faux Sentry et le faux PostHog : chaque requête reçue est notée (une ligne JSON), réponse 200.
+export const CAPTEUR_OBSERVABILITE = String.raw`// Un faux Sentry et un faux PostHog pour l'épreuve d'un dépôt repris.
+const fs = require("fs")
+const [fichier, port] = process.argv.slice(2)
+require("http").createServer((q, r) => {
+  let corps = ""
+  q.on("data", (c) => { if (corps.length < 1e6) corps += c })
+  q.on("end", () => {
+    try { fs.appendFileSync(fichier, JSON.stringify({ chemin: q.url, corps }) + "\n") } catch {}
+    r.writeHead(200, { "content-type": "application/json" })
+    r.end("{}")
+  })
+}).listen(Number(port), "127.0.0.1")
+`
+
+// Ce que l'épreuve constate, en marqueurs : un pouls reçu (POULS_OK), fait de compteurs seulement,
+// sans profil ni géolocalisation (POULS_SUR, sinon POULS_TEXTE et les propriétés en cause), et la
+// route qui dit l'état des envois (ETAT_OBS_OK ; SENTRY_PAS_PRET si sentry-sdk manque).
+// Le pouls vient du code du produit : rien de lui n'est écrit tel quel. Le nom d'une propriété
+// est réduit à des caractères sûrs, sinon un « \n@@ … » dans un nom imiterait un marqueur.
+// Limite : l'épreuve juge le travail de l'agent, pas un produit hostile. Pendant l'épreuve, le
+// produit tourne avec les mêmes droits que ce script : il pourrait écrire dans la capture ou dans
+// sa sortie. Le vérificateur est écrit juste avant d'être lancé, pour réduire cette fenêtre.
+export const VERIFIER_OBSERVABILITE = String.raw`// L'épreuve de l'observabilité d'un dépôt repris.
+const fs = require("fs")
+const [capture, route, delai] = process.argv.slice(2)
+const permis = ["produit", "environnement", "version"]
+const nomSur = (k) => String(k).replace(/[^A-Za-z0-9_$.-]/g, "?").slice(0, 40)
+function lirePouls() {
+  let lignes = []
+  try { lignes = fs.readFileSync(capture, "utf8").split("\n").filter(Boolean) } catch {}
+  for (const l of lignes) {
+    try {
+      const { chemin, corps } = JSON.parse(l)
+      if (!/\/batch\/?$/.test(String(chemin).split("?")[0])) continue
+      const e = (JSON.parse(corps).batch || []).find((x) => x && x.event === "pouls")
+      if (e) return e
+    } catch {}
+  }
+  return null
+}
+;(async () => {
+  const fin = Date.now() + Number(delai || ${DELAI_POULS_EPREUVE_S}) * 1000
+  let pouls = lirePouls()
+  while (!pouls && Date.now() < fin) {
+    await new Promise((r) => setTimeout(r, 1000))
+    pouls = lirePouls()
+  }
+  if (pouls && pouls.distinct_id === "produit:epreuve") {
+    console.log("@@ POULS_OK")
+    const p = pouls.properties || {}
+    const autres = Object.keys(p).filter((k) => (typeof p[k] === "string" && !permis.includes(k)) || (p[k] !== null && typeof p[k] === "object"))
+    if (p.$process_person_profile === false && p.$geoip_disable === true && !autres.length) console.log("@@ POULS_SUR")
+    else console.log("@@ POULS_TEXTE " + (autres.map(nomSur).join(" ") || "sans $process_person_profile ni $geoip_disable").slice(0, 200))
+  }
+  try {
+    const e = await (await fetch(route, { signal: AbortSignal.timeout(${DELAI_ROUTE_EPREUVE_MS}) })).json()
+    if (e && e.contrat === ${CONTRAT_OBSERVABILITE} && e.demarre === true && e.posthog && e.posthog.actif === true && e.posthog.envoyes >= 1 && e.sentry && e.sentry.actif === true) console.log("@@ ETAT_OBS_OK")
+    if (e && e.sentry && e.sentry.pret === false) console.log("@@ SENTRY_PAS_PRET")
+  } catch {}
+})()
+`
 
 // Lit les commandes de l'inventaire et les éprouve, comme le fera le vérificateur.
 const EPREUVE = [
@@ -144,12 +243,21 @@ const EPREUVE = [
   `if [ -n "$CONSTRUIRE" ] && bash -c "$CONSTRUIRE" > /tmp/sorties/inventaire/build.log 2>&1; then echo '@@ BUILD_OK'; fi`,
   `[ -n "$TESTER" ] && bash -c "$TESTER" > /tmp/sorties/inventaire/tests.log 2>&1; ${COMPTER_TESTS} /tmp/sorties/inventaire/tests.log`,
   `[ -f Dockerfile ] && echo '@@ DOCKERFILE_OK'`,
-  libererPort(4300),
+  // Le module d'observabilité de l'usine, intact (le même masquage que l'usine), pile par pile.
+  ...Object.values(MODULES_OBSERVABILITE).map((o) => `cmp -s ${o.cible} ${o.source} && echo '@@ ${o.marqueur}'`),
+  libererPort(PORT_EPREUVE),
+  // Un faux Sentry et un faux PostHog : l'application démarre avec leurs adresses, son premier pouls part après 2 s.
+  ecrireFichier("/tmp/sorties/inventaire/capteur.cjs", CAPTEUR_OBSERVABILITE),
+  `fuser -k -n tcp ${PORT_CAPTEUR} >/dev/null 2>&1; rm -f /tmp/sorties/inventaire/capteur.jsonl; (setsid node /tmp/sorties/inventaire/capteur.cjs /tmp/sorties/inventaire/capteur.jsonl ${PORT_CAPTEUR} > /dev/null 2>&1 &)`,
   `rm -rf /tmp/inventaire-data; touch /tmp/sorties/inventaire/avant-demarrage; sleep 1`,
-  `if [ -n "$DEMARRER" ]; then (PORT=4300 DATA_DIR=/tmp/inventaire-data DEMO=1 PUBLIC_URL=http://localhost:4300 setsid bash -c "$DEMARRER" > /tmp/sorties/inventaire/app.log 2>&1 &); fi`,
-  `for i in $(seq 1 45); do if curl -sf http://localhost:4300/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done`,
+  `if [ -n "$DEMARRER" ]; then (PORT=${PORT_EPREUVE} DATA_DIR=/tmp/inventaire-data DEMO=1 PUBLIC_URL=http://localhost:${PORT_EPREUVE} ${ENV_EPREUVE_OBSERVABILITE} setsid bash -c "$DEMARRER" > /tmp/sorties/inventaire/app.log 2>&1 &); fi`,
+  `for i in $(seq 1 45); do if curl -sf http://localhost:${PORT_EPREUVE}/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done`,
+  // Le vérificateur, écrit juste avant d'être lancé (le produit tourne déjà).
+  ecrireFichier("/tmp/sorties/inventaire/verifier-obs.cjs", VERIFIER_OBSERVABILITE),
+  `if curl -sf http://localhost:${PORT_EPREUVE}/api/health > /dev/null; then node /tmp/sorties/inventaire/verifier-obs.cjs /tmp/sorties/inventaire/capteur.jsonl http://localhost:${PORT_EPREUVE}/_usine/observabilite ${DELAI_POULS_EPREUVE_S}; fi`,
   `sleep 2; echo "@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/inventaire/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' -not -path '*/__pycache__/*' -not -path './dist/*' 2>/dev/null | head -5 | tr '\\n' ' ')"`,
-  libererPort(4300),
+  libererPort(PORT_EPREUVE),
+  `fuser -k -n tcp ${PORT_CAPTEUR} >/dev/null 2>&1`,
   // Le socle : tout ce que l'agent a changé, en patch (il sera rejoué à la création).
   `git add -A && git diff --cached --binary HEAD > /tmp/sorties/inventaire/socle.patch; git reset -q`,
   `echo "@@ SOCLE_OCTETS $(wc -c < /tmp/sorties/inventaire/socle.patch)"; echo "@@ SOCLE_FICHIERS $(git add -A && git diff --cached --name-only HEAD | wc -l; git reset -q)"`,

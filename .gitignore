@@ -7,3 +7,4 @@ caddy/Caddyfile
 !caddy/.gitkeep
 secrets.sops.env
 .sops.yaml
+__pycache__/
