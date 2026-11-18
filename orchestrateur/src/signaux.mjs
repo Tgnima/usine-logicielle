@@ -14,6 +14,7 @@
 // Un signal ne lance rien : il va à proposer() (propositions.mjs), qui crée ou complète une
 // proposition, et seule une personne la lance. Ce module n'importe pas la livraison : il n'a aucun
 // moyen de demander une correction.
+import { createHash } from "node:crypto"
 import { cleConnecteurActif } from "./connecteurs.mjs"
 import { valeurService } from "./services.mjs"
 
@@ -23,18 +24,25 @@ const JOUR_MS = 24 * 60 * MINUTE_MS
 // (à la mise en route, les vieux sujets ne font pas une avalanche de propositions).
 export const RECENT_MS = 60 * MINUTE_MS
 const DELAI_MS = 15_000
+// Sans sous-état (ancienne API), un sujet est « nouveau » s'il est apparu dans la semaine.
+const NOUVEAU_MS = 7 * JOUR_MS
+// Ce qu'on demande à Sentry pour chaque application : 25 sujets au plus, vus dans les 24 h.
+const SUJETS_MAX = "25"
+const PERIODE_SENTRY = "24h"
 // Les sous-états de Sentry qui font un signal, et leur nom pour une personne.
 export const NATURES = { new: "nouvelle", regressed: "revient", escalating: "en hausse" }
-const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/
+// Le nom d'un produit (slug) : la seule valeur qui entre dans une requête Sentry ou PostHog.
+export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/
 
-// Un texte venu de Sentry ou de PostHog, sur une ligne, borné, sans balise : il est cité dans une
-// consigne et dans Slack, il ne doit rien pouvoir y fermer ni y ouvrir.
-export const court = (s, n = 200) => String(s ?? "").replace(/[\u0000-\u001f\u007f<>`]/g, " ").replace(/\s+/g, " ").trim().slice(0, n)
+// Un texte venu de Sentry ou de PostHog, sur une ligne, borné, sans balise ni caractère invisible
+// (contrôles, largeur nulle, sens d'écriture, étiquettes Unicode) : il est cité dans une consigne et
+// dans Slack, il ne doit rien pouvoir y fermer, y ouvrir, ni y cacher.
+export const court = (s, n = 200) => String(s ?? "").normalize("NFKC").replace(/[\p{C}\p{Zl}\p{Zp}<>`]/gu, " ").replace(/\s+/g, " ").trim().slice(0, n)
 const iso = (x) => {
   const t = Date.parse(x)
   return Number.isFinite(t) ? new Date(t).toISOString() : null
 }
-const lienSur = (x) => {
+export const lienSur = (x) => {
   try {
     const u = new URL(String(x))
     return u.protocol === "https:" && !u.username && !u.password ? u.href.slice(0, 300) : null
@@ -44,7 +52,8 @@ const lienSur = (x) => {
 }
 
 // L'API de Sentry d'après le DSN de l'usine : o<organisation>.ingest[.<région>].sentry.io/<projet>.
-// Un Sentry hébergé par l'entreprise : le même hôte, et l'organisation se cherche (une seule).
+// Le jeton de lecture ne part que vers sentry.io : un DSN qui pointe ailleurs (un Sentry hébergé par
+// l'entreprise, ou une adresse changée dans la console) n'est pas lu, le jeton ne le suit pas.
 export function apiSentry(dsn) {
   let u
   try {
@@ -53,18 +62,17 @@ export function apiSentry(dsn) {
     return null
   }
   const projet = u.pathname.split("/").filter(Boolean).pop()
-  if (!/^\d{1,20}$/.test(projet ?? "")) return null
+  if (u.protocol !== "https:" || !/^\d{1,20}$/.test(projet ?? "")) return null
   const m = /^o(\d{1,20})\.ingest\.(?:([a-z]{2})\.)?sentry\.io$/.exec(u.hostname)
-  if (m) return { base: `https://${m[2] ? `${m[2]}.` : ""}sentry.io/api/0`, organisation: m[1], projet }
-  if (u.protocol !== "https:") return null
-  return { base: `${u.origin}/api/0`, organisation: null, projet }
+  return m ? { base: `https://${m[2] ? `${m[2]}.` : ""}sentry.io/api/0`, organisation: m[1], projet } : null
 }
 
-// L'API de PostHog d'après l'hôte d'envoi (POSTHOG_HOTE) : eu.i.posthog.com → https://eu.posthog.com.
+// L'API de PostHog d'après l'hôte d'envoi (POSTHOG_HOTE), dans une liste fermée : la clé personnelle
+// ne part que vers PostHog lui-même, jamais vers un relais d'envoi ni une autre adresse.
+const API_POSTHOG = { "": "https://eu.posthog.com", "eu.i.posthog.com": "https://eu.posthog.com", "eu.posthog.com": "https://eu.posthog.com", "us.i.posthog.com": "https://us.posthog.com", "us.posthog.com": "https://us.posthog.com", "app.posthog.com": "https://us.posthog.com" }
 export function apiPostHog(hote) {
-  const h = String(hote || "eu.i.posthog.com").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")
-  if (!/^[a-z0-9.-]{1,200}(:\d{1,5})?$/i.test(h)) return null
-  return `https://${h.replace(/(^|\.)i\.posthog\.com$/i, "$1posthog.com")}`
+  const h = String(hote ?? "").trim().toLowerCase().replace(/^https:\/\//, "").replace(/\/+$/, "")
+  return Object.hasOwn(API_POSTHOG, h) ? API_POSTHOG[h] : null
 }
 
 // Un sujet Sentry en signal. nature : nouvelle, revient, en hausse.
@@ -99,7 +107,7 @@ export function signauxSentry(produit, sujets, maintenant = Date.now()) {
     const derniere = Date.parse(s.lastSeen)
     if (!Number.isFinite(derniere) || maintenant - derniere > RECENT_MS) continue
     const premiere = Date.parse(s.firstSeen)
-    const nature = s.substatus ? NATURES[s.substatus] : Number.isFinite(premiere) && maintenant - premiere < 7 * JOUR_MS ? NATURES.new : null
+    const nature = s.substatus ? NATURES[s.substatus] : Number.isFinite(premiere) && maintenant - premiere < NOUVEAU_MS ? NATURES.new : null
     if (!nature) continue
     signaux.push(signalSentry(produit, s, nature, maintenant))
   }
@@ -109,11 +117,12 @@ export function signauxSentry(produit, sujets, maintenant = Date.now()) {
 // Ce que la console montre de la lecture : la dernière fois, et ce qui n'a pas marché (jamais la clé).
 const lecture = () => ({ sentry: { ok: null, le: null, message: "pas encore lu", applications: 0 }, posthog: { ok: null, le: null, message: "pas encore lu" } })
 let etat = lecture()
-const caches = { organisation: new Map(), projetPostHog: new Map() }
+// Le projet PostHog trouvé, rangé par adresse, empreinte de la clé et jeton d'envoi : une autre clé le recherche.
+const projetsPostHog = new Map()
+const empreinte = (cle) => createHash("sha256").update(String(cle)).digest("hex").slice(0, 16)
 export function oublierSources() {
   etat = lecture()
-  caches.organisation.clear()
-  caches.projetPostHog.clear()
+  projetsPostHog.clear()
 }
 function noterLecture(source, ok, message, maintenant, extra = {}) {
   etat[source] = { ...etat[source], ok, le: new Date(maintenant).toISOString(), message: court(message, 160), ...extra }
@@ -149,15 +158,6 @@ async function appeler(url, cle, { corps = null, fetch: f = fetch } = {}) {
   return res.json()
 }
 
-async function organisationSentry(api, cle, f) {
-  if (api.organisation) return api.organisation
-  if (caches.organisation.has(api.base)) return caches.organisation.get(api.base)
-  const liste = await appeler(`${api.base}/organizations/`, cle, { fetch: f })
-  if (!Array.isArray(liste) || liste.length !== 1 || !liste[0]?.id) throw new Error("organisation Sentry introuvable (le jeton doit en voir une seule)")
-  caches.organisation.set(api.base, String(liste[0].id))
-  return String(liste[0].id)
-}
-
 // Les sujets Sentry de chaque application de production (produits : leurs slugs). Renvoie
 // { signaux, vus } ; vus sert à la mesure après une correction : pour chaque sujet vu dans les
 // 24 h, son dernier passage et son signal (« revient »), { <id du sujet>: { derniere, signal } }.
@@ -167,17 +167,16 @@ export async function lireSentry(ctx, produits, { maintenant = Date.now(), fetch
   const cle = cleConnecteurActif(ctx, "sentry")
   const api = apiSentry(dsn)
   if (!cle || !api) {
-    noterLecture("sentry", false, !cle ? "connecteur Sentry inactif ou sans jeton" : "DSN Sentry absent ou illisible", maintenant, { applications: 0 })
+    noterLecture("sentry", false, !cle ? "connecteur Sentry inactif ou sans jeton" : "DSN Sentry absent, ou hors de sentry.io", maintenant, { applications: 0 })
     return vide
   }
   const liste = [...new Set(produits)].filter((p) => SLUG.test(p))
   const signaux = []
   const vus = {}
   try {
-    const organisation = await organisationSentry(api, cle, f)
     for (const produit of liste) {
-      const params = new URLSearchParams({ project: api.projet, environment: "production", statsPeriod: "24h", limit: "25", query: `is:unresolved produit:${produit} service:${produit}` })
-      const sujets = await appeler(`${api.base}/organizations/${encodeURIComponent(organisation)}/issues/?${params}`, cle, { fetch: f })
+      const params = new URLSearchParams({ project: api.projet, environment: "production", statsPeriod: PERIODE_SENTRY, limit: SUJETS_MAX, query: `is:unresolved produit:${produit} service:${produit}` })
+      const sujets = await appeler(`${api.base}/organizations/${api.organisation}/issues/?${params}`, cle, { fetch: f })
       signaux.push(...signauxSentry(produit, sujets, maintenant))
       for (const s of Array.isArray(sujets) ? sujets : []) {
         const derniere = Date.parse(s?.lastSeen)
@@ -194,7 +193,8 @@ export async function lireSentry(ctx, produits, { maintenant = Date.now(), fetch
 
 // Le projet PostHog de l'usine : celui du jeton d'envoi (posthog_token), sinon le seul que la clé voit.
 async function projetPostHog(base, cle, f, jeton) {
-  if (caches.projetPostHog.has(base)) return caches.projetPostHog.get(base)
+  const cleCache = `${base} ${empreinte(cle)} ${jeton}`
+  if (projetsPostHog.has(cleCache)) return projetsPostHog.get(cleCache)
   let id = null
   try {
     const r = await appeler(`${base}/api/projects/`, cle, { fetch: f })
@@ -203,7 +203,7 @@ async function projetPostHog(base, cle, f, jeton) {
   } catch {}
   if (!id) id = (await appeler(`${base}/api/projects/@current/`, cle, { fetch: f }))?.id ?? null
   if (!/^\d{1,20}$/.test(String(id ?? ""))) throw new Error("projet PostHog introuvable (la clé doit voir le projet de l'usine)")
-  caches.projetPostHog.set(base, String(id))
+  projetsPostHog.set(cleCache, String(id))
   return String(id)
 }
 
@@ -215,8 +215,12 @@ async function hogql(base, projet, cle, requete, f) {
 }
 
 // Les requêtes du contexte d'un produit. Les journaux sont sur une autre grappe que les événements
-// chez PostHog : deux requêtes. Le slug est vérifié (SLUG) avant d'entrer dans la requête.
-export const requetesPostHog = (produit) => ({
+// chez PostHog : deux requêtes. Le slug est vérifié (SLUG) ici même, avant d'entrer dans la requête.
+export function requetesPostHog(produit) {
+  if (!SLUG.test(String(produit ?? ""))) throw new Error("nom de produit refusé")
+  return requetes(produit)
+}
+const requetes = (produit) => ({
   evenements: `SELECT maxIf(timestamp, event = 'pouls') AS dernier_pouls, argMaxIf(properties.erreurs_depuis_demarrage, timestamp, event = 'pouls') AS erreurs_depuis_demarrage, maxIf(timestamp, event = 'etat_produit') AS dernier_etat, countIf(event = 'deploiement' AND properties.resultat != 'ok') AS deploiements_rates FROM events WHERE timestamp > now() - INTERVAL 1 DAY AND distinct_id = 'produit:${produit}' AND properties.environnement = 'production'`,
   journaux: `SELECT countIf(severity_text IN ('error', 'fatal')) AS erreurs, countIf(severity_text = 'warn') AS avertissements FROM logs WHERE timestamp > now() - INTERVAL 1 HOUR AND service_name = '${produit}' AND resource_attributes.\`deployment.environment\` = 'production'`,
 })
@@ -234,7 +238,7 @@ export async function contextePostHog(ctx, produit, { fetch: f = fetch, hote = e
   const cle = cleConnecteurActif(ctx, "posthog")
   const base = apiPostHog(hote)
   if (!cle || !base) {
-    noterLecture("posthog", false, !cle ? "connecteur PostHog inactif ou sans clé" : "hôte PostHog illisible", maintenant)
+    noterLecture("posthog", false, !cle ? "connecteur PostHog inactif ou sans clé" : "région PostHog hors de la liste (eu ou us) : la clé ne part pas ailleurs", maintenant)
     return null
   }
   try {

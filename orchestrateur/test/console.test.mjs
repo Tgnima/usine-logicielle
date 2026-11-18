@@ -253,7 +253,8 @@ test("la boucle d'amélioration : trois modes, une liste fermée, réservé aux 
   assert.equal(avant.corps.pilote.sources.sentry.branche, false)
   assert.equal(avant.corps.pilote.sources.posthog.branche, false)
   assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "production" } })).status, 400)
-  assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "corriger" } })).status, 400, "l'ancien mode automatique n'existe plus")
+  // Le mode « corriger » de la #21 reste possible, choisi exprès (la console demande une confirmation).
+  assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "corriger" } })).status, 200)
   assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: {} })).status, 400)
   assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: ["proposer"] } })).status, 400, "un tableau n'est pas un mode")
   assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: null })).status < 500, true, "un corps nul ne fait pas tomber la route")
@@ -277,7 +278,7 @@ test("une proposition de correction : dans la file, lancée ou écartée par un 
   const element = v.attend.find((x) => x.cle === `proposition:${id}`)
   assert.equal(element?.groupe, "decider")
   assert.match(element.titre, /Prospecta · correction proposée/)
-  assert.deepEqual([element.action.type, element.action.id], ["proposition", id])
+  assert.deepEqual([element.action.type, element.action.id, element.action.en_travail, element.lien], ["proposition", id, true, "#/visibilite"])
   assert.match(element.action.faits[0], /Sentry PROSPECTA-1, erreur nouvelle : « TypeError: x is undefined »/)
   // Un membre ne lance rien ; un identifiant inconnu : 404 ; un projet en fabrication : la proposition attend.
   assert.equal((await appel(`/api/propositions/${id}/lancer`, { methode: "POST", corps: {}, session: "membre" })).status, 403)

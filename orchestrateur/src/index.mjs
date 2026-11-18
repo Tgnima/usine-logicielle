@@ -79,9 +79,11 @@ demarrerSynchronisationPortier(ctx)
 demarrerCycle(ctx)
 demarrerDomaines(ctx)
 surveillerSante(ctx)
-// La boucle d'amélioration : le pilote (pannes) et la lecture de Sentry ne font que proposer. Seule
-// une personne lance une correction (lancerProposition, depuis la console ou Slack).
-demarrerPilote(ctx, { proposer })
+// La boucle d'amélioration. En mode « proposer », le pilote (pannes) ne fait que proposer, et une
+// personne lance la correction (lancerProposition, console ou Slack) ; en mode « corriger », il
+// demande seul la correction, jusqu'à l'aperçu. La lecture de Sentry ne fait jamais que proposer.
+// Aucun des deux ne peut mettre en ligne.
+demarrerPilote(ctx, { corriger: livraison.demanderCorrections, proposer })
 demarrerBoucle(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).

@@ -23,7 +23,7 @@ import { enregistrementDns, ipServeur } from "./domaines.mjs"
 import { etatFournisseurs } from "./fournisseurs.mjs"
 import { facturationsEnCours } from "./moteurs.mjs"
 import { normaliserQuestions, presenterDecision } from "./presentation.mjs"
-import { ligneContexte, ligneSignal, propositionsOuvertes } from "./propositions.mjs"
+import { PROJETS_LANCABLES, ligneContexte, ligneSignal, propositionsOuvertes } from "./propositions.mjs"
 import { reorientationEnPreparation } from "./reorientation.mjs"
 import { dernierEtatUsine } from "./sante.mjs"
 
@@ -158,9 +158,11 @@ function aDecider(ctx, raisons) {
     liste.push({
       groupe: "decider", type: "proposition", cle: `proposition:${p.id}`, projet: p.projet_id,
       titre: `${p.nom ?? p.produit} · correction proposée${p.rechute_de ? " (rechute)" : ""}`,
-      detail: premier ? `${premier.source === "sentry" ? "Erreur Sentry" : "Panne"} : ${premier.titre}${p.signaux.length > 1 ? ` · ${pluriel(p.signaux.length - 1, "autre signal", "autres signaux")}` : ""}` : "",
-      depuis: iso(p.cree_le), lien: `#/projets/${p.projet_id}`,
-      action: { type: "proposition", id: p.id, faits: p.signaux.slice(0, 4).map((s) => premiereLigne(ligneSignal(s))), contexte: ligneContexte(p.contexte) },
+      detail: premier ? `${premier.source === "sentry" ? "Erreur" : "Panne"} : ${premier.titre}${p.signaux.length > 1 ? ` · ${pluriel(p.signaux.length - 1, "autre problème relevé", "autres problèmes relevés")}` : ""}` : "",
+      // Les boutons sont dans Ce qui t'attend (Visibilité), pas sur la page du projet.
+      depuis: iso(p.cree_le), lien: "#/visibilite",
+      // en_travail : le projet est en fabrication ou en correction ; Lancer attend qu'il ait fini.
+      action: { type: "proposition", id: p.id, en_travail: !PROJETS_LANCABLES.includes(p.statut_projet), faits: p.signaux.slice(0, 4).map((s) => premiereLigne(ligneSignal(s))), contexte: ligneContexte(p.contexte) },
     })
   }
   // depuis : la dernière modification du projet, à peu près le moment où il s'est mis à attendre.
