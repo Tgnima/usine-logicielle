@@ -1944,13 +1944,32 @@ function fenetrePasserelle(s) {
   </div>`)
 }
 
+// Le pilote des pannes (pilote.mjs) : trois modes, et ses dernières décisions.
+const MODES_PILOTE = [
+  ["coupe", "Coupé", "L'usine te prévient des pannes, sans rien faire d'autre."],
+  ["observer", "Observer", "Pour chaque panne, elle te dit ce qu'elle aurait fait. Rien n'est lancé."],
+  ["corriger", "Corriger", "Elle prépare seule la correction et la met sur l'aperçu. La mise en ligne pour de vrai reste à toi."],
+]
+function cartePilote(p) {
+  if (!p) return ""
+  const choisi = MODES_PILOTE.find(([id]) => id === p.mode) ?? MODES_PILOTE[1]
+  return html`<section class="carte carte-p pile" aria-labelledby="pilote"><h2 id="pilote">Pannes des applications en ligne</h2>
+      <p class="aide" style="margin:0">Quand une application en ligne tombe en panne à cause de son code, l'usine peut en préparer la correction seule. Si la cause est ailleurs (serveur, mémoire), ou si la panne revient dans la semaine qui suit ${p.par_produit === 1 ? "une correction" : `${p.par_produit} corrections`}, elle te passe la main.</p>
+      <div><div class="segmente" role="group" aria-label="Pannes des applications en ligne">${MODES_PILOTE.map(([id, nom]) => html`<button type="button" data-action="pilote-mode" data-id="${id}" aria-pressed="${String(p.mode === id)}">${nom}</button>`)}</div></div>
+      <p style="margin:0;font-size:14px">${choisi[2]}</p>
+      ${p.pannes.length ? html`<p style="margin:0;font-size:14px"><strong>En panne maintenant :</strong> ${p.pannes.map((x) => `${x.nom} (depuis ${heure(x.depuis)})`).join(", ")}</p>` : ""}
+      ${p.journal.length ? html`<details id="pilote-journal" ${etat.piloteOuvert ? "open" : ""}><summary style="cursor:pointer">Ses dernières décisions</summary><ul class="pile" style="gap:6px;margin:8px 0 0;padding-left:18px;font-size:14px">${p.journal.map((j) => html`<li><span class="aide">${heure(j.le)}</span> ${j.message}</li>`)}</ul></details>` : html`<p class="aide" style="margin:0">Aucune panne vue pour l'instant.</p>`}
+    </section>`
+}
+
 function vueRegles() {
   const k = etat.reglages?.contrat
   if (!k) return html`<div class="chargement">Chargement…</div>`
   return html`
-    <div><h1>Règles de l'usine</h1><p class="chapeau">Ces règles sont appliquées par l'usine elle-même. Elles se changent sur le serveur, par un technicien.</p></div>
+    <div><h1>Règles de l'usine</h1><p class="chapeau">Ces règles sont appliquées par l'usine elle-même. Elles se changent sur le serveur, par un technicien, sauf les pannes des applications en ligne, qui se règlent ici.</p></div>
     <section class="carte carte-p pile" aria-labelledby="qui-decide"><h2 id="qui-decide">Qui décide</h2>
       ${Object.entries(k.politiques).map(([a, v]) => html`<div class="barre" style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--trait-2)"><span>${ACTIONS_POLITIQUES[a] ?? a}</span><span class="badge ${v === "manuel" ? "orange" : v === "jamais" ? "rouge" : "vert"}">${POLITIQUES[v] ?? v}</span></div>`)}</section>
+    ${cartePilote(etat.reglages?.pilote)}
     <section class="carte carte-p grille" style="font-size:14px" aria-label="Limites">
       <div><div class="aide">Quand une fonction est refusée</div>l'usine la refait <strong>${k.autonomie.tentatives_par_tache ?? 2} fois</strong>, puis essaie <strong>${k.autonomie.changements_d_approche ?? 1} autre méthode</strong> avant de te demander</div>
       <div><div class="aide">Temps maximum pour une fonction</div><strong>${k.autonomie.minutes_max_par_agent ?? 30} minutes</strong></div>
@@ -2112,9 +2131,9 @@ async function suivreDirect() {
 }
 setInterval(suivreDirect, 3000)
 
-const TYPES_HISTO = { demande: "Demande", validation: "Validation", decision: "Décision", production: "Mise en ligne", abandon: "Abandon", cycle: "Aperçu", plan: "Plan", domaine: "Adresse web", corrections: "Corrections", remarque: "Remarque", escalade: "Décision demandée", erreur: "Problème", relance: "Relance", reglage: "Réglage" }
-const PICTOS_HISTO = { demande: "✎", validation: "✓", decision: "◆", production: "↗", abandon: "✕", cycle: "▣", plan: "☰", domaine: "@", corrections: "↺", remarque: "❝", escalade: "!", erreur: "!", relance: "↻", reglage: "⚙" }
-const FILTRES_HISTO = [["", "Tout"], ["demande", "Demandes"], ["validation", "Validations"], ["decision", "Décisions"], ["production", "Mises en ligne"], ["erreur", "Problèmes"], ["reglage", "Réglages"]]
+const TYPES_HISTO = { pilote: "Panne", demande: "Demande", validation: "Validation", decision: "Décision", production: "Mise en ligne", abandon: "Abandon", cycle: "Aperçu", plan: "Plan", domaine: "Adresse web", corrections: "Corrections", remarque: "Remarque", escalade: "Décision demandée", erreur: "Problème", relance: "Relance", reglage: "Réglage" }
+const PICTOS_HISTO = { demande: "✎", validation: "✓", decision: "◆", production: "↗", abandon: "✕", cycle: "▣", plan: "☰", domaine: "@", corrections: "↺", remarque: "❝", escalade: "!", erreur: "!", relance: "↻", reglage: "⚙", pilote: "⟳" }
+const FILTRES_HISTO = [["", "Tout"], ["demande", "Demandes"], ["validation", "Validations"], ["decision", "Décisions"], ["production", "Mises en ligne"], ["erreur", "Problèmes"], ["reglage", "Réglages"], ["pilote", "Pannes"]]
 const dateDe = (le) => new Date(String(le).replace(" ", "T") + (String(le).includes("Z") ? "" : "Z"))
 function jourDe(le) {
   const d = dateDe(le)
@@ -3101,6 +3120,12 @@ const ACTIONS = {
     if (!confirmer("Déconnecter GitHub de l'usine ? Les projets en cours ne pourront plus pousser leur code tant qu'un compte n'est pas reconnecté.")) return
     return agir(() => api("DELETE", "github", {}))
   },
+  "pilote-mode": (el) => {
+    const mode = el.dataset.id
+    if (mode === etat.reglages?.pilote?.mode) return
+    if (mode === "corriger" && !confirmer("L'usine corrigera seule le code d'une application en ligne en panne, jusqu'à l'aperçu. La mise en ligne pour de vrai restera à toi. Activer ?")) return
+    return agir(() => api("PUT", "reglages/pilote", { mode }))
+  },
   "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
   "tester-service": (el) => agirFenetre(() => api("POST", `services/${el.dataset.service}/tester`, {})),
   "essai-courriel": () => agirFenetre(() => api("POST", "services/smtp/essai", {})),
@@ -3829,6 +3854,7 @@ document.addEventListener("toggle", (e) => {
   if (e.target.id === "lot-detail") etat.lotOuvert = e.target.open
   if (e.target.id === "ft-calcul") etat.calculOuvert = e.target.open
   if (e.target.id === "menu-projet") etat.menuProjet = e.target.open
+  if (e.target.id === "pilote-journal") etat.piloteOuvert = e.target.open
 }, true)
 
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------
