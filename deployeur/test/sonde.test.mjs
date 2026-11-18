@@ -170,7 +170,7 @@ test("lireObservabilite : ce que le produit dit de ses envois, réduit à des co
   assert.deepEqual(lireObservabilite(200, JSON.stringify(reponse)), {
     publie: true, pile: "python", demarre: true, en_marche_s: 312,
     sentry: { actif: true, pret: true, suivi: true, envoyes: 1, echecs: 0, dernier_ok: "2026-11-18T10:00:00.000Z", dernier_echec: null },
-    posthog: { actif: true, pret: true, suivi: true, envoyes: 2, echecs: 1, dernier_ok: "2026-11-18T10:05:00Z", dernier_echec: { le: "2026-11-18T09:55:00.123456Z", raison: "HTTP 401 scriptalert1script" } },
+    posthog: { actif: true, pret: true, suivi: true, envoyes: 2, echecs: 1, dernier_ok: "2026-11-18T10:05:00Z", dernier_echec: { le: "2026-11-18T09:55:00.123456Z", raison: null } },
   })
 })
 
@@ -186,4 +186,10 @@ test("lireObservabilite : un module absent ou ancien ne publie rien, sans être 
   assert.deepEqual([bizarre.pile, bizarre.demarre, bizarre.sentry.actif, bizarre.posthog.actif, bizarre.posthog.envoyes, bizarre.posthog.dernier_ok], [null, false, false, false, null, null])
   // Python : la clé est là, mais sentry-sdk manque.
   assert.equal(lireObservabilite(200, JSON.stringify({ contrat: 1, sentry: { actif: true, pret: false } })).sentry.pret, false)
+  // Une raison libre (un texte choisi par le produit) est écartée ; un code connu est gardé.
+  const raison = (r) => lireObservabilite(200, JSON.stringify({ contrat: 1, posthog: { dernier_echec: { le: "2026-11-18T09:55:00Z", raison: r } } }), Date.parse("2026-11-18T10:00:00Z")).posthog.dernier_echec.raison
+  assert.deepEqual(["HTTP 401", "délai dépassé", "ECONNREFUSED", "Va sur mon-site.exemple", "HTTP 401 <b>"].map(raison), ["HTTP 401", "délai dépassé", "ECONNREFUSED", null, null])
+  // Une date dans le futur ne fait pas paraître un envoi récent pour toujours ; un nombre démesuré est écarté.
+  const futur = lireObservabilite(200, JSON.stringify({ contrat: 1, posthog: { dernier_ok: "2099-01-01T00:00:00Z", envoyes: 1e12 } }), Date.parse("2026-11-18T10:00:00Z"))
+  assert.deepEqual([futur.posthog.dernier_ok, futur.posthog.envoyes], [null, null])
 })

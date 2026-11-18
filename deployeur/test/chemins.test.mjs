@@ -72,3 +72,11 @@ test("blocCaddy : /_usine/* répond 404 au public, que l'application soit proté
   assert.match(ouvert, /\thandle \{\n\t\treverse_proxy usine-prod-vigie-blue:3000\n\t\}/)
   assert.ok(blocCaddy("h.test", "c:3000", { https: false }).startsWith("http://h.test {"))
 })
+
+test("les chemins réservés ne passent ni en majuscules, ni par un joker qui les couvre", async () => {
+  const r = cheminsDeclares('{"chemins_publics": ["/_USINE/observabilite", "/_usin*", "/_u*", "/_Portier/x", "/_p*", "/un-autre/*", "/merci"]}')
+  assert.deepEqual(r.chemins, ["/un-autre/*", "/merci"])
+  // Le chemin que la sonde appelle est bien couvert par les chemins internes.
+  const { CHEMIN_OBSERVABILITE } = await import("../sonde.mjs")
+  assert.ok(CHEMINS_INTERNES.some((c) => (c.endsWith("*") ? CHEMIN_OBSERVABILITE.startsWith(c.slice(0, -1)) : c === CHEMIN_OBSERVABILITE)))
+})

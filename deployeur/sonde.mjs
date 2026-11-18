@@ -132,17 +132,27 @@ export function inspectIncomplet(noms, conteneurs, sortie) {
 // une raison courte. Toute autre réponse (404, la page de l'application, un JSON d'une autre forme)
 // veut dire que le produit ne publie pas l'état de ses envois : son module est absent ou ancien.
 export const CONTRAT_OBSERVABILITE = 1
+// Le chemin est couvert par CHEMINS_INTERNES (chemins.mjs) : Caddy ne le sert jamais au public.
+export const CHEMIN_OBSERVABILITE = "/_usine/observabilite"
+export const DELAI_OBSERVABILITE_MS = 5_000
 export const TAILLE_MAX_OBSERVABILITE = 8_000
-export function lireObservabilite(code, texte) {
+// La raison d'un envoi refusé, telle que les modules l'écrivent : un code HTTP, un délai, un code
+// d'erreur système (ECONNREFUSED…). Tout autre texte est écarté : la console ne montre jamais un
+// texte choisi par le produit.
+const RAISON_CONNUE = /^(?:HTTP \d{3}|délai dépassé|[A-Z][A-Z0-9_]{1,30})$/
+const DATE_FUTURE_MAX_MS = 5 * 60_000
+export function lireObservabilite(code, texte, maintenant = Date.now()) {
   if (code === null || code === undefined) return { publie: false, raison: "sans_reponse" }
   let j = null
   try {
     if (code === 200 && String(texte ?? "").length <= TAILLE_MAX_OBSERVABILITE) j = JSON.parse(texte)
   } catch {}
   if (!j || typeof j !== "object" || j.contrat !== CONTRAT_OBSERVABILITE) return { publie: false, raison: "absent" }
-  const nombre = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null)
-  const date = (v) => (typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null)
-  const raison = (v) => (typeof v === "string" ? v.replace(/[^\p{L}\p{N} .:_-]/gu, "").trim().slice(0, 60) || null : null)
+  const nombre = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9 ? Math.round(v) : null)
+  // Une date dans le futur (horloge du produit déréglée, ou réponse inventée) n'est pas gardée :
+  // elle ferait paraître un envoi récent pour toujours.
+  const date = (v) => (typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v) && Date.parse(v) <= maintenant + DATE_FUTURE_MAX_MS ? v : null)
+  const raison = (v) => (typeof v === "string" && RAISON_CONNUE.test(v) ? v : null)
   const canal = (c, envoyes) => {
     const o = c && typeof c === "object" ? c : {}
     const echec = o.dernier_echec && typeof o.dernier_echec === "object" && date(o.dernier_echec.le) ? { le: date(o.dernier_echec.le), raison: raison(o.dernier_echec.raison) } : null

@@ -24,8 +24,9 @@ export const PROFIL_BRIQUE = {
 
 // Les fichiers qui jugent un dépôt repris : l'usine les remet tels qu'ils sont sur la branche
 // de base avant chaque contrôle. (Ceux d'une brique sont dans usine.config.yml.)
-// usine/ : le module d'observabilité de l'usine (reprise.mjs, MODULES_OBSERVABILITE), déposé tel quel.
-export const PROTEGES_REPRIS = ["Dockerfile", "MISSION.md", "ICP.md", "docs/PLAN.md", "docs/DESIGN.md", ".usine/**", "usine/**"]
+// usine/observabilite.* : le module d'observabilité de l'usine (reprise.mjs, MODULES_OBSERVABILITE),
+// déposé tel quel. Seulement ces deux fichiers : un dépôt peut avoir son propre dossier usine/.
+export const PROTEGES_REPRIS = ["Dockerfile", "MISSION.md", "ICP.md", "docs/PLAN.md", "docs/DESIGN.md", ".usine/**", "usine/observabilite.mjs", "usine/observabilite.py"]
 // Le cadre du produit, protégé partout : l'usine ne réécrit jamais sa propre mission.
 export const PROTEGES_TOUJOURS = ["MISSION.md", "ICP.md"]
 

@@ -26,10 +26,16 @@ export function cheminsDeclares(contenu) {
   const liste = Array.isArray(j?.chemins_publics) ? j.chemins_publics.slice(0, 20) : []
   const chemins = []
   const refuses = []
+  // Les chemins du portier et de l'usine ne se déclarent jamais publics, en minuscules ou non
+  // (Caddy ignore la casse), ni par un joker qui les couvrirait (« /_u* »).
+  const reserve = (c) => {
+    const base = c.toLowerCase().replace(/\*$/, "")
+    return ["/_portier", "/_usine"].some((r) => base.startsWith(r) || (c.endsWith("*") && r.startsWith(base)))
+  }
   for (const c of liste) {
     const ok = typeof c === "string"
       && /^\/[A-Za-z0-9._~\-/]*\*?$/.test(c) // un chemin simple, éventuellement terminé par *
-      && !c.includes("..") && !c.startsWith("/_portier") && !c.startsWith("/_usine")
+      && !c.includes("..") && !reserve(c)
       && !TROP_LARGES.has(c) && c.replace(/\*$/, "").replace(/\/$/, "").length >= 3
     ;(ok ? chemins : refuses).push(String(c))
   }

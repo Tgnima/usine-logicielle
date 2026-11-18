@@ -25,7 +25,7 @@ import { lireBoite, valeurBoite, variablesSmtp } from "./boite.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { canal, derniereVersion } from "./versions.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
-import { DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, TAILLE_MAX_OBSERVABILITE, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, lireObservabilite, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
+import { CHEMIN_OBSERVABILITE, DELAI_OBSERVABILITE_MS, DEPLOIEMENT_BLOQUE_MS, FORMAT_INSPECT, TAILLE_MAX_OBSERVABILITE, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, lireObservabilite, noterRedemarrages, versionDeLImage } from "./sonde.mjs"
 import { creerObservabilite } from "../commun/observabilite.mjs"
 
 const env = process.env
@@ -623,11 +623,11 @@ async function sonderSante(conteneur) {
 }
 
 // /_usine/observabilite : ce que le produit envoie vraiment à Sentry et à PostHog (lireObservabilite,
-// sonde.mjs). Un essai, 5 s au plus, sans redirection, et 8 Ko lus au plus : la réponse vient du
+// sonde.mjs). Un essai, DELAI_OBSERVABILITE_MS au plus, sans redirection, 8 Ko lus au plus : elle vient du
 // code du produit. Caddy ne sert jamais ce chemin au public (CHEMINS_INTERNES).
 async function sonderObservabilite(conteneur) {
   try {
-    const res = await fetch(`http://${conteneur}:3000/_usine/observabilite`, { signal: AbortSignal.timeout(5_000), redirect: "manual" })
+    const res = await fetch(`http://${conteneur}:3000${CHEMIN_OBSERVABILITE}`, { signal: AbortSignal.timeout(DELAI_OBSERVABILITE_MS), redirect: "manual" })
     let texte = ""
     if (res.status === 200 && res.body) {
       const lecteur = res.body.getReader()

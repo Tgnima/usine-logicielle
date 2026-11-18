@@ -1783,9 +1783,10 @@ function destinatairesService(s) {
     : echec ? html`Le déployeur : ses envois échouent depuis ${depuisParis(echec.premier_echec ?? echec.dernier_echec.le)}. ${echec.dernier_echec.message}`
     : dernier ? `Le déployeur : dernier envoi réussi ${ilYa(dernier)}.` : "Le déployeur : clé reçue, rien d'envoyé pour l'instant."
   // Une mise en ligne en échec : l'ancienne version tourne encore, avec ses anciennes clés.
-  const enEchec = (ap?.en_retard ?? []).filter((a) => a.echec).map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`)
-  const retard = ap ? ap.total - ap.a_jour : 0
-  const suite = html`${s.envois_applications && retard ? html`<span class="aide">${retard === 1 ? "Une application n'a pas encore la dernière clé : elle la recevra à sa prochaine mise en ligne." : `${retard} applications n'ont pas encore la dernière clé : elles la recevront à leur prochaine mise en ligne.`}</span>` : ""}
+  const enEchec = (ap?.en_retard ?? []).filter((a) => a.echec).map(nomAppli)
+  // Celles qui n'ont pas la dernière clé, nommées (celles dont la mise en ligne a échoué ont leur phrase).
+  const sansDerniere = (ap?.en_retard ?? []).filter((a) => !a.echec).map(nomAppli)
+  const suite = html`${s.envois_applications && sansDerniere.length ? html`<span class="aide">${sansDerniere.length === 1 ? `${sansDerniere[0]} n'a pas encore la dernière clé : elle la recevra à sa prochaine mise en ligne.` : `${sansDerniere.join(", ")} n'ont pas encore la dernière clé : elles la recevront à leur prochaine mise en ligne.`}</span>` : ""}
       ${enEchec.length ? html`<span class="aide">Dernière mise en ligne en échec pour ${enEchec.join(", ")} : l'ancienne version tourne, avec les anciennes clés.</span>` : ""}
       ${ap?.en_cours ? html`<span class="aide">Redémarrage en cours…</span>` : ""}
       ${ap?.a_faire ? html`<button type="button" class="btn btn-s btn-petit" data-action="appliquer-services">Appliquer maintenant</button>` : ""}`
@@ -1799,33 +1800,51 @@ function destinatairesService(s) {
 
 // Ce qui arrive vraiment, application par application : l'application elle-même dit à l'usine
 // la réponse de Sentry ou de PostHog à son dernier envoi (services.mjs, envoisApplication).
-const RAISONS_ENVOI = { "HTTP 401": "clé refusée", "HTTP 403": "clé refusée", "HTTP 400": "clé refusée", "HTTP 429": "quota atteint", "délai dépassé": "pas de réponse à temps" }
-const raisonEnvoi = (r) => RAISONS_ENVOI[r] ?? (/^E[A-Z]+$/.test(r ?? "") ? "service injoignable" : r || "raison inconnue")
-const ENVOIS_RECUS = { ok: ["vert", "reçu"], echec: ["rouge", "en échec"], muet: ["orange", "muet"], non_branche: ["orange", "n'envoie rien"], sans_cle: ["", "sans clé"], attente: ["", "en attente"], inconnu: ["", "inconnu"] }
+// Le pouls d'une application s'appelle ici « signal de vie », comme celui de l'usine.
+const nomAppli = (a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`
+const RAISONS_ENVOI = { "HTTP 401": "clé refusée", "HTTP 403": "clé refusée", "HTTP 429": "quota atteint", "délai dépassé": "pas de réponse à temps" }
+const raisonEnvoi = (r) => {
+  r = r ?? ""
+  return RAISONS_ENVOI[r] ?? (/^E[A-Z]+$/.test(r) ? "service injoignable" : /^HTTP 5/.test(r) ? "souci chez le service" : /^HTTP 4/.test(r) ? "envoi refusé" : "envoi impossible")
+}
+const SANS_NOUVELLES = ["", "sans nouvelles"]
+const ENVOIS_RECUS = { ok: ["vert", "reçu"], echec: ["rouge", "en échec"], muet: ["orange", "muet"], non_branche: ["orange", "n'envoie rien"], sans_cle: ["", "sans clé"], attente: ["", "en attente"], inconnu: SANS_NOUVELLES }
+// Le badge d'une application. Sentry : sans erreur à envoyer, elle est prête, pas en attente.
+// Sans réponse, l'usine ne sait pas : « sans nouvelles », jamais « n'envoie rien ».
+const badgeEnvoi = (s, a) => (s.id === "sentry" && a.etat === "attente" ? ["", "prête"] : a.etat === "non_branche" && a.raison === "sans_reponse" ? SANS_NOUVELLES : ENVOIS_RECUS[a.etat] ?? SANS_NOUVELLES)
 function phraseEnvoi(s, a) {
   const posthog = s.id === "posthog"
-  const ancienne = a.a_jour ? "" : " Elle a une ancienne clé : elle recevra la dernière à sa prochaine mise en ligne."
-  if (a.etat === "ok") return posthog ? `PostHog a reçu son pouls ${ilYa(a.le)}.` : `Sentry a reçu sa dernière erreur ${ilYa(a.le)}.`
-  if (a.etat === "echec") return `${posthog ? "Son dernier pouls n'est pas arrivé" : "Sa dernière erreur n'est pas arrivée"} (${raisonEnvoi(a.raison)}), ${ilYa(a.le)}.${ancienne}`
-  if (a.etat === "muet") return a.le ? `Plus aucun pouls depuis ${depuisParis(a.le)}.` : "Aucun pouls depuis son démarrage."
-  if (a.etat === "attente") return posthog ? "Vient de démarrer : son premier pouls part dans les minutes qui viennent."
-    : a.raison === "reponse_invisible" ? "Prête : ses erreurs partent, sans accusé de réception." : "Prête : aucune erreur à envoyer depuis son démarrage."
+  const cleRefusee = ["HTTP 401", "HTTP 403"].includes(a.raison)
+  const conseil = !a.a_jour ? " Elle a une ancienne clé : elle recevra la dernière à sa prochaine mise en ligne." : cleRefusee ? " Vérifie la clé ci-dessous, puis lance le test." : ""
+  if (a.etat === "ok") return posthog ? `Dernier signal de vie arrivé ${ilYa(a.le)}.` : `Dernière erreur arrivée ${ilYa(a.le)}.`
+  if (a.etat === "echec") return `${posthog ? "Son dernier signal de vie n'est pas arrivé" : "Sa dernière erreur n'est pas arrivée"} (${raisonEnvoi(a.raison)}), ${ilYa(a.le)}.${conseil}`
+  if (a.etat === "muet") return a.le ? `Plus aucun signal de vie depuis ${depuisParis(a.le)}.` : "Aucun signal de vie depuis son démarrage."
+  if (a.etat === "attente") return posthog ? "Vient de démarrer : son premier signal de vie part dans les minutes qui viennent."
+    : a.raison === "reponse_invisible" ? "Ses erreurs partent, sans accusé de réception." : "Aucune erreur à envoyer depuis son démarrage."
   if (a.etat === "sans_cle") return `N'a pas encore la clé.${a.a_jour ? "" : " Elle la recevra à sa prochaine mise en ligne."}`
   if (a.etat === "non_branche") return a.raison === "module_arrete" ? "A la clé, mais rien ne part : l'envoi n'est pas démarré dans son code."
     : a.raison === "sdk_absent" ? "A la clé, mais rien ne part : il manque à son code la bibliothèque de Sentry."
-    : a.raison === "sans_reponse" ? "Ne dit pas ce qu'elle envoie : pas de réponse."
-    : "N'envoie rien : son code ne le prévoit pas encore (application créée ou reprise avant cet envoi)."
-  return "Pas de nouvelles pour l'instant."
+    : a.raison === "sans_reponse" ? "Ne répond pas quand l'usine lui demande ce qu'elle envoie."
+    : "Son code ne le prévoit pas encore (application créée ou reprise avant cet envoi)."
+  return "L'usine n'a pas encore pu lui demander ce qu'elle envoie."
 }
+// Ce qui demande quelque chose d'abord, une ligne chacune ; ce qui va bien, regroupé sur une ligne.
+const ORDRE_ENVOIS = ["echec", "muet", "non_branche", "sans_cle", "inconnu", "attente", "ok"]
 function envoisApplications(s, suite) {
   const liste = s.envois_applications
-  const recus = liste.filter((a) => a.etat === "ok" || (s.id === "sentry" && a.etat === "attente")).length
-  const lignes = liste.map((a) => {
-    // Sentry : une application sans erreur à envoyer est prête, pas en attente.
-    const [couleur, mot] = s.id === "sentry" && a.etat === "attente" ? ["", "prête"] : ENVOIS_RECUS[a.etat] ?? ENVOIS_RECUS.inconnu
-    return html`<li><span class="barre" style="flex-wrap:wrap;gap:6px;justify-content:flex-start"><strong>${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}</strong><span class="badge ${couleur}">${mot}</span></span><span class="aide">${phraseEnvoi(s, a)}</span></li>`
-  })
-  return html`Les applications : ${s.id === "posthog" ? `${recus} sur ${liste.length} envoient bien leur pouls.` : `${recus} sur ${liste.length} prêtes à envoyer leurs erreurs.`}
+  const bien = (a) => a.etat === "ok" || (s.id === "sentry" && a.etat === "attente" && a.raison !== "reponse_invisible")
+  const ligne = (badge, nom, phrase) => html`<li><span class="rangee" style="gap:6px"><strong>${nom}</strong><span class="badge ${badge[0]}">${badge[1]}</span></span><span class="aide">${phrase}</span></li>`
+  const aVoir = liste.filter((a) => !bien(a)).sort((a, b) => ORDRE_ENVOIS.indexOf(a.etat) - ORDRE_ENVOIS.indexOf(b.etat))
+  const groupes = s.id === "posthog"
+    ? [[liste.filter((a) => a.etat === "ok"), ENVOIS_RECUS.ok, "PostHog a reçu leur signal de vie dans le dernier quart d'heure."]]
+    : [[liste.filter((a) => a.etat === "ok"), ENVOIS_RECUS.ok, "Sentry a bien reçu leur dernière erreur."], [liste.filter((a) => bien(a) && a.etat === "attente"), ["", "prête"], "Aucune erreur à envoyer depuis leur démarrage."]]
+  const lignes = [
+    ...aVoir.map((a) => ligne(badgeEnvoi(s, a), nomAppli(a), phraseEnvoi(s, a))),
+    // Une seule application : sa phrase à elle (avec l'heure) ; plusieurs : une phrase pour toutes.
+    ...groupes.filter(([apps]) => apps.length).map(([apps, badge, phrase]) => (apps.length === 1 ? ligne(badgeEnvoi(s, apps[0]), nomAppli(apps[0]), phraseEnvoi(s, apps[0])) : ligne(badge, apps.map(nomAppli).join(", "), phrase))),
+  ]
+  const recus = liste.filter(bien).length
+  return html`Les applications : ${s.id === "posthog" ? `${recus} sur ${liste.length} envoient bien leur signal de vie.` : `${recus} sur ${liste.length} prêtes à envoyer leurs erreurs.`}
     <ul class="pile" style="margin:6px 0 0;padding-left:18px;gap:6px">${lignes}</ul>
     ${suite}`
 }

@@ -353,3 +353,13 @@ test("le module Python des dépôts repris masque comme l'usine : cas-masquage.j
   // Un masque ajouté ou changé ici : régénérer les sorties attendues, que le test Python rejoue (briques/reprise).
   for (const c of cas) assert.equal(usine.nettoyer(c.entree, c.maximum ?? 1000), c.sortie, c.entree)
 })
+
+test("le numéro de contrat de GET /_usine/observabilite est le même partout", async () => {
+  const { readFileSync } = await import("node:fs")
+  const brique = await import("../../briques/webapp/server/observabilite.js")
+  const sonde = await import("../../deployeur/sonde.mjs")
+  const reprise = await import("../src/reprise.mjs")
+  const python = Number(/^CONTRAT_OBSERVABILITE = (\d+)$/m.exec(readFileSync(new URL("../../briques/reprise/observabilite.py", import.meta.url), "utf8"))?.[1])
+  // Monté d'un seul côté, la console dirait « n'envoie rien » partout, ou chaque reprise serait refusée.
+  assert.deepEqual([brique.CONTRAT_OBSERVABILITE, python, reprise.CONTRAT_OBSERVABILITE], [sonde.CONTRAT_OBSERVABILITE, sonde.CONTRAT_OBSERVABILITE, sonde.CONTRAT_OBSERVABILITE])
+})

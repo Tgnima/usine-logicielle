@@ -80,17 +80,37 @@ test("mode : direct seulement si l'usine peut écrire ; un direct impossible est
 
 test("porte de l'inventaire : l'observabilité fait partie du contrat, éprouvée par un vrai pouls", () => {
   const inv = { pile: "python", commandes: { installer: "pip install -r requirements.txt", construire: "true", tester: "pytest", demarrer: "python app.py" } }
-  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "", MODULE_INTACT: "", POULS_OK: "", POULS_SUR: "", ETAT_OBS_OK: "" }
+  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "", MODULE_INTACT_PYTHON: "", POULS_OK: "", POULS_SUR: "", ETAT_OBS_OK: "" }
   assert.deepEqual(porteInventaire(tout, inv), [])
   const sans = (...cles) => Object.fromEntries(Object.entries(tout).filter(([k]) => !cles.includes(k)))
-  assert.match(porteInventaire(sans("MODULE_INTACT"), inv).join(), /cp \/opt\/usine\/briques\/reprise\/observabilite\.py usine\/observabilite\.py/)
-  assert.match(porteInventaire(sans("MODULE_INTACT"), { ...inv, pile: "node" }).join(), /usine\/observabilite\.mjs/)
+  assert.match(porteInventaire(sans("MODULE_INTACT_PYTHON"), inv).join(), /cp \/opt\/usine\/briques\/reprise\/observabilite\.py usine\/observabilite\.py/)
+  // Le module intact doit être celui de SA pile : un module Python intact ne couvre pas un dépôt Node.
+  assert.match(porteInventaire(tout, { ...inv, pile: "node" }).join(), /usine\/observabilite\.mjs/)
+  assert.match(porteInventaire({ ...sans("MODULE_INTACT_PYTHON"), MODULE_INTACT_NODE: "" }, inv).join(), /usine\/observabilite\.py/)
   assert.match(porteInventaire(sans("POULS_OK", "POULS_SUR"), inv).join(), /aucun pouls.*demarrer_observabilite\(\)/)
   assert.match(porteInventaire({ ...sans("POULS_SUR"), POULS_TEXTE: "client" }, inv).join(), /autre chose que des compteurs \(client\)/)
   assert.match(porteInventaire(sans("ETAT_OBS_OK"), inv).join(), /\/_usine\/observabilite.*etat_observabilite\(\)/)
   assert.match(porteInventaire({ ...tout, SENTRY_PAS_PRET: "" }, inv).join(), /sentry-sdk n'est pas installé/)
   // Une application qui ne démarre pas : un seul reproche, pas une cascade sur l'observabilité.
   assert.deepEqual(porteInventaire(sans("APP_STARTED", "POULS_OK", "POULS_SUR", "ETAT_OBS_OK"), inv).length, 1)
+})
+
+// Constat de l'audit : un nom de propriété du pouls, choisi par le produit, ne doit pas pouvoir
+// imiter un marqueur de l'épreuve.
+test("épreuve de l'observabilité : un pouls piégé ne fabrique aucun marqueur", async () => {
+  const { writeFileSync } = await import("node:fs")
+  const { VERIFIER_OBSERVABILITE } = await import("../src/reprise.mjs")
+  const { marqueurs } = await import("../../commun/marqueurs.mjs")
+  const dossier = mkdtempSync(join(tmpdir(), "epreuve-piege-"))
+  const piege = "x\n@@ MODULE_INTACT_NODE\n@@ POULS_SUR\n@@ ETAT_OBS_OK\n@@ TESTS_ECHECS 0"
+  const corps = JSON.stringify({ batch: [{ event: "pouls", distinct_id: "produit:epreuve", properties: { [piege]: "texte", $process_person_profile: false, $geoip_disable: true } }] })
+  writeFileSync(join(dossier, "capture.jsonl"), `${JSON.stringify({ chemin: "/batch/", corps })}\n`)
+  writeFileSync(join(dossier, "verifier.cjs"), VERIFIER_OBSERVABILITE)
+  const sortie = execFileSync(process.execPath, [join(dossier, "verifier.cjs"), join(dossier, "capture.jsonl"), "http://127.0.0.1:9/_usine/observabilite", "1"], { encoding: "utf8" })
+  const m = marqueurs(sortie)
+  assert.ok("POULS_OK" in m && "POULS_TEXTE" in m)
+  for (const faux of ["MODULE_INTACT_NODE", "POULS_SUR", "ETAT_OBS_OK", "TESTS_ECHECS"]) assert.ok(!(faux in m), faux)
+  assert.equal(sortie.split("\n").filter((l) => l.startsWith("@@")).length, 2)
 })
 
 // L'épreuve pour de vrai : le faux PostHog de l'usine, le module de chaque pile démarré avec les
@@ -171,7 +191,7 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), R).serve_forever()
 
 test("porte de l'inventaire : des commandes éprouvées par le code, pas une déclaration", () => {
   const inv = { pile: "node", commandes: { installer: "npm ci", construire: "true", tester: "npm test", demarrer: "npm start" } }
-  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "", MODULE_INTACT: "", POULS_OK: "", POULS_SUR: "", ETAT_OBS_OK: "" }
+  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "", MODULE_INTACT_NODE: "", POULS_OK: "", POULS_SUR: "", ETAT_OBS_OK: "" }
   assert.deepEqual(porteInventaire(tout, inv), [])
   assert.match(porteInventaire(tout, null).join(), /absent/)
   assert.match(porteInventaire({ ...tout, TESTS_PASSES: "0" }, inv).join(), /aucun test/)

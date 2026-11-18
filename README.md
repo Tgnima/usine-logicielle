@@ -316,7 +316,7 @@ termine. Dans la console : *Nouveau projet → Partir d'un dépôt existant*. Da
    protégé), utilisé par l'atelier et le vérificateur.
 
    **L'observabilité d'un dépôt repris**, dans sa propre pile. L'agent copie tel quel le module de
-   l'usine dans `usine/` (protégé ensuite), l'appelle au démarrage et ajoute la route
+   l'usine dans `usine/` (le fichier est protégé ensuite), l'appelle au démarrage et ajoute la route
    `GET /_usine/observabilite` :
    - en Node, `usine/observabilite.mjs`, le module des briques (`demarrerObservabilite()`,
      `etatObservabilite()`), sans dépendance ;
