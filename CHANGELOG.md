@@ -14,7 +14,7 @@ Ce qui est sur `main` sans être encore dans une version.
 
 - **Documentation de l'observabilité** (`docs/OBSERVABILITE.md`) : brancher Sentry et PostHog,
   ce que l'usine et chaque produit envoient, quels produits envoient leurs propres erreurs (pas
-  ceux fabriqués avant la v1.0.0, ni les dépôts repris), ce qui n'est pas masqué (les noms,
+  ceux fabriqués avant la v1.0.0, ni les dépôts repris avant cette version), ce qui n'est pas masqué (les noms,
   l'adresse d'une requête en erreur 500), lire et vérifier ce qui remonte, limites connues.
 
 - **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une
@@ -39,10 +39,11 @@ Ce qui est sur `main` sans être encore dans une version.
   avec `sentry-sdk` (`briques/reprise/observabilite.py`). L'épreuve de l'inventaire exige un
   vrai pouls avant d'aller plus loin.
 
-**À faire** : rien pour l'usine. Les applications créées avant le module d'observabilité (ou
-avec un module plus ancien que cette version, comme acte-clair et vigie-copro) apparaissent « non
-vérifié » dans la console tant que leur code n'a pas reçu le module à jour et la route
-`GET /_usine/observabilite`. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
+**À faire** : rien pour l'usine. Une application fabriquée par une usine d'avant la v1.0.0, ou
+reprise avant cette version, n'envoie pas ses propres erreurs : le module ne lui est pas ajouté
+de lui-même. Une application dont le module est plus ancien que cette version (acte-clair,
+vigie-copro) envoie, mais la console la dit « non vérifié » tant que son code n'a pas le module
+à jour et la route `GET /_usine/observabilite` (`docs/OBSERVABILITE.md`). Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
 commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
 ou le retire de `.usine/e2e/`.
 
