@@ -12,11 +12,20 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **Le pilote des pannes** : quand une application en ligne tombe en panne à cause de son code
+  (elle s'arrête à chaque démarrage, répond par une erreur ou ne répond plus) depuis 10 minutes,
+  l'usine demande seule une correction. Le lot passe par la fabrique, le vérificateur et la recette,
+  puis s'arrête à l'aperçu : la mise en ligne pour de vrai reste à une personne. Une cause hors du
+  code (serveur, mémoire, plusieurs applications à la fois), un plafond atteint (trois corrections
+  par 24 h pour l'usine) ou une panne qui revient dans la semaine qui suit une correction
+  automatique de la même application : un message, et rien d'autre. Trois modes, dans la console (Règles de l'usine) : coupé, observer
+  (par défaut : il dit ce qu'il aurait fait, sans rien lancer) et corriger. Réglages : section
+  `pilote` de `usine.config.yml`.
 - **Documentation de l'observabilité** (`docs/OBSERVABILITE.md`) : brancher Sentry et PostHog,
   ce que l'usine et chaque produit envoient, quels produits envoient leurs propres erreurs (pas
-  ceux fabriqués avant la v1.0.0, ni les dépôts repris), ce qui n'est pas masqué (les noms,
-  l'adresse d'une requête en erreur 500), lire et vérifier ce qui remonte, limites connues.
-
+  ceux fabriqués par une usine d'avant la v1.0.0, ni les dépôts repris), ce qui n'est pas masqué
+  (les noms, l'adresse d'une requête en erreur 500), lire et vérifier ce qui remonte, ce que fait
+  le pilote des pannes, limites connues.
 - **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une
   régression, que le codeur répare, sauf si un critère de la tâche en cours change exprès ce
   comportement. Le vérificateur cite ce critère, et l'usine vérifie qu'il existe et que le test

@@ -41,6 +41,7 @@ import { MODES_REPRISE } from "./reprise.mjs"
 import { lireReorientation } from "./reorientation.mjs"
 import { ecartsEnCorrections, lireRecette, pointsACorriger, propositionsRecette } from "./recette.mjs"
 import { elementsAttente } from "./attention.mjs"
+import { MODES_PILOTE, etatPilote, reglerPilote } from "./pilote.mjs"
 import { fileAttente } from "./visibilite.mjs"
 import { ETAPES_TACHE, attendDecision, etapeTache, normaliserQuestions, phase, presenterDecision } from "./presentation.mjs"
 import { GOUFFRE, SEUIL, etageAtteint, verdictPyramide } from "./pyramide.mjs"
@@ -262,7 +263,7 @@ export function estimation(ctx, nbTaches = null) {
 }
 
 // L'historique : qui a fait quoi (validations, décisions, production, corrections, réglages…).
-const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur", "reglage"]
+const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur", "reglage", "pilote"]
 function historique(ctx, { projet = null, type = null } = {}) {
   const types = type && TYPES_HISTORIQUE.includes(type) ? [type] : TYPES_HISTORIQUE
   const filtre = projet ? "AND j.projet_id = ?" : ""
@@ -305,6 +306,7 @@ async function reglages(ctx) {
       demo: !!config.demo?.actif,
       perimetre_protege: config.perimetre_protege ?? [],
     },
+    pilote: etatPilote(ctx),
   }
 }
 
@@ -524,6 +526,12 @@ const ROUTES = [
 
   ["GET", /^\/api\/reglages$/, (ctx) => reglages(ctx)],
   ["PUT", /^\/api\/reglages\/couts$/, (ctx, _p, c, qui) => enregistrerCouts(ctx, c, qui)],
+  // Le pilote des pannes (pilote.mjs) : un mode pris dans une liste fermée.
+  ["PUT", /^\/api\/reglages\/pilote$/, (ctx, _p, c, qui) => {
+    const mode = typeof c?.mode === "string" ? c.mode : ""
+    if (!MODES_PILOTE.includes(mode)) throw erreur(400, "Choisis un des trois modes du pilote.")
+    return reglerPilote(ctx, mode, qui.email)
+  }],
   // GitHub : l'application de l'usine (le retour de GitHub est traité dans traiter(), c'est une navigation).
   ["POST", /^\/api\/github\/connexion$/, (ctx, _p, c, qui) => demarrerConnexion(ctx, { organisation: c.organisation, console: adresseTableau(ctx.config) }, qui.email)],
   ["DELETE", /^\/api\/github$/, (ctx, _p, _c, qui) => oublierForge(ctx, qui.email)],

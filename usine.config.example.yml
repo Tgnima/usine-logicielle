@@ -123,3 +123,12 @@ relais:
 # Le lot de finition : avant le rapport final, un dernier lot de polissage (design, textes,
 # états vides, mobile) construit à partir des remarques du relecteur design. Une fois par projet.
 finition: true
+
+# Le pilote des pannes (orchestrateur/src/pilote.mjs) : une application en ligne en panne à cause de
+# son code est corrigée seule, jusqu'à l'aperçu. La mise en ligne pour de vrai reste à une personne
+# (politiques.mettre_en_production). Le mode se change aussi dans la console (Règles de l'usine).
+pilote:
+  mode: observer                   # coupe | observer (dit ce qu'il aurait fait) | corriger
+  minutes_avant_action: 10         # une panne plus courte se règle souvent seule (Docker relance l'application)
+  corrections_par_application: 1   # sur 7 jours ; une panne qui revient dans la semaine : une personne
+  corrections_par_jour: 3          # pour toute l'usine
