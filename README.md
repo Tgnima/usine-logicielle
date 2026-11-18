@@ -121,6 +121,7 @@ Par où commencer, selon ce que tu viens faire :
 | la mettre à jour | **Mettre à jour** |
 | modifier son code | `CLAUDE.md` (où sont les choses, règles), puis **Contribuer et publier une version** |
 | la sécurité, ce qui reste à décider | `docs/SECURITE.md` |
+| brancher Sentry et PostHog, lire ce qui remonte | `docs/OBSERVABILITE.md` |
 | la proposer à des clients | `docs/INDUSTRIALISATION.md` |
 
 ## Installer
@@ -392,7 +393,8 @@ docker compose exec orchestrateur node src/cli.mjs production 1
   jour s'arrête avant tout changement et dit quoi lancer (`bash secrets.sh dechiffrer`).
 - **Sentry et PostHog** (facultatifs, secrets `SENTRY_DSN` et `POSTHOG_TOKEN`, comptes en
   région européenne) : un seul DSN et un seul jeton pour l'usine et tous ses produits, chaque
-  envoi porte le produit en étiquette.
+  envoi porte le produit en étiquette. Le détail, produit par produit, et comment vérifier que
+  ça remonte : `docs/OBSERVABILITE.md`.
   - Vers Sentry partent les erreurs de l'orchestrateur et du déployeur, un battement de cœur
     par minute (moniteur `usine-orchestrateur`) et un incident quand un produit tombe en panne.
   - Vers PostHog partent un événement par ligne du journal de l'usine (sans son texte),

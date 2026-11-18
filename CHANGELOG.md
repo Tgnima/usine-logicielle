@@ -40,6 +40,11 @@ Ce qui est sur `main` sans être encore dans une version.
   Sentry et la clé de PostHog, puis active-les pour « plan » et « construction ». Sans eux, la
   boucle marche avec la sonde seule. Le jeton Sentry ne part que vers sentry.io, la clé PostHog
   que vers PostHog (Europe ou États-Unis).
+- **Documentation de l'observabilité** (`docs/OBSERVABILITE.md`) : brancher Sentry et PostHog,
+  ce que l'usine et chaque produit envoient, quels produits envoient leurs propres erreurs (pas
+  ceux fabriqués par une usine d'avant la v1.0.0, ni les dépôts repris), ce qui n'est pas masqué
+  (les noms, l'adresse d'une requête en erreur 500), lire et vérifier ce qui remonte, ce que fait
+  le pilote des pannes, limites connues.
 - **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une
   régression, que le codeur répare, sauf si un critère de la tâche en cours change exprès ce
   comportement. Le vérificateur cite ce critère, et l'usine vérifie qu'il existe et que le test
