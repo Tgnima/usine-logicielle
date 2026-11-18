@@ -275,8 +275,9 @@ export function ecarterProposition(ctx, id, par, { maintenant = Date.now() } = {
 //   en_ligne   un sujet Sentry de la proposition revu après la mise en ligne : rechute (une nouvelle
 //              proposition, à valider) ; 48 h sans lui : la correction tient. La panne qui revient,
 //              elle, arrive par le pilote (proposer, rangerSignal).
-//   produits : sonde.produits ; vus : lireSentry().vus.
-export async function suivrePropositions(ctx, { produits = {}, vus = {}, maintenant = Date.now(), fetch: f } = {}) {
+//   produits : sonde.produits ; vus : lireSentry().vus ; creer : faux en observation (une rechute est
+//   notée, sans nouvelle proposition).
+export async function suivrePropositions(ctx, { produits = {}, vus = {}, maintenant = Date.now(), fetch: f, creer = true } = {}) {
   const { db } = ctx
   const faits = []
   for (const p of db.prepare("SELECT * FROM propositions WHERE statut IN ('lancee', 'en_ligne') ORDER BY id").all().map(lire)) {
@@ -299,7 +300,8 @@ export async function suivrePropositions(ctx, { produits = {}, vus = {}, mainten
     const revu = p.cles.filter((c) => c.startsWith("sentry:")).map((c) => vus[c.slice("sentry:".length)]).find((x) => x && x.derniere > enLigne + MARGE_MS)
     if (revu) {
       // La nouvelle proposition marque celle-ci en rechute (proposer) ; sinon (rien de créé), on le fait ici.
-      await proposer(ctx, revu.signal, { maintenant, fetch: f })
+      if (creer) await proposer(ctx, revu.signal, { maintenant, fetch: f })
+      else noter(db, { projet: p.projet_id, type: "proposition", message: `Rechute : la correction de ${nom} (proposition n° ${p.id}) n'a pas tenu, l'erreur est revenue. En observation, aucune nouvelle proposition n'est créée.` })
       db.prepare("UPDATE propositions SET statut = 'rechute', ferme_le = ?, maj_le = datetime('now') WHERE id = ? AND statut = 'en_ligne'").run(isoDe(maintenant), p.id)
       faits.push({ id: p.id, statut: "rechute" })
       continue
@@ -346,7 +348,7 @@ export async function passageBoucle(ctx, { maintenant = Date.now(), fetch: f, ds
     const { signaux, vus } = await lireSentry(ctx, produits, { maintenant, fetch: f, ...(dsn !== undefined ? { dsn } : {}) })
     const faits = []
     for (const s of signaux) faits.push(mode === "proposer" ? await proposer(ctx, s, { maintenant, fetch: f }) : observer(ctx, s, maintenant))
-    const mesures = await suivrePropositions(ctx, { produits: sonde.produits, vus, maintenant, fetch: f })
+    const mesures = await suivrePropositions(ctx, { produits: sonde.produits, vus, maintenant, fetch: f, creer: mode === "proposer" })
     return { signaux, faits, mesures }
   } finally {
     passageEnCours = false

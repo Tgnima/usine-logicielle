@@ -226,6 +226,20 @@ test("la mesure : l'erreur revue après la mise en ligne, c'est une rechute, pro
   assert.match(e.demandes.at(-1).texte, /Rechute : une correction lancée le .* n'a pas tenu\. Cherche pourquoi elle n'a pas suffi\./)
 })
 
+test("la mesure en observation : la rechute est notée, aucune proposition n'est créée", async () => {
+  const e = essai()
+  e.sonde(T0, { "production/vigie": { etat: "ok", version: "v1" } })
+  await proposer(e.ctx, sentry(7), { maintenant: T0 })
+  lancerProposition(e.ctx, 1, "admin", { corriger: e.corriger, maintenant: T0 })
+  await attendre()
+  e.db.prepare("UPDATE projets SET statut = 'en_production' WHERE id = 1").run()
+  await suivrePropositions(e.ctx, { produits: { "production/vigie": { version: "v2" } }, maintenant: T0 + JOUR })
+  const revu = { 7: { derniere: T0 + 2 * JOUR, signal: sentry(7) } }
+  assert.deepEqual(await suivrePropositions(e.ctx, { vus: revu, maintenant: T0 + 2 * JOUR + MIN, creer: false }), [{ id: 1, statut: "rechute" }])
+  assert.equal(e.db.prepare("SELECT COUNT(*) AS n FROM propositions").get().n, 1)
+  assert.match(journal(e.db).at(-1), /En observation, aucune nouvelle proposition n'est créée/)
+})
+
 test("la mesure : une panne qui revient après la correction, par le pilote, est aussi une rechute", async () => {
   const e = essai()
   e.sonde(T0, { "production/vigie": { etat: "panne", version: "v1" } })

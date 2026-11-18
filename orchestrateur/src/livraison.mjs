@@ -293,6 +293,8 @@ export async function demanderCorrections(ctx, projetId, retours, par) {
   await ctx.notifier.etape(projet, `:mag: Demande de ${par} :\n>${retours.replace(/\n/g, "\n>")}\nL'analyste enquête (journaux et réglages du produit en ligne)…`)
   try {
     const contexte = {
+      // L'analyste reçoit les connecteurs du rôle « plan » (Sentry, PostHog) pour enquêter.
+      ctx,
       reglages: projet.production ? JSON.parse(projet.production) : null,
       journaux: { production: lireJournal(config, `production-${projet.slug}`), apercu: lireJournal(config, `apercu-${projet.slug}`) },
       mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),

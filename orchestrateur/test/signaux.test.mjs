@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs"
 import { ouvrirDb } from "../src/db.mjs"
 import { ouvrirCouts } from "../src/couts.mjs"
 import { poserCleConnecteur, reglerConnecteur } from "../src/connecteurs.mjs"
+import { enqueteObservabilite } from "../src/analyste.mjs"
 import { RECENT_MS, apiPostHog, apiSentry, contextePostHog, court, etatSources, lireSentry, oublierSources, requetesPostHog, signauxSentry } from "../src/signaux.mjs"
 
 const MIN = 60_000
@@ -173,6 +174,18 @@ test("PostHog : facultatif ; un nom douteux, un connecteur inactif ou une erreur
   const q = requetesPostHog("vigie")
   assert.match(q.evenements, /distinct_id = 'produit:vigie' AND properties\.environnement = 'production'/)
   assert.match(q.journaux, /service_name = 'vigie' AND resource_attributes\.`deployment\.environment` = 'production'/)
+})
+
+test("l'analyste qui enquête sur une correction reçoit Sentry et PostHog, et sait où chercher", () => {
+  const projet = { slug: "vigie" }
+  assert.match(enqueteObservabilite(ctxDe(), projet), /Sentry \(les erreurs, étiquette produit\) et PostHog .* : cherches-y ce produit \(« vigie », environnement production\)/)
+  assert.match(enqueteObservabilite(ctxDe({ posthog: false }), projet), /Tu as aussi, en lecture seule, Sentry \(/)
+  assert.equal(enqueteObservabilite(ctxDe({ sentry: false, posthog: false }), projet), "", "sans connecteur, rien n'est promis")
+  assert.equal(enqueteObservabilite(null, projet), "")
+  // Les connecteurs du rôle « plan » arrivent bien à l'analyse d'une correction (comme pour un plan).
+  const analyste = readFileSync(new URL("../src/analyste.mjs", import.meta.url), "utf8")
+  assert.match(analyste, /await interroger\(config, texte, valider, contexte\.mesurer, \{ ctx: contexte\.ctx \?\? null \}\)/)
+  assert.match(readFileSync(new URL("../src/livraison.mjs", import.meta.url), "utf8"), /const contexte = \{\n {6}\/\/ [^\n]*\n {6}ctx,/)
 })
 
 test("la lecture des signaux ne peut rien lancer", () => {
