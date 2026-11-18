@@ -14,7 +14,7 @@ import { noter } from "./db.mjs"
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { COMPTER_TESTS, NEUTRALISER, VERROUS, brancheDeBase, libererPort, lireProfil, proteges } from "./profil.mjs"
 import { extraireJson } from "./analyste.mjs"
-import { ecrireReglage, enregistrer, usagesClaude, usagesCodex } from "./couts.mjs"
+import { ecrireReglage, enregistrer, lireReglage, usagesClaude, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
 
 // La consommation du juge qui a servi (Codex : son journal --json ; Claude : sa réponse json).
@@ -55,8 +55,12 @@ Vérifie d'abord, sur les captures, s'ils sont corrigés : un défaut corrigé n
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
 
-function consigneVerificateur(projet, tache, profil) {
+function consigneVerificateur(projet, tache, profil, autres = {}) {
   const criteres = JSON.parse(tache.criteres)
+  const sautes = Object.entries(autres).filter(([, cs]) => cs.length)
+  const aideSautes = sautes.length
+    ? `- Ces tests n'avaient pas été rejoués aux vérifications précédentes (plafond de temps). S'ils échouent, un critère d'une tâche fusionnée entre-temps peut aussi expliquer le changement ; cite-le alors mot pour mot :\n${sautes.map(([t, cs]) => `  - ${t} : ${cs.map((c) => `« ${String(c).slice(0, 300)} »`).join(" ; ")}`).join("\n")}\n`
+    : ""
   return `Tu es le vérificateur indépendant d'une usine logicielle. Tu juges si une tâche est réellement faite, sans complaisance.
 
 Le produit « ${projet.nom} » tourne en ce moment sur http://localhost:4100 (API sous /api, interface sur /). Le code est dans le dossier courant.
@@ -84,8 +88,8 @@ Méthode :
 Non-régression :
 - Lis /tmp/sorties/verif/e2e-echecs.txt : ce sont des tests de critères DÉJÀ validés par le passé (dossier .usine/e2e/) qui échouent maintenant. Ce sont des corrigés : on ne les réécrit pas pour coller à l'application. Pour chacun, décide :
   - ce qui marchait est cassé → c'est une régression : mets-le dans "regressions" ;
-  - un critère de CETTE tâche change exprès ce comportement → réécris ce test sous le même nom dans /tmp/sorties/verif/e2e/ ET déclare-le dans "tests_remplaces", avec le texte EXACT de ce critère, copié de la liste ci-dessus, et la raison. L'usine vérifie que ce critère existe : sans lui, le test reste une régression.
-- Ne réécris jamais un test qui passe, et ne relâche jamais une vérification pour qu'elle passe.
+  - un critère de CETTE tâche change exprès ce comportement → réécris ce test sous le même nom dans /tmp/sorties/verif/e2e/ ET déclare-le dans "tests_remplaces", avec le texte EXACT de ce critère, copié de la liste ci-dessus, et la raison. L'usine vérifie que ce critère existe : sans lui, une personne tranchera. Ton test réécrit doit passer sur l'application telle qu'elle est.
+${aideSautes}- Ne réécris jamais un test qui passe, et ne relâche jamais une vérification pour qu'elle passe.
 - Pour chaque critère que tu valides et qui s'observe par HTTP ou dans le navigateur, écris un test autonome /tmp/sorties/verif/e2e/${tache.cle}-<n>.cjs : un script Node CommonJS qui lit process.env.BASE (ex. http://localhost:4100), utilise fetch ou require('playwright') (Chromium), vérifie le critère et termine par process.exit(1) s'il n'est plus tenu (process.exit(0) sinon). Il doit être robuste : données de démo seulement en lecture, ou ses propres données avec un nom unique ; pas de dépendance à l'heure exacte ; 60 secondes au plus.
 
 Captures d'écran (pour le relecteur design) :
@@ -178,41 +182,129 @@ const PAGES = JSON.parse(process.env.PAGES || '["/"]')
 })().catch((e) => console.log(\`captures : \${e.message}\`))
 `
 
-// Le cliquet rejoué : les tests des critères déjà validés (.usine/e2e, protégé), dans un ordre tiré au sort et
-// dans un temps plafonné. Au-delà du plafond, les tests restants sont comptés comme sautés (E2E_SAUTES), jamais
-// tus ; l'ordre tiré au sort fait que les sautés changent d'une vérification à l'autre. Les noms des tests qui
-// échouent (E2E_ECHECS_NOMS) servent à la porte de fusion.
-export function rejouerCliquet({ minutes = 15, secondes = null, base = "http://localhost:4100", sorties = "/tmp/sorties/verif" } = {}) {
-  // secondes : pour les tests seulement ; en service, le plafond se règle en minutes (une au moins).
-  const budget = Number.isFinite(secondes) ? Math.max(0, Math.round(secondes)) : Math.max(1, Math.round(Number(minutes) || 15)) * 60
+// Un nom de test sûr : lettres ASCII, chiffres, point, tiret, souligné, puis .cjs. Les autres ne sont ni rejoués
+// ni versés, mais comptés (E2E_NOMS_INVALIDES) et dits au journal : un nom de fichier ne peut pas forger un marqueur.
+const NOM_SUR = /^[\w.-]+\.cjs$/
+const CAS_NOM_SUR = `case "$n" in *[!A-Za-z0-9._-]*|.cjs) E2E_I=$((E2E_I+1)); continue ;; esac`
+export const nomsDeTests = (v) => String(v ?? "").split(/\s+/).filter((f) => NOM_SUR.test(f))
+const tableau = (v) => (Array.isArray(v) ? v : [])
+
+// Le cliquet rejoué : les tests des critères déjà validés (.usine/e2e, protégé). Ceux qui avaient été sautés la
+// fois précédente passent d'abord, les autres dans un ordre tiré au sort. Le temps est plafonné (20 min au plus,
+// sous la limite de 40 min de la vérification) ; au-delà, les tests restants sont comptés et nommés comme sautés,
+// jamais tus. Un test qui échoue est relancé une fois avant d'être compté : un test instable ne bloque pas une tâche.
+export const minutesCliquet = (config) => Math.min(20, Math.max(1, Math.round(Number(config?.autonomie?.minutes_cliquet) || 15)))
+export function rejouerCliquet({ minutes = 15, secondes = null, base = "http://localhost:4100", sorties = "/tmp/sorties/verif", prioritaires = [] } = {}) {
+  // secondes : pour les tests seulement ; en service, le plafond se règle en minutes.
+  const budget = Number.isFinite(secondes) ? Math.max(0, Math.round(secondes)) : minutesCliquet({ autonomie: { minutes_cliquet: minutes } }) * 60
+  const avant = nomsDeTests(tableau(prioritaires).join(" ")).join(" ")
+  const essai = `BASE=${base} timeout 90 node "$f" > /tmp/e2e.out 2>&1`
   return [
     `mkdir -p ${sorties}/e2e ${sorties}/captures && : > ${sorties}/e2e-echecs.txt`,
-    `E2E_T=0; E2E_E=0; E2E_S=0; E2E_NOMS=""; E2E_FIN=$(( $(date +%s) + ${budget} ))`,
-    `for f in $(ls .usine/e2e/*.cjs 2>/dev/null | shuf); do [ -f "$f" ] || continue; if [ "$(date +%s)" -ge "$E2E_FIN" ]; then E2E_S=$((E2E_S+1)); continue; fi; E2E_T=$((E2E_T+1)); if ! BASE=${base} timeout 90 node "$f" > /tmp/e2e.out 2>&1; then E2E_E=$((E2E_E+1)); E2E_NOMS="$E2E_NOMS $(basename "$f")"; echo "== $(basename "$f")" >> ${sorties}/e2e-echecs.txt; tail -5 /tmp/e2e.out >> ${sorties}/e2e-echecs.txt; fi; done`,
-    `echo "@@ E2E_TOTAL $E2E_T"; echo "@@ E2E_ECHECS $E2E_E"; echo "@@ E2E_ECHECS_NOMS $E2E_NOMS"; echo "@@ E2E_SAUTES $E2E_S"`,
+    `command -v shuf > /dev/null || shuf() { cat; }`,
+    `E2E_T=0; E2E_E=0; E2E_S=0; E2E_I=0; E2E_NOMS=""; E2E_SNOMS=""; E2E_FIN=$(( $(date +%s) + ${budget} ))`,
+    `E2E_AVANT=" ${avant} "; E2E_L=(); for n in $E2E_AVANT; do [ -f ".usine/e2e/$n" ] && E2E_L+=(".usine/e2e/$n"); done`,
+    `while IFS= read -r f; do case "$E2E_AVANT" in *" $(basename "$f") "*) ;; *) E2E_L+=("$f") ;; esac; done < <(for f in .usine/e2e/*.cjs; do [ -f "$f" ] && printf '%s\\n' "$f"; done | shuf)`,
+    `for f in "\${E2E_L[@]}"; do n=$(basename "$f"); ${CAS_NOM_SUR}; if [ "$(date +%s)" -ge "$E2E_FIN" ]; then E2E_S=$((E2E_S+1)); E2E_SNOMS="$E2E_SNOMS $n"; continue; fi; E2E_T=$((E2E_T+1)); if ! ${essai} && ! ${essai}; then E2E_E=$((E2E_E+1)); E2E_NOMS="$E2E_NOMS $n"; echo "== $n" >> ${sorties}/e2e-echecs.txt; tail -5 /tmp/e2e.out >> ${sorties}/e2e-echecs.txt; fi; done`,
+    `echo "@@ E2E_TOTAL $E2E_T"; echo "@@ E2E_ECHECS $E2E_E"; echo "@@ E2E_ECHECS_NOMS $E2E_NOMS"; echo "@@ E2E_SAUTES $E2E_S"; echo "@@ E2E_SAUTES_NOMS $E2E_SNOMS"; echo "@@ E2E_NOMS_INVALIDES $E2E_I"`,
   ]
 }
 
-// Les tests écrits par le vérificateur : les nouveaux, et ceux qui réécrivent un test du cliquet déjà présent.
-export function trierTestsEcrits({ sorties = "/tmp/sorties/verif" } = {}) {
-  return `E2E_NEUFS=""; E2E_REMP=""; for f in ${sorties}/e2e/*.cjs; do [ -f "$f" ] || continue; n=$(basename "$f"); if [ -f ".usine/e2e/$n" ]; then E2E_REMP="$E2E_REMP $n"; else E2E_NEUFS="$E2E_NEUFS $n"; fi; done; echo "@@ E2E_NOUVEAUX $E2E_NEUFS"; echo "@@ E2E_REMPLACES $E2E_REMP"`
+// Les tests écrits par le vérificateur, triés pendant que l'application tourne encore : chacun est d'abord lancé
+// (avec un second essai), et seuls ceux qui passent sont gardés. Un test qui existe déjà sur la branche de base
+// (ref, lue dans git et non dans le clone modifiable) est une réécriture ; les autres sont nouveaux.
+export function trierTestsEcrits({ sorties = "/tmp/sorties/verif", base = "http://localhost:4100", ref = null } = {}) {
+  const existe = ref ? `git cat-file -e ${ref}:".usine/e2e/$n" 2> /dev/null` : `[ -f ".usine/e2e/$n" ]`
+  const essai = `BASE=${base} timeout 90 node "$f" > /tmp/e2e-ecrit.out 2>&1`
+  return `E2E_NEUFS=""; E2E_REMP=""; E2E_KO=""; E2E_I=0; for f in ${sorties}/e2e/*.cjs; do [ -f "$f" ] || continue; n=$(basename "$f"); ${CAS_NOM_SUR}; if ! ${essai} && ! ${essai}; then E2E_KO="$E2E_KO $n"; continue; fi; if ${existe}; then E2E_REMP="$E2E_REMP $n"; else E2E_NEUFS="$E2E_NEUFS $n"; fi; done; echo "@@ E2E_NOUVEAUX $E2E_NEUFS"; echo "@@ E2E_REMPLACES $E2E_REMP"; echo "@@ E2E_ECRITS_KO $E2E_KO"; echo "@@ E2E_ECRITS_INVALIDES $E2E_I"`
 }
 
-// Les noms de tests d'un marqueur (une liste séparée par des espaces), sans rien d'autre qu'un nom de fichier sûr.
-export const nomsDeTests = (v) => String(v ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.cjs$/.test(f))
+// Un critère comparé à sa citation : sans numéro en tête (« 1. »), apostrophes et guillemets unifiés, sans
+// point final, aux espaces et à la casse près.
+const norme = (s) => String(s ?? "").replace(/[’‘`´]/g, "'").replace(/[«»“”]/g, '"').replace(/^\s*\d+\s*[.)]\s*/, "").replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "").toLowerCase()
+const nomDuTest = (t) => String(t ?? "").trim().split(/[\\/]/).pop()
 
 // Les réécritures de tests du cliquet que le vérificateur déclare, gardées seulement si le critère cité existe
-// bien dans CETTE tâche (même texte, aux espaces et à la casse près). Le reste ne justifie rien.
-export function testsRemplacesJustifies(verdict, criteres = []) {
-  const norme = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase()
-  const permis = new Set(criteres.map(norme).filter(Boolean))
+// bien : dans CETTE tâche, ou dans une tâche fusionnée pendant que ce test était sauté (autres[test]).
+export function testsRemplacesJustifies(verdict, criteres = [], autres = {}) {
+  const permisTache = new Set(tableau(criteres).map(norme).filter(Boolean))
   const justifies = new Map()
-  for (const e of Array.isArray(verdict?.tests_remplaces) ? verdict.tests_remplaces : []) {
-    const test = String(e?.test ?? "").trim()
-    if (!nomsDeTests(test).length || !permis.has(norme(e?.critere))) continue
+  for (const e of tableau(verdict?.tests_remplaces)) {
+    const test = nomDuTest(e?.test)
+    if (!NOM_SUR.test(test)) continue
+    const cite = norme(e?.critere)
+    if (!cite || !(permisTache.has(cite) || tableau(autres[test]).map(norme).includes(cite))) continue
     justifies.set(test, { test, critere: String(e.critere).trim().slice(0, 500), raison: String(e.raison ?? "").trim().slice(0, 500) })
   }
   return justifies
+}
+
+// Les réécritures déclarées par le vérificateur qui ne tiennent pas, pour un test qui échoue : critère introuvable,
+// ou fichier réécrit absent ou qui échoue lui-même. Ce n'est pas la faute du codeur : une personne tranche, comme
+// pour un critère contesté (sans tentative consommée).
+export function contestesCliquet({ verdict, marqueurs: m = {}, criteres = [], autres = {} }) {
+  const echecs = nomsDeTests(m.E2E_ECHECS_NOMS)
+  const remplaces = nomsDeTests(m.E2E_REMPLACES)
+  const ratés = nomsDeTests(m.E2E_ECRITS_KO)
+  const justifies = testsRemplacesJustifies(verdict, criteres, autres)
+  const contestes = []
+  for (const e of tableau(verdict?.tests_remplaces)) {
+    const f = nomDuTest(e?.test)
+    if (!echecs.includes(f) || (justifies.has(f) && remplaces.includes(f))) continue
+    const raison = !justifies.has(f)
+      ? `le vérificateur juge ce changement voulu (« ${String(e?.raison ?? "").slice(0, 300)} ») mais cite un critère qui n'est pas dans la tâche : « ${String(e?.critere ?? "").slice(0, 300)} »`
+      : ratés.includes(f)
+        ? "le vérificateur a réécrit ce test, mais la nouvelle version échoue elle-même sur l'application"
+        : "le vérificateur déclare une réécriture sans fournir le test réécrit"
+    contestes.push({ critere: `Test du cliquet ${f}`, raison: `${raison}. Faut-il garder l'ancien test (le codeur rétablit le comportement) ou accepter le changement ?` })
+  }
+  return contestes
+}
+
+// Les réécritures qui rejoindront le cliquet : seulement celles, justifiées, d'un test qui échouait (E2E_REMPLACES
+// ne liste que des tests réécrits qui passent eux-mêmes). Celles d'un test qui n'échouait pas sont écartées.
+export function reecrituresAVerser({ verdict, marqueurs: m = {}, criteres = [], autres = {} }) {
+  const echecs = nomsDeTests(m.E2E_ECHECS_NOMS)
+  const justifies = testsRemplacesJustifies(verdict, criteres, autres)
+  const ecrits = nomsDeTests(m.E2E_REMPLACES)
+  return {
+    remplaces: ecrits.filter((f) => echecs.includes(f) && justifies.has(f)).map((f) => justifies.get(f)),
+    ecartes: ecrits.filter((f) => !echecs.includes(f)),
+  }
+}
+
+// Les tests sautés d'un projet, gardés entre deux vérifications : { "T3-2.cjs": [id des tâches vérifiées pendant
+// qu'il était sauté] }. Un test qui a tourné sort de la liste.
+export function lireSautes(db, cle) {
+  try {
+    const v = JSON.parse(lireReglage(db, cle, "{}"))
+    return v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([t, ids]) => NOM_SUR.test(t) && Array.isArray(ids))) : {}
+  } catch {
+    return {}
+  }
+}
+export function ecrireSautes(db, cle, avant, sautesMaintenant, tacheId) {
+  const suite = {}
+  for (const t of sautesMaintenant) suite[t] = [...new Set([...(avant[t] ?? []), tacheId])].slice(-50)
+  ecrireReglage(db, cle, JSON.stringify(suite))
+  return suite
+}
+// Les critères des tâches FUSIONNÉES pendant qu'un test était sauté : eux seuls peuvent, en plus de ceux de la tâche
+// en cours, justifier la réécriture de ce test.
+export function criteresDesTachesSautees(db, sautes) {
+  const autres = {}
+  for (const [test, ids] of Object.entries(sautes)) {
+    const criteres = []
+    for (const id of ids) {
+      const t = db.prepare("SELECT criteres, statut FROM taches WHERE id = ?").get(id)
+      if (t?.statut !== "fusionnee") continue
+      try {
+        criteres.push(...tableau(JSON.parse(t.criteres || "[]")).map(String))
+      } catch {}
+    }
+    if (criteres.length) autres[test] = criteres
+  }
+  return autres
 }
 
 // Arrête tout serveur d'application encore en vie dans le vérificateur, puis attend que le port se libère.
@@ -225,6 +317,12 @@ export async function verifier(ctx, projet, tache, sha) {
   const protege = pathspec(proteges(config, projet))
   const profil = lireProfil(projet)
   const B = q(`origin/${brancheDeBase(projet)}`)
+  // Les tests du cliquet sautés aux vérifications précédentes (plafond de temps) : rejoués d'abord, et, s'ils
+  // échouent, un critère d'une tâche fusionnée pendant qu'ils étaient sautés peut justifier leur réécriture.
+  const cleSautes = `cliquet_sautes_${projet.id}`
+  const sautesAvant = lireSautes(ctx.db, cleSautes)
+  const autres = criteresDesTachesSautees(ctx.db, sautesAvant)
+  const plafond = minutesCliquet(config)
 
   // 1. Clone neuf de la PR (seule étape qui voit le jeton GitHub).
   const clone = await executer(serveur, jeton, [
@@ -250,7 +348,7 @@ export async function verifier(ctx, projet, tache, sha) {
   const r = await executer(serveur, jeton, [
     "set -o pipefail",
     "cd /travail/verif/depot",
-    ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache, profil)),
+    ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache, profil, autres)),
     // Les journaux suivis en direct par la console repartent de zéro.
     "rm -f /tmp/sorties/verif/design.log; : > /tmp/sorties/verif/codex.log",
     `bash -c ${q(profil.installer)} > /tmp/sorties/verif/npm.log 2>&1 && echo '@@ INSTALL_OK'`,
@@ -276,7 +374,7 @@ export async function verifier(ctx, projet, tache, sha) {
     // En ligne, le code est en lecture seule : l'application n'écrit que dans DATA_DIR.
     "sleep 2; echo \"@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/verif/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' -not -path '*/__pycache__/*' 2>/dev/null | head -5 | tr '\\n' ' ')\"",
     // Le cliquet : les tests des critères déjà validés (.usine/e2e, protégé) sont rejoués, dans un temps plafonné.
-    ...rejouerCliquet({ minutes: config.autonomie?.minutes_cliquet ?? 15 }),
+    ...rejouerCliquet({ minutes: plafond, prioritaires: Object.keys(sautesAvant) }),
     // Les captures, prises par l'usine (le modèle ne les prenait pas) : pour le relecteur design, Slack, la console et la vidéo.
     "rm -f /tmp/sorties/verif/captures/*.png",
     ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
@@ -290,7 +388,7 @@ export async function verifier(ctx, projet, tache, sha) {
     `else tail -30 /tmp/sorties/verif/app.log | ${NEUTRALISER}; fi`,
     "echo \"@@ CAPTURES $(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | wc -l)\"",
     "echo \"@@ CAPTURES_FICHIERS $(cd /tmp/sorties/verif/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
-    trierTestsEcrits(),
+    trierTestsEcrits({ ref: B }),
     ecrireFichier("/tmp/sorties/verif/consigne-design.md", consigneDesign(projet, tache)),
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
@@ -332,22 +430,28 @@ export async function verifier(ctx, projet, tache, sha) {
     }
   }
   const criteres = JSON.parse(tache.criteres || "[]")
-  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal, criteres })
+  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal, criteres, autres })
   const codexEnPanne = "APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0"
   const nouveauxTests = nomsDeTests(m.E2E_NOUVEAUX)
-  // Seules les réécritures justifiées d'un test qui échouait rejoindront le cliquet ; la porte refuse les autres.
-  const echecsCliquet = nomsDeTests(m.E2E_ECHECS_NOMS)
-  const justifies = testsRemplacesJustifies(verdict, criteres)
-  const remplaces = nomsDeTests(m.E2E_REMPLACES).filter((f) => echecsCliquet.includes(f) && justifies.has(f)).map((f) => justifies.get(f))
-  // Un plafond atteint ne se tait pas : les tests non rejoués sont dits au journal.
+  const { remplaces, ecartes: nePasVerser } = reecrituresAVerser({ verdict, marqueurs: m, criteres, autres })
+  const ratés = nomsDeTests(m.E2E_ECRITS_KO)
+  // Les tests sautés cette fois-ci, avec la tâche vérifiée pendant qu'ils l'étaient (seulement si le rejeu a tourné).
+  if ("E2E_TOTAL" in m) ecrireSautes(ctx.db, cleSautes, sautesAvant, nomsDeTests(m.E2E_SAUTES_NOMS), tache.id)
+  // Rien ne se tait : plafond atteint, tests écrits qui échouent eux-mêmes, réécritures écartées, noms illisibles.
   const sautes = Number(m.E2E_SAUTES ?? 0)
-  if (sautes > 0) noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${sautes} test(s) du cliquet non rejoué(s) faute de temps (plafond de ${config.autonomie?.minutes_cliquet ?? 15} min, ${Number(m.E2E_TOTAL ?? 0)} rejoué(s)). L'ordre est tiré au sort à chaque vérification : d'autres seront rejoués la fois suivante.` })
-  return { ok: raisons.length === 0, infra: codexEnPanne, contestes: criteresContestes(verdict), raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, remplaces, e2eSautes: sautes, captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
+  const dire = (message) => noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${message}` })
+  if (sautes > 0) dire(`${sautes} test(s) du cliquet non rejoué(s) faute de temps (plafond de ${plafond} min, ${Number(m.E2E_TOTAL ?? 0)} rejoué(s)) : ${nomsDeTests(m.E2E_SAUTES_NOMS).join(" ")}. Ils passeront en premier à la vérification suivante.`)
+  if (ratés.length) dire(`${ratés.length} test(s) écrit(s) par le vérificateur échouent eux-mêmes sur l'application : ils ne rejoignent pas le cliquet (${ratés.join(" ")}).`)
+  if (nePasVerser.length) dire(`réécriture(s) écartée(s) de test(s) du cliquet qui n'échouaient pas : ${nePasVerser.join(" ")}. Un test qui passe ne se réécrit pas.`)
+  const illisibles = Number(m.E2E_NOMS_INVALIDES ?? 0) + Number(m.E2E_ECRITS_INVALIDES ?? 0)
+  if (illisibles > 0) dire(`${illisibles} fichier(s) de .usine/e2e/ ou écrit(s) par le vérificateur ont un nom que l'usine ne lit pas (lettres sans accent, chiffres, point, tiret, souligné) : ils ne sont ni rejoués ni versés.`)
+  const contestes = [...criteresContestes(verdict), ...contestesCliquet({ verdict, marqueurs: m, criteres, autres })]
+  return { ok: raisons.length === 0, infra: codexEnPanne, contestes, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, remplaces, e2eSautes: sautes, captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
 }
 
 // La porte de fusion : des faits vérifiables, pas un avis. Chaque raison
 // renvoyée est un motif de refus. Aucune raison = la tâche peut être fusionnée.
-export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "", criteres = [] }) {
+export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "", criteres = [], autres = {} }) {
   const raisons = []
   if (!("INSTALL_OK" in m)) return ["l'installation des dépendances échoue"]
   // La sécurité d'abord : un secret dans le code, ou une faille grave ajoutée.
@@ -370,23 +474,27 @@ export function porte({ marqueurs: m, verdict, design = null, plancher = 0, jour
     raisons.push("le vérificateur n'a pas rendu de verdict lisible")
     return raisons
   }
-  for (const c of verdict.criteres ?? []) if (c.ok !== true) raisons.push(`critère non validé : ${c.critere}${c.preuve ? ` (observé : ${c.preuve})` : ""}`)
-  for (const p of verdict.problemes ?? []) raisons.push(`problème : ${p}`)
-  for (const g of verdict.regressions ?? []) raisons.push(`régression (un critère déjà validé ne tient plus) : ${g}`)
-  // Le cliquet est un corrigé : un test qui échoue ne se réécrit que si un critère de CETTE tâche l'explique,
-  // et un test qui passe ne se réécrit jamais.
+  // Un verdict mal formé (une chaîne au lieu d'une liste) ne fait pas planter la porte.
+  const regressions = tableau(verdict.regressions)
+  for (const c of tableau(verdict.criteres)) if (c?.ok !== true) raisons.push(`critère non validé : ${c?.critere}${c?.preuve ? ` (observé : ${c.preuve})` : ""}`)
+  for (const p of tableau(verdict.problemes)) raisons.push(`problème : ${p}`)
+  for (const g of regressions) raisons.push(`régression (un critère déjà validé ne tient plus) : ${g}`)
+  // Le cliquet est un corrigé : un test qui échoue est une régression du codeur, sauf s'il est réécrit avec un
+  // critère qui l'explique. Quand le vérificateur déclare une réécriture qui ne tient pas, c'est un désaccord de
+  // juge, pas une faute du codeur : il part en contestation (contestesCliquet), une personne tranche.
   const echecsCliquet = nomsDeTests(m.E2E_ECHECS_NOMS)
   const remplaces = nomsDeTests(m.E2E_REMPLACES)
-  const justifies = testsRemplacesJustifies(verdict, criteres)
-  const dejaDits = (verdict.regressions ?? []).map(String).join("\n")
+  const justifies = testsRemplacesJustifies(verdict, criteres, autres)
+  const declares = new Set(tableau(verdict.tests_remplaces).map((e) => nomDuTest(e?.test)))
+  const dejaDits = regressions.map(String).join("\n")
   for (const f of echecsCliquet) {
-    if (justifies.has(f) && remplaces.includes(f)) continue
-    if (dejaDits.includes(f)) continue
+    if ((justifies.has(f) && remplaces.includes(f)) || declares.has(f) || dejaDits.includes(f)) continue
     raisons.push(`régression : le test ${f} du cliquet échoue, et aucun critère de cette tâche n'explique ce changement. Rétablis le comportement qu'il vérifie.`)
   }
-  for (const f of remplaces) if (!echecsCliquet.includes(f)) raisons.push(`le test ${f} du cliquet passait : un test qui passe ne se réécrit pas.`)
-  for (const d of design?.graves ?? []) raisons.push(`design : ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}${d.correction ? ` → ${d.correction}` : ""}`)
+  const nonNommes = Number(m.E2E_ECHECS ?? 0) - echecsCliquet.length
+  if (nonNommes > 0) raisons.push(`${nonNommes} test(s) du cliquet échouent sans que l'usine sache lesquels : la vérification ne peut pas conclure.`)
+  for (const d of tableau(design?.graves)) raisons.push(`design : ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}${d.correction ? ` → ${d.correction}` : ""}`)
   if (verdict.decision !== "approuve" && raisons.length === 0) raisons.push(`le vérificateur refuse : ${verdict.resume ?? "sans motif"}`)
-  if (!(verdict.criteres ?? []).length) raisons.push("le vérificateur n'a jugé aucun critère")
+  if (!tableau(verdict.criteres).length) raisons.push("le vérificateur n'a jugé aucun critère")
   return raisons
 }

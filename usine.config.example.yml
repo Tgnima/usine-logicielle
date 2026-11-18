@@ -33,7 +33,7 @@ autonomie:
   changements_d_approche: 1        # puis on repart de zéro avec une autre approche ; puis escalade
   lignes_max_par_pr: 800           # au-delà : signalé dans la PR (non bloquant en démo)
   minutes_max_par_agent: 30
-  minutes_cliquet: 15              # temps max pour rejouer les tests .usine/e2e à chaque vérification ; au-delà, les restants sont dits sautés
+  minutes_cliquet: 15              # temps max (20 au plus) pour rejouer les tests .usine/e2e à chaque vérification ; au-delà, les restants sont dits sautés et passent en premier la fois suivante
   budget_par_projet:
     duree_max_heures: 8
   arret: dependances               # dependances : seules les tâches liées s'arrêtent | projet

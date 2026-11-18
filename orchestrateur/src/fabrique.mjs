@@ -381,23 +381,33 @@ async function fabriquer(ctx, projet, tache) {
   // dit dans la PR et au journal. Un test qui n'a pas pu être versé est dit aussi : rien ne se perd en silence.
   let versés = 0
   const ratés = []
-  const remplaces = v.remplaces ?? []
-  const aVerser = [...(v.nouveauxTests ?? []).map((fichier) => ({ fichier })), ...remplaces.map((r) => ({ fichier: r.test, critere: r.critere }))]
-  for (const { fichier, critere } of aVerser) {
+  const reecrits = []
+  const aVerser = [...(v.nouveauxTests ?? []).map((fichier) => ({ fichier })), ...(v.remplaces ?? []).map((r) => ({ fichier: r.test, r }))]
+  for (const { fichier, r } of aVerser) {
     const contenu = await lireFichier(config.verificateur.url, config.secrets.worker, `/tmp/sorties/verif/e2e/${fichier}`).catch(() => null)
-    if (!contenu) {
-      ratés.push(fichier)
-      continue
+    const message = r ? `Non-régression : ${fichier} réécrit (${tache.cle}, critère : ${r.critere.slice(0, 120)})` : `Non-régression : ${fichier} (${tache.cle})`
+    // Un second essai : une réécriture perdue laisserait dans le cliquet un test devenu faux.
+    let ok = false
+    for (let essai = 0; contenu && !ok && essai < 2; essai++) {
+      ok = await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), message, base).then(() => true).catch((e) => {
+        console.error("Test de non-régression :", e.message)
+        return false
+      })
     }
-    const message = critere ? `Non-régression : ${fichier} réécrit (${tache.cle}, critère : ${critere.slice(0, 120)})` : `Non-régression : ${fichier} (${tache.cle})`
-    await ecrireFichierDepot(config, nomDepot, `.usine/e2e/${fichier}`, String(contenu), message, base).then(() => versés++).catch((e) => {
-      console.error("Test de non-régression :", e.message)
-      ratés.push(fichier)
-    })
+    if (!ok) ratés.push({ fichier, r })
+    else {
+      versés++
+      if (r) reecrits.push(r)
+    }
   }
-  if (remplaces.length) await commentairePR(config, nomDepot, pr.number, `### :repeat: Tests du cliquet réécrits\n\nChaque réécriture s'appuie sur un critère de ${tache.cle}.\n\n${remplaces.map((r) => `- \`${r.test}\` · critère : « ${r.critere} »${r.raison ? ` · ${r.raison}` : ""}`).join("\n")}`).catch(() => {})
-  if (versés) noter(db, { projet: projet.id, tache: tache.id, type: "cliquet", message: `${versés} test(s) de non-régression versé(s) (${tache.cle})${remplaces.length ? `, dont ${remplaces.length} réécrit(s) : ${remplaces.map((r) => `${r.test} (critère : ${r.critere.slice(0, 80)})`).join(" ; ")}` : ""}` })
-  if (ratés.length) noter(db, { projet: projet.id, tache: tache.id, type: "erreur", message: `${tache.cle} : ${ratés.length} test(s) de non-régression non versé(s) dans .usine/e2e : ${ratés.join(" ")}` })
+  if (reecrits.length) await commentairePR(config, nomDepot, pr.number, `### :repeat: Tests du cliquet réécrits\n\nChaque réécriture s'appuie sur un critère vérifié par l'usine.\n\n${reecrits.map((r) => `- \`${r.test}\` · critère : « ${r.critere} »${r.raison ? ` · ${r.raison}` : ""}`).join("\n")}`).catch(() => {})
+  if (versés) noter(db, { projet: projet.id, tache: tache.id, type: "cliquet", message: `${versés} test(s) de non-régression versé(s) (${tache.cle})${reecrits.length ? `, dont ${reecrits.length} réécrit(s) : ${reecrits.map((r) => `${r.test} (critère : ${r.critere.slice(0, 80)})`).join(" ; ")}` : ""}` })
+  if (ratés.length) {
+    noter(db, { projet: projet.id, tache: tache.id, type: "erreur", message: `${tache.cle} : ${ratés.length} test(s) de non-régression non versé(s) dans .usine/e2e : ${ratés.map((x) => x.fichier).join(" ")}` })
+    // Une réécriture non versée : l'ancien test, devenu faux, bloquera les tâches suivantes. On le dit tout de suite.
+    const perdues = ratés.filter((x) => x.r)
+    if (perdues.length) await ctx.notifier.alerte(`:warning: *${projet.nom}* : ${tache.cle} est fusionnée, mais la nouvelle version de ${perdues.map((x) => `\`${x.fichier}\``).join(", ")} n'a pas pu être versée dans .usine/e2e/. L'ancien test va échouer aux prochaines vérifications : il faut le mettre à jour à la main (critère : ${perdues.map((x) => `« ${x.r.critere.slice(0, 120)} »`).join(" ; ")}).`).catch(() => {})
+  }
   await retirerEtiquette(config, nomDepot, tache.issue, "usine:verification").catch(() => {})
   await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:fusionnee"]).catch(() => {})
   noter(db, { projet: projet.id, tache: tache.id, type: "fusion", message: `${tache.cle} fusionnée (PR #${pr.number}, ${v.tests} tests)` })
