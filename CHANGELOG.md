@@ -33,10 +33,19 @@ Ce qui est sur `main` sans être encore dans une version.
   (`autonomie.minutes_cliquet` dans `usine.config.yml`), dans un ordre tiré au sort. Les tests non
   rejoués faute de temps sont nommés au journal et passent en premier à la vérification suivante.
   Un test qui échoue est relancé une fois avant d'être compté.
+- **Les applications peuvent utiliser ton propre serveur de modèles** (par exemple un GPU avec
+  llama-server, API compatible OpenAI) : console, Réglages, Intégrations, « IA des applications ».
+  Elles l'essaient d'abord, avec un délai court, puis la passerelle Vercel si elle est branchée, puis
+  leur texte de secours : une application ne tombe jamais en panne à cause de l'IA. L'adresse et la
+  clé restent dans la console, jamais dans le code. « Retirer l'IA aux applications » retire aussi
+  le serveur de modèles. L'usine elle-même garde ses modèles : la fabrication et la vérification ne
+  changent pas.
 
-**À faire** : rien. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
-commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
-ou le retire de `.usine/e2e/`.
+**À faire** : rien pour l'usine. Un test du cliquet devenu faux à cause d'un changement fait hors de
+l'usine (un commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le
+mette à jour ou le retire de `.usine/e2e/`. Pour qu'une application déjà livrée utilise le serveur de
+modèles, elle doit recevoir le nouveau `server/llm.js` de la brique (une petite correction par
+application) ; les nouvelles applications l'ont d'office.
 
 ## v1.1.1
 

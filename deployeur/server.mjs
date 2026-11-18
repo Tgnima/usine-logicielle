@@ -21,7 +21,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CHEMINS_PUBLICS, cheminsDeclares, domainesValides, hotesValides, sousReseau } from "./chemins.mjs"
 import { attendreSante, decisionDeploiement, REPRISES_MAX, scriptVerifierSecrets, statutEnLigne, versionServie } from "./deploiement.mjs"
-import { lireBoite, valeurBoite, variablesSmtp } from "./boite.mjs"
+import { lireBoite, valeurBoite, variablesIA, variablesSmtp } from "./boite.mjs"
 import { jetonsMiseAJour, origineJeton } from "./jetons.mjs"
 import { canal, derniereVersion } from "./versions.mjs"
 import { lignesNouvelles, proprietesDeploiement, suivreEtats } from "./observation.mjs"
@@ -230,9 +230,9 @@ function variables(s, b = boite) {
   if ((s.services ?? []).includes("mailpit")) Object.assign(v, { SMTP_HOST: "mailpit", SMTP_PORT: "1025" })
   // Emails réels : le service d'envoi de la console (boîte) ou du serveur, jamais du dépôt d'état.
   if (s.emails === "reels") Object.assign(v, variablesSmtp(b, { SMTP_HOST: env.SMTP_HOST ?? "", SMTP_PORT: env.SMTP_PORT ?? "", SMTP_SECURE: env.SMTP_SECURE ?? "", EMAIL_EXPEDITEUR: env.EMAIL_EXPEDITEUR ?? "", SMTP_USER: secret("smtp_user"), SMTP_PASS: secret("smtp_pass") }))
-  // La passerelle IA : la clé dédiée aux applications (console) d'abord, sinon la clé commune du serveur.
-  const passerelle = valeurBoite(b, "AI_GATEWAY_API_KEY_APPLIS", secret("ai_gateway_api_key"))
-  if (passerelle) v.AI_GATEWAY_API_KEY = passerelle
+  // L'IA des applications : le serveur de modèles de la console d'abord (GPU), puis la passerelle
+  // (la clé dédiée de la console, sinon la clé commune du serveur).
+  Object.assign(v, variablesIA(b, secret("ai_gateway_api_key")))
   // L'observabilité du produit (server/observabilite.js de la brique) : le même DSN et le même jeton
   // pour tous, des clés d'envoi seulement ; le produit et son environnement l'étiquettent.
   Object.assign(v, { USINE_PRODUIT: s.produit, USINE_ENVIRONNEMENT: s.environnement, USINE_VERSION: s.sha.slice(0, 12) })

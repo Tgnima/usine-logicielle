@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { CLES_BOITE, blocSmtp, lireBoite, valeurBoite, variablesSmtp } from "../boite.mjs"
+import { CLES_BOITE, blocSmtp, lireBoite, valeurBoite, variablesIA, variablesSmtp } from "../boite.mjs"
 
 function avecBoite(contenu, corps) {
   const dossier = mkdtempSync(join(tmpdir(), "boite-"))
@@ -59,4 +59,20 @@ test("emails réels : sans port dans la console, 587 comme l'usine ; jamais le 1
   // Le bloc du serveur, tel qu'il est.
   assert.equal(variablesSmtp(null, { ...serveur, SMTP_HOST: "smtp.serveur.exemple", SMTP_PORT: "2525" }).SMTP_PORT, "2525")
   assert.throws(() => variablesSmtp({ version: 7, cles: { SMTP_HOST: "" } }, { ...serveur, SMTP_HOST: "smtp.serveur.exemple" }), /aucun service d'envoi/, "coupé dans la console : pas d'envoi")
+})
+
+test("l'IA des applications : serveur de modèles de la console, passerelle, et tout retiré d'un coup", () => {
+  const boite = (cles) => ({ version: 1, le: null, cles })
+  // Sans boîte : la clé commune du serveur, jamais de serveur de modèles (il ne vient que de la console).
+  assert.deepEqual(variablesIA(null, "cle-du-serveur"), { AI_GATEWAY_API_KEY: "cle-du-serveur" })
+  assert.deepEqual(variablesIA(null, ""), {})
+  // Le serveur de modèles, sa clé et son modèle ; la passerelle du serveur reste en relais.
+  assert.deepEqual(variablesIA(boite({ LLM_URL_APPLIS: "https://modeles.exemple.test/v1", LLM_CLE_APPLIS: "cle-modeles", LLM_NOM_APPLIS: "qwen" }), "cle-du-serveur"),
+    { AI_GATEWAY_API_KEY: "cle-du-serveur", LLM_URL: "https://modeles.exemple.test/v1", LLM_CLE: "cle-modeles", LLM_LOCAL_MODELE: "qwen" })
+  // Une clé ou un modèle sans adresse ne sert à rien : rien ne part.
+  assert.deepEqual(variablesIA(boite({ LLM_CLE_APPLIS: "cle-modeles", LLM_NOM_APPLIS: "qwen" }), ""), {})
+  // « Retirer l'IA aux applications » : la clé de passerelle coupée (vide) retire aussi le serveur de modèles.
+  assert.deepEqual(variablesIA(boite({ AI_GATEWAY_API_KEY_APPLIS: "", LLM_URL_APPLIS: "https://modeles.exemple.test/v1" }), "cle-du-serveur"), {})
+  // Les nouvelles clés passent la liste blanche de la boîte.
+  for (const nom of ["LLM_URL_APPLIS", "LLM_CLE_APPLIS", "LLM_NOM_APPLIS"]) assert.ok(CLES_BOITE.includes(nom))
 })

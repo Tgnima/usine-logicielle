@@ -72,7 +72,8 @@ test/                  les tests
 | `DEMO`, `DEMO_VITESSE_HORLOGE` | Mode démo, vitesse de l'horloge (1440 = un jour par minute) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `EMAIL_EXPEDITEUR` | Envoi d'emails (Mailpit en démo), toujours par `envoyer()` |
 | `EMAIL_DESTINATAIRES_AUTORISES` | Liste des destinataires permis (contacts de test) ; `envoyer()` bloque les autres |
-| `AI_GATEWAY_API_KEY`, `LLM_MODELE` | Modèles via Vercel AI Gateway |
+| `LLM_URL`, `LLM_CLE`, `LLM_LOCAL_MODELE` | Le serveur de modèles de l'usine (API compatible OpenAI), essayé d'abord par `generer()` |
+| `AI_GATEWAY_API_KEY`, `LLM_MODELE` | Modèles via Vercel AI Gateway, en relais |
 | `PUBLIC_URL` | L'adresse publique du produit |
 | `SENTRY_DSN`, `POSTHOG_TOKEN`, `POSTHOG_HOTE` | Les erreurs et le pouls du produit, lus par `server/observabilite.js` seulement |
 | `USINE_PRODUIT`, `USINE_ENVIRONNEMENT`, `USINE_VERSION` | Le nom du produit, `apercu` ou `production`, la version : l'étiquette de chaque envoi |
