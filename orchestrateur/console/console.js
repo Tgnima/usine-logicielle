@@ -1619,7 +1619,7 @@ function integrations() {
     { id: "sentry", nom: "Sentry", logo: "Se", couleur: "#362d59", texte: "Facultatif : te prévient quand l'usine plante ou ne donne plus signe de vie.", branche: etatService("sentry"), facultatif: true },
     { id: "posthog", nom: "PostHog", logo: "Ph", couleur: "#1d4aff", texte: "Facultatif : garde le journal de l'usine, pour comprendre après coup ce qui s'est passé.", branche: etatService("posthog"), facultatif: true },
     { id: "smtp", nom: "Envoi d'emails", logo: "@", couleur: "#0b6e4f", texte: "Facultatif : les invitations partent par email, et les applications en ligne peuvent en envoyer.", branche: etatTeste("smtp", serviceDe("smtp")?.complet !== false), facultatif: true },
-    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : votre serveur de modèles (un GPU), et une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: etatTeste("passerelle"), facultatif: true },
+    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : ton serveur de modèles (un GPU), et une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: etatTeste("passerelle"), facultatif: true },
   ]
 }
 const badgeIntegration = (x) => (x.branche === true ? html`<span class="badge vert">Connecté</span>`
@@ -1937,13 +1937,15 @@ function fenetrePasserelle(s) {
     <p style="margin:0">Les applications qui se servent de l'IA (résumés, suggestions…) essaient d'abord ton serveur de modèles s'il est branché, puis la passerelle Vercel. Si aucun ne répond, elles affichent leur texte de secours : elles ne tombent jamais en panne à cause de l'IA. L'usine, elle, garde ses propres modèles.</p>
     <h3 style="margin:0;font-size:15px">Ton serveur de modèles (facultatif)</h3>
     <ol class="etapes-machine">
-      <li>Un serveur compatible OpenAI (par exemple llama-server sur un GPU), joignable depuis le serveur de l'usine, et protégé par une clé.</li>
+      <li>Un serveur compatible OpenAI (par exemple llama-server sur un GPU), joignable depuis Internet en https (ou par un réseau privé, comme Tailscale), et protégé par une clé.</li>
       <li>Colle son adresse jusqu'à <span class="mono">/v1</span>, sa clé, et le nom du modèle si le serveur en propose plusieurs, puis lance le test.</li>
     </ol>
     ${champsService(s, [
-      ["LLM_URL_APPLIS", "Adresse du serveur de modèles", "texte", "https://modeles.mon-domaine.fr/v1", "Elle reste dans la console : jamais dans le code ni sur GitHub."],
-      ["LLM_NOM_APPLIS", "Modèle (facultatif)", "texte", "qwen3.5-9b", "Vide : le modèle par défaut du serveur."],
-    ], { retirer: url?.console ? ["LLM_URL_APPLIS", "Retirer le serveur de modèles"] : null })}
+      ["LLM_URL_APPLIS", "Adresse du serveur de modèles", "texte", "https://modeles.mon-domaine.fr/v1", "Elle reste dans la console : jamais dans le code ni sur GitHub. Pas de nom de conteneur ni de localhost : les applications ne les joindraient pas."],
+    ], { retirer: url?.console ? ["LLM_URL_APPLIS", "Retirer le serveur de modèles (adresse, clé et modèle)"] : null })}
+    ${champsService(s, [
+      ["LLM_NOM_APPLIS", "Modèle (facultatif)", "texte", "qwen3.5-9b", "Sans nom : le modèle par défaut du serveur."],
+    ], { retirer: cleService(s, "LLM_NOM_APPLIS")?.console ? ["LLM_NOM_APPLIS", "Retirer le nom du modèle"] : null })}
     ${champService(s, "LLM_CLE_APPLIS", "Seulement si le serveur en demande une.", "Clé du serveur de modèles")}
     <h3 style="margin:0;font-size:15px">La passerelle Vercel (relais)</h3>
     <ol class="etapes-machine">

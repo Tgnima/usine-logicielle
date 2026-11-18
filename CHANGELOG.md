@@ -35,8 +35,10 @@ Ce qui est sur `main` sans être encore dans une version.
   Un test qui échoue est relancé une fois avant d'être compté.
 - **Les applications peuvent utiliser ton propre serveur de modèles** (par exemple un GPU avec
   llama-server, API compatible OpenAI) : console, Réglages, Intégrations, « IA des applications ».
-  Elles l'essaient d'abord, avec un délai court, puis la passerelle Vercel si elle est branchée, puis
-  leur texte de secours : une application ne tombe jamais en panne à cause de l'IA. L'adresse et la
+  Elles l'essaient d'abord, avec un délai court (après une panne, il est laissé de côté 5 minutes),
+  puis la passerelle Vercel si elle est branchée, puis leur texte de secours : une application ne
+  tombe jamais en panne à cause de l'IA, même quand la passerelle atteint son plafond. En http,
+  l'adresse n'est permise que sur un réseau privé (réseau local, Tailscale). L'adresse et la
   clé restent dans la console, jamais dans le code. « Retirer l'IA aux applications » retire aussi
   le serveur de modèles. L'usine elle-même garde ses modèles : la fabrication et la vérification ne
   changent pas.

@@ -27,7 +27,7 @@ server/db.js           SQLite + migrations additives (tableau MIGRATIONS)
 server/routes/         une route par fonctionnalité, branchée dans routes/index.js
 server/actions/        la logique métier, sans Express, testée dans test/
 server/horloge.js      maintenant() : l'heure du produit (accélérée en démo)
-server/llm.js          generer() : appeler un modèle (secours sans clé)
+server/llm.js          generer() : appeler un modèle (serveur de l'usine, puis passerelle, sinon texte de secours ; ne lève jamais d'erreur)
 server/email.js        envoyer() : un email (vers Mailpit en démo)
 server/observabilite.js les erreurs vers Sentry, le pouls vers PostHog (ne pas modifier)
 client/src/            l'interface React
@@ -72,7 +72,7 @@ test/                  les tests
 | `DEMO`, `DEMO_VITESSE_HORLOGE` | Mode démo, vitesse de l'horloge (1440 = un jour par minute) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `EMAIL_EXPEDITEUR` | Envoi d'emails (Mailpit en démo), toujours par `envoyer()` |
 | `EMAIL_DESTINATAIRES_AUTORISES` | Liste des destinataires permis (contacts de test) ; `envoyer()` bloque les autres |
-| `LLM_URL`, `LLM_CLE`, `LLM_LOCAL_MODELE` | Le serveur de modèles de l'usine (API compatible OpenAI), essayé d'abord par `generer()` |
+| `LLM_URL`, `LLM_CLE`, `LLM_LOCAL_MODELE` | Le serveur de modèles de l'usine (API compatible OpenAI), essayé d'abord par `generer()` ; `modele` ne choisit que celui de la passerelle, et `serveurLocal: false` exige la passerelle |
 | `AI_GATEWAY_API_KEY`, `LLM_MODELE` | Modèles via Vercel AI Gateway, en relais |
 | `PUBLIC_URL` | L'adresse publique du produit |
 | `SENTRY_DSN`, `POSTHOG_TOKEN`, `POSTHOG_HOTE` | Les erreurs et le pouls du produit, lus par `server/observabilite.js` seulement |

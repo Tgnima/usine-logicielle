@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import { contenuBoite, couperService, etatServices, poserService, reprendreService, testerService, testerServeurModeles, validerNomModele, validerUrlModeles } from "../src/services.mjs"
+import { adressePrivee, contenuBoite, couperService, etatServices, poserService, reprendreService, retirerService, testerService, testerServeurModeles, validerNomModele, validerUrlModeles } from "../src/services.mjs"
 
 const regler = () => ({ sentry: false, posthog: false })
 const instance = { actif: { sentry: false, posthog: false }, etat: () => ({ battement: {}, erreurs: {}, evenements: {}, journaux: {} }) }
@@ -28,10 +28,18 @@ test("formats : adresse du serveur de modèles et nom du modèle", () => {
   assert.equal(validerUrlModeles(" https://modeles.exemple.test/v1/ ").valeur, URL_MODELES)
   assert.equal(validerUrlModeles("https://modeles.exemple.test/v1/chat/completions").valeur, URL_MODELES, "ramenée à sa base")
   assert.equal(validerUrlModeles("http://10.0.0.5:8080/v1").valeur, "http://10.0.0.5:8080/v1", "http permis sur un réseau privé")
+  assert.equal(validerUrlModeles("http://100.101.102.103:8080/v1").valeur, "http://100.101.102.103:8080/v1", "http permis par Tailscale")
+  assert.equal(validerUrlModeles("http://gpu.ma-flotte.ts.net/v1").valeur, "http://gpu.ma-flotte.ts.net/v1")
+  assert.throws(() => validerUrlModeles("http://modeles.exemple.test/v1"), /en clair sur Internet/)
+  assert.throws(() => validerUrlModeles("HTTP://8.8.8.8/v1"), /en clair sur Internet/)
   assert.throws(() => validerUrlModeles("modeles.exemple.test/v1"), /adresse complète/)
   assert.throws(() => validerUrlModeles("ftp://modeles.exemple.test"), /https:\/\//)
   assert.throws(() => validerUrlModeles("https://moi:secret@modeles.exemple.test/v1"), /Pas d'identifiant/)
-  assert.throws(() => validerUrlModeles("https://modeles.exemple.test/v1?cle=x"), /sans « \? »/)
+  for (const v of ["https://modeles.exemple.test/v1?cle=x", "https://modeles.exemple.test/v1?", "https://modeles.exemple.test/v1#"]) assert.throws(() => validerUrlModeles(v), /ni « \? » ni « # »/)
+  for (const v of ["http://localhost:8080/v1", "https://127.0.0.1/v1", "http://llama:8080/v1", "https://[::1]/v1"]) assert.throws(() => validerUrlModeles(v), /ne la joindraient pas/)
+  assert.equal(adressePrivee("172.20.1.1"), true)
+  assert.equal(adressePrivee("172.32.1.1"), false)
+  assert.equal(adressePrivee("[fd12::1]"), true)
   assert.equal(validerNomModele("qwen3.5-9b").valeur, "qwen3.5-9b")
   assert.equal(validerNomModele("Qwen/Qwen3.5-9B:Q4_K_M").valeur, "Qwen/Qwen3.5-9B:Q4_K_M")
   assert.throws(() => validerNomModele("qwen 9b"), /sans espace/)
@@ -61,6 +69,19 @@ test("le serveur de modèles va aux applications seulement, et « Retirer l'IA �
     assert.equal(etat().actif, false)
     reprendreService(ctx, "passerelle", "admin@exemple.fr", regler)
     assert.equal(etat().actif, true)
+    // IA coupée : poser une clé le dit ; « Ne plus couper » avec le seul serveur de modèles le dit aussi.
+    couperService(ctx, "passerelle", "admin@exemple.fr", regler)
+    assert.match(poserService(ctx, "LLM_NOM_APPLIS", "qwen3.5-9b", "admin@exemple.fr", {}, regler).message, /l'IA est retirée aux applications/)
+    assert.match(reprendreService(ctx, "passerelle", "admin@exemple.fr", regler).message, /avec ton serveur de modèles/)
+    // Retirer l'adresse retire le serveur en bloc : sa clé et son modèle ne suivront pas une autre adresse.
+    assert.match(retirerService(ctx, "LLM_URL_APPLIS", "admin@exemple.fr", regler).message, /adresse, clé et modèle/)
+    const apres = contenuBoite(ctx).cles
+    assert.ok(!("LLM_URL_APPLIS" in apres) && !("LLM_CLE_APPLIS" in apres) && !("LLM_NOM_APPLIS" in apres))
+    // La clé du serveur de modèles ne montre jamais sa fin (souvent choisie par une personne).
+    poserService(ctx, "LLM_CLE_APPLIS", "cle-du-serveur-de-modeles", "admin@exemple.fr", {}, regler)
+    const cleModeles = etat().cles.find((c) => c.nom === "LLM_CLE_APPLIS")
+    assert.ok(cleModeles.console, "enregistrée")
+    assert.ok(!cleModeles.console.fin, "sans ses derniers caractères")
     // L'adresse du serveur ne finit jamais dans le journal.
     const journal = ctx.db.prepare("SELECT message FROM journal").all().map((l) => l.message).join("\n")
     assert.ok(!journal.includes("modeles.exemple.test"))
@@ -74,9 +95,13 @@ test("tester le serveur de modèles : liste des modèles, clé refusée, modèle
   const avec = (corps, status) => async (url, o) => (appels.push({ url, auth: o.headers.authorization ?? null }), reponse(corps, status)())
   const ok = await testerServeurModeles(avec({ data: [{ id: "qwen3.5-9b" }, { id: "whisper" }] }), URL_MODELES, "cle", "qwen3.5-9b", 1000)
   assert.equal(ok.ok, true)
-  assert.match(ok.message, /répond \(modèle qwen3\.5-9b\)/)
+  assert.match(ok.message, /répond depuis le serveur de l'usine \(modèle qwen3\.5-9b\)/)
   assert.deepEqual(appels[0], { url: `${URL_MODELES}/models`, auth: "Bearer cle" })
-  assert.match((await testerServeurModeles(avec({ data: [{ id: "qwen3.5-9b" }] }), URL_MODELES, "", "", 1000)).message, /modèles : qwen3\.5-9b/)
+  assert.match((await testerServeurModeles(avec({ data: [{ id: "qwen3.5-9b" }] }), URL_MODELES, "", "", 1000)).message, /modèle qwen3\.5-9b/)
+  const plusieurs = await testerServeurModeles(avec({ data: [{ id: "qwen" }, { id: "llama" }] }), URL_MODELES, "", "", 1000)
+  assert.equal(plusieurs.ok, false)
+  assert.match(plusieurs.message, /propose plusieurs modèles \(qwen, llama\) : indique lequel/)
+  assert.ok(!(await testerServeurModeles(avec({ data: [{ id: "m" }] }), "http://100.101.102.103/v1", "", "", 1000)).message.includes("pas chiffrés"), "Tailscale chiffre déjà")
   assert.match((await testerServeurModeles(avec(null, 401), URL_MODELES, "cle", "", 1000)).message, /refuse cette clé/)
   assert.match((await testerServeurModeles(avec(null, 401), URL_MODELES, "", "", 1000)).message, /demande une clé/)
   const absent = await testerServeurModeles(avec({ data: [{ id: "llama" }] }), URL_MODELES, "", "qwen3.5-9b", 1000)

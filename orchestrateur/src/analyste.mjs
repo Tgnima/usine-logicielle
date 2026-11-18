@@ -26,7 +26,7 @@ const brique = `Briques de départ (choisis-en UNE, la plus simple qui répond �
 ${Object.entries(BRIQUES).map(([nom, d]) => `- « ${nom} » : ${d}`).join("\n")}
 Toutes : Node 24, Express 5, SQLite (node:sqlite) ; « webapp », « site » et « pwa » ajoutent React 19 + Vite + Tailwind 4.
 Une fonctionnalité = une action serveur (logique métier testée avec node:test) + une route /api + son écran React (pour « api » : sa documentation dans docs/API.md à la place de l'écran).
-Aides fournies : maintenant() (horloge accélérée en démo), generer() (appel d'un modèle de langage via Vercel AI Gateway, texte de secours sans clé), envoyer() (email, capturé par Mailpit en démo).
+Aides fournies : maintenant() (horloge accélérée en démo), generer() (appel d'un modèle de langage : le serveur de modèles de l'usine s'il y en a un, sinon la passerelle Vercel ; texte de secours si aucun ne répond), envoyer() (email, capturé par Mailpit en démo).
 Le produit est publié derrière la page de connexion de l'usine (le portier) : l'accès est déjà protégé, le produit ne code JAMAIS d'authentification. Les pages qui doivent s'ouvrir sans connexion (liens d'emails envoyés à des prospects, formulaires publics) vont sous /public/ ou /api/public/, ou sont déclarées dans usine.json (chemins_publics).`
 
 // Le cadre d'un dépôt repris : on part de l'existant (l'inventaire), dans sa pile.

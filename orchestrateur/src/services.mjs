@@ -107,20 +107,40 @@ export function validerCanal(brut) {
   if (!/^[CG][A-Z0-9]{8,12}$/.test(v)) throw erreur(400, "Canal : son identifiant, qui commence par C (dans Slack : clic droit sur le canal, Copier le lien, la fin de l'adresse).")
   return { valeur: v, horsUE: false }
 }
+// Une adresse privée, où le clair (http) ne traverse pas Internet : réseaux locaux, plage de
+// Tailscale (100.64.0.0/10, chiffrée par WireGuard) et ses noms en .ts.net, IPv6 locales (fc00::/7).
+export function adressePrivee(hote) {
+  const h = String(hote ?? "").replace(/^\[|\]$/g, "").toLowerCase()
+  if (h.endsWith(".ts.net")) return true
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h)
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])]
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)
+  }
+  return /^f[cd][0-9a-f]{0,2}:/.test(h)
+}
 // Le serveur de modèles des applications (API compatible OpenAI, par exemple llama-server sur un
 // GPU) : son adresse jusqu'à /v1, sans identifiant dedans (la clé se colle à part). Une adresse
-// collée jusqu'à /chat/completions est ramenée à sa base.
+// collée jusqu'à /chat/completions est ramenée à sa base. Les applications l'appellent depuis leur
+// propre réseau : une adresse qui ne vaut que sur le serveur (localhost) ou dans le réseau interne de
+// l'usine (un nom de conteneur) ne marcherait pas pour elles. En http, seulement sur un réseau privé :
+// sinon les données des utilisateurs et la clé passeraient en clair sur Internet.
 export function validerUrlModeles(brut) {
   const v = ligne(brut).replace(/\/+$/, "").replace(/\/chat\/completions$/, "")
+  if (/[\s?#]/.test(v)) throw erreur(400, "Adresse du serveur de modèles : sans espace, ni « ? » ni « # », seulement l'adresse de l'API (par exemple https://modeles.mon-domaine.fr/v1).")
   let u
   try {
     u = new URL(v)
   } catch {
     throw erreur(400, "Adresse du serveur de modèles : une adresse complète, par exemple https://modeles.mon-domaine.fr/v1.")
   }
-  if (!["https:", "http:"].includes(u.protocol) || /\s/.test(v)) throw erreur(400, "Adresse du serveur de modèles : elle commence par https:// (ou http:// sur un réseau privé).")
+  if (!["https:", "http:"].includes(u.protocol)) throw erreur(400, "Adresse du serveur de modèles : elle commence par https:// (ou http:// sur un réseau privé).")
   if (u.username || u.password) throw erreur(400, "Pas d'identifiant dans l'adresse : colle la clé du serveur de modèles dans son propre champ.")
-  if (u.search || u.hash) throw erreur(400, "Adresse du serveur de modèles : sans « ? » ni « # », seulement l'adresse de l'API (par exemple https://modeles.mon-domaine.fr/v1).")
+  const hote = u.hostname.replace(/^\[|\]$/g, "").toLowerCase()
+  if (hote === "localhost" || hote.endsWith(".localhost") || /^127\./.test(hote) || hote === "::1" || hote === "0.0.0.0" || (!hote.includes(".") && !hote.includes(":"))) {
+    throw erreur(400, "Cette adresse ne vaut que sur le serveur lui-même ou dans le réseau interne de l'usine : les applications ne la joindraient pas. Donne une adresse IP ou un nom de domaine complet.")
+  }
+  if (u.protocol === "http:" && !adressePrivee(hote)) throw erreur(400, "En http, les données des utilisateurs et la clé passeraient en clair sur Internet : utilise une adresse en https://, ou une adresse privée (réseau local, Tailscale).")
   return { valeur: v, horsUE: false }
 }
 export function validerNomModele(brut) {
@@ -159,7 +179,8 @@ export const CLES_SERVICES = {
   // Le serveur de modèles des applications (un GPU) : essayé avant la passerelle. Il ne vient que de
   // la console, jamais du dépôt (public) ni du serveur. « Retirer l'IA aux applications » le retire aussi.
   LLM_URL_APPLIS: { service: "passerelle", libelle: "Adresse du serveur de modèles", f: true, secret: false, serveur: () => "", valider: validerUrlModeles, destinataires: ["applications"] },
-  LLM_CLE_APPLIS: { service: "passerelle", libelle: "Clé du serveur de modèles", f: true, secret: true, serveur: () => "", valider: sansEspace("Clé du serveur de modèles", 8), destinataires: ["applications"] },
+  // Souvent choisie par une personne (--api-key de llama-server) : la console n'en montre rien.
+  LLM_CLE_APPLIS: { service: "passerelle", libelle: "Clé du serveur de modèles", f: true, secret: true, apercu: false, serveur: () => "", valider: sansEspace("Clé du serveur de modèles", 8), destinataires: ["applications"] },
   LLM_NOM_APPLIS: { service: "passerelle", libelle: "Modèle du serveur de modèles", secret: false, serveur: () => "", valider: validerNomModele, destinataires: ["applications"] },
   // Slack : pour l'orchestrateur seul, jamais dans la boîte.
   SLACK_BOT_TOKEN: { service: "slack", libelle: "Jeton du bot (xoxb-)", secret: true, serveur: () => secret("slack_bot_token"), valider: validerJetonBot, destinataires: ["orchestrateur"] },
@@ -341,6 +362,7 @@ function messagePose(ctx, nom) {
     const liste = manque.length > 1 ? `${manque.slice(0, -1).join(", ")} et ${manque.at(-1)}` : manque[0]
     return `${enregistre} : l'usine s'en sert dès maintenant, les applications à leur prochaine mise en ligne ou par « Appliquer ».${manque.length ? ` Il manque encore ici ${liste}${perdus.length ? " (ceux du serveur ne servent plus)" : ""}.` : ""}`
   }
+  if (def.service === "passerelle" && valeurService(ctx, SERVICES.passerelle.principale).source === "coupe") return `${enregistre}, mais l'IA est retirée aux applications : ${def.f ? "elle" : "il"} servira quand tu la rebrancheras (« Ne plus couper »).`
   if (!def.destinataires.includes("orchestrateur")) return `${enregistre} : les applications ${def.f ? "la" : "le"} recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
   return `${enregistre} : l'usine s'en sert dès maintenant, le déployeur dans la minute. Les applications ${def.f ? "la" : "le"} recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
 }
@@ -357,14 +379,20 @@ export function retirerService(ctx, nom, par, regler = reglerObservabilite) {
   const def = CLES_SERVICES[nom]
   if (!def) throw erreur(400, "Réglage inconnu.")
   const avant = clesBoite(ctx)
-  effacer(ctx, cleReglage(nom))
-  effacer(ctx, cleCoupe(nom))
-  noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} ${accord(def, "retiré")} de la console par ${par}` })
+  // Le serveur de modèles part en bloc : sa clé et son modèle ne doivent pas suivre une autre adresse
+  // (la clé d'un fournisseur envoyée à un autre).
+  const ensemble = nom === "LLM_URL_APPLIS" ? ["LLM_URL_APPLIS", "LLM_CLE_APPLIS", "LLM_NOM_APPLIS"] : [nom]
+  for (const n of ensemble) {
+    effacer(ctx, cleReglage(n))
+    effacer(ctx, cleCoupe(n))
+  }
+  const libelle = ensemble.length > 1 ? "Serveur de modèles (adresse, clé et modèle)" : def.libelle
+  noter(ctx.db, { projet: null, type: "reglage", message: `${libelle} ${ensemble.length > 1 ? "retiré" : accord(def, "retiré")} de la console par ${par}` })
   changerVersionSi(ctx, avant)
   appliquerServices(ctx, regler)
   apresChangement(ctx, nom)
   const reprend = valeurService(ctx, nom).source === "serveur"
-  return { ok: true, message: `${def.libelle} ${accord(def, "retiré")}${reprend ? " : la valeur du serveur reprend." : "."}` }
+  return { ok: true, message: `${libelle} ${ensemble.length > 1 ? "retiré" : accord(def, "retiré")}${reprend ? " : la valeur du serveur reprend." : "."}` }
 }
 
 // Couper l'envoi : un drapeau qui l'emporte sur toute valeur, celle du serveur comprise. La valeur
@@ -393,6 +421,8 @@ export function reprendreService(ctx, service, par, regler = reglerObservabilite
   appliquerServices(ctx, regler)
   apresChangement(ctx, s.principale)
   const { source } = valeurService(ctx, s.principale)
+  // L'IA des applications peut reprendre par le seul serveur de modèles, sans clé de passerelle.
+  if (service === "passerelle" && source !== "console" && source !== "serveur" && valeurService(ctx, "LLM_URL_APPLIS").valeur) return { ok: true, message: `${s.libelle} : rebranchée, avec ton serveur de modèles (sans passerelle en relais).` }
   return { ok: true, message: `${s.libelle} : rebranché${source === "console" ? ", avec la valeur de la console" : source === "serveur" ? ", avec la valeur du serveur" : ". Il n'y a pas encore de valeur : colle-la ici"}.` }
 }
 
@@ -416,7 +446,12 @@ export function traduireEchec(service, detail) {
 // Le serveur de modèles des applications : la liste de ses modèles (GET /models), sans rien générer.
 // Jamais son adresse dans le message : il finit dans le journal.
 export async function testerServeurModeles(envoyer, url, cle, nom, delaiMs) {
-  const clair = url.startsWith("http://") ? " Attention : l'adresse est en http, les échanges ne sont pas chiffrés ; réserve-la à un réseau privé." : ""
+  let hote = ""
+  try {
+    hote = new URL(url).hostname
+  } catch {}
+  const tailscale = /\.ts\.net$/i.test(hote) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hote)
+  const clair = /^http:/i.test(url) && !tailscale ? " Attention : l'adresse est en http, les échanges ne sont pas chiffrés sur ce réseau privé." : ""
   try {
     const res = await envoyer(`${url.replace(/\/+$/, "")}/models`, { headers: cle ? { authorization: `Bearer ${cle}` } : {}, signal: AbortSignal.timeout(delaiMs) })
     const j = await res.json().catch(() => null)
@@ -426,7 +461,10 @@ export async function testerServeurModeles(envoyer, url, cle, nom, delaiMs) {
     if (!modeles.length) return { ok: false, message: "Le serveur répond, mais ce n'est pas une API compatible OpenAI (pas de liste de modèles) : vérifie que l'adresse finit par /v1." }
     const liste = modeles.slice(0, 5).map((m) => m.slice(0, 60)).join(", ")
     if (nom && !modeles.includes(nom)) return { ok: false, message: `Le serveur de modèles répond, mais ne propose pas « ${nom.slice(0, 60)} » (il propose : ${liste}).${clair}` }
-    return { ok: true, message: `Le serveur de modèles répond (${nom ? `modèle ${nom.slice(0, 60)}` : `modèles : ${liste}`}). Les applications l'essaieront d'abord.${clair}` }
+    // Plusieurs modèles sans nom choisi : certains serveurs (Ollama) refusent alors chaque demande.
+    if (!nom && modeles.length > 1) return { ok: false, message: `Le serveur de modèles répond et propose plusieurs modèles (${liste}) : indique lequel utiliser dans « Modèle ».${clair}` }
+    // Le test part du serveur de l'usine ; les applications, de leur propre réseau Docker.
+    return { ok: true, message: `Le serveur de modèles répond depuis le serveur de l'usine (${nom ? `modèle ${nom.slice(0, 60)}` : `modèle ${liste}`}). Les applications l'essaieront d'abord ; s'il ne répond pas pour elles, leur journal le dira.${clair}` }
   } catch (e) {
     return { ok: false, message: e?.name === "TimeoutError" ? "Le serveur de modèles ne répond pas depuis le serveur de l'usine (délai dépassé)." : `Le serveur de modèles est injoignable depuis le serveur de l'usine (${String(e?.cause?.code ?? e?.message ?? "erreur réseau").slice(0, 80)}).` }
   }
