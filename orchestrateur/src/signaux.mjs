@@ -28,6 +28,9 @@ const DELAI_MS = 15_000
 const NOUVEAU_MS = 7 * JOUR_MS
 // Ce qu'on demande à Sentry pour chaque application : 25 sujets au plus, vus dans les 24 h.
 const SUJETS_MAX = "25"
+// Une lecture entière de Sentry ne dure pas plus d'une minute : au-delà, les applications restantes
+// attendent le passage suivant (chaque appel est déjà borné à DELAI_MS).
+const LECTURE_MAX_MS = 60_000
 const PERIODE_SENTRY = "24h"
 // Les sous-états de Sentry qui font un signal, et leur nom pour une personne.
 export const NATURES = { new: "nouvelle", regressed: "revient", escalating: "en hausse" }
@@ -75,6 +78,12 @@ export function apiPostHog(hote) {
   return Object.hasOwn(API_POSTHOG, h) ? API_POSTHOG[h] : null
 }
 
+// Sur une liste demandée pour une période (statsPeriod), firstSeen et count ne valent que pour cette
+// période : un vieux sujet y paraît récent. lifetime donne la vraie première fois et le vrai total
+// (vérifié sur l'API le 19 nov. 2026).
+const premiereFois = (s) => s?.lifetime?.firstSeen ?? s?.firstSeen
+const total = (s) => s?.lifetime?.count ?? s?.count
+
 // Un sujet Sentry en signal. nature : nouvelle, revient, en hausse.
 export function signalSentry(produit, s, nature, maintenant = Date.now()) {
   return {
@@ -86,8 +95,8 @@ export function signalSentry(produit, s, nature, maintenant = Date.now()) {
     detail: {
       sujet: court(s.shortId, 40) || null,
       lieu: court(s.culprit, 120) || null,
-      occurrences: Math.max(0, Math.round(Number(s.count) || 0)),
-      premiere: iso(s.firstSeen),
+      occurrences: Math.max(0, Math.round(Number(total(s)) || 0)),
+      premiere: iso(premiereFois(s)),
       derniere: iso(s.lastSeen),
       nature,
       lien: lienSur(s.permalink),
@@ -106,7 +115,7 @@ export function signauxSentry(produit, sujets, maintenant = Date.now()) {
     if (!["error", "fatal"].includes(s.level)) continue
     const derniere = Date.parse(s.lastSeen)
     if (!Number.isFinite(derniere) || maintenant - derniere > RECENT_MS) continue
-    const premiere = Date.parse(s.firstSeen)
+    const premiere = Date.parse(premiereFois(s))
     const nature = s.substatus ? NATURES[s.substatus] : Number.isFinite(premiere) && maintenant - premiere < NOUVEAU_MS ? NATURES.new : null
     if (!nature) continue
     signaux.push(signalSentry(produit, s, nature, maintenant))
@@ -173,8 +182,12 @@ export async function lireSentry(ctx, produits, { maintenant = Date.now(), fetch
   const liste = [...new Set(produits)].filter((p) => SLUG.test(p))
   const signaux = []
   const vus = {}
+  const limite = Date.now() + LECTURE_MAX_MS
+  let lues = 0
   try {
     for (const produit of liste) {
+      if (Date.now() > limite) break
+      lues += 1
       const params = new URLSearchParams({ project: api.projet, environment: "production", statsPeriod: PERIODE_SENTRY, limit: SUJETS_MAX, query: `is:unresolved produit:${produit} service:${produit}` })
       const sujets = await appeler(`${api.base}/organizations/${api.organisation}/issues/?${params}`, cle, { fetch: f })
       signaux.push(...signauxSentry(produit, sujets, maintenant))
@@ -187,7 +200,8 @@ export async function lireSentry(ctx, produits, { maintenant = Date.now(), fetch
     noterLecture("sentry", false, `lecture impossible : ${e.message}`, maintenant, { applications: 0 })
     return vide
   }
-  noterLecture("sentry", true, `${liste.length} application(s) lue(s), ${signaux.length} erreur(s) à signaler`, maintenant, { applications: liste.length })
+  const reste = liste.length - lues
+  noterLecture("sentry", true, `${lues} application(s) lue(s)${reste ? `, ${reste} au prochain passage (lecture trop longue)` : ""}, ${signaux.length} erreur(s) à signaler`, maintenant, { applications: lues })
   return { signaux, vus }
 }
 
