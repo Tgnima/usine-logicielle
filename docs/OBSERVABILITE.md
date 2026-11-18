@@ -164,7 +164,8 @@ puis la reprise s'arrête, expliquée. Les deux fichiers du module sont ensuite 
 - Le module Python des dépôts repris masque de la même façon : les mêmes cas
   (`briques/reprise/cas-masquage.json`) sont rejoués par les tests de l'usine et par ceux du module.
   Il n'envoie à Sentry ni variables locales, ni code source, ni corps, en-têtes ou paramètres de
-  requête, ni utilisateur, ni fil d'Ariane : seulement la méthode et le chemin d'une requête.
+  requête, ni utilisateur, ni fil d'Ariane : d'une requête, seulement la méthode et l'adresse
+  sans ses paramètres (`_avant_envoi`).
 - Rien ne part du navigateur d'un produit fabriqué à partir d'une brique : sa politique de
   sécurité (CSP) l'interdit. Ce n'est pas garanti pour un produit repris.
 
