@@ -1,9 +1,10 @@
 # Observabilité : erreurs, état et journaux
 
 Ce que l'usine envoie à Sentry et à PostHog, comment le brancher, comment le lire et comment
-vérifier que ça arrive. Écrit d'après le code de `main` du 18 novembre 2026 (après la v1.1.1),
-puis mis à jour le 19 novembre avec la PR #23 : chaque produit dit à l'usine ce qu'il envoie, les
-plantages sont des erreurs dans les journaux, et un dépôt repris envoie ses erreurs et son pouls.
+vérifier que ça arrive. Écrit d'après le code de `main` du 18 novembre 2026 (après la v1.1.1), mis
+à jour le 19 novembre avec le pilote des pannes (PR #21), puis avec la PR #23 : chaque produit dit
+à l'usine ce qu'il envoie, les plantages sont des erreurs dans les journaux, et un dépôt repris
+envoie ses erreurs et son pouls.
 Les chemins des écrans de Sentry et de PostHog sont ceux de cette date : ces services peuvent
 les changer. Tout est facultatif : sans clé, rien ne part.
 
@@ -252,12 +253,34 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
   l'a que si on le lui donne, et aucune consigne des IA ne leur dit de consulter Sentry.
 - **PostHog** : il n'existe pas de connecteur. Aucune IA ne lit les événements ni les journaux
   dans PostHog.
-- **Le pilote des pannes** (`orchestrateur/src/pilote.mjs`, PR #21) lit chaque minute la sonde du
-  déployeur. En mode « corriger » (console, Règles de l'usine), une panne du code d'une application
-  de production fait demander une correction par l'usine elle-même, qui s'arrête à l'aperçu. Par
-  défaut, il observe : il dit ce qu'il aurait fait, sans rien lancer. Une panne donne aussi une
-  alerte Slack, un sujet Sentry et une ligne « À réparer » dans la file d'attention de la console.
-  Le pilote ne lit ni les erreurs de Sentry, ni les pouls de PostHog.
+- **Une panne donne une alerte Slack (ou dans la console), un sujet Sentry et une ligne « À
+  réparer »** dans la file d'attention de la console. Ensuite, c'est une personne qui demande la
+  correction, ou le pilote des pannes (ci-dessous).
+
+## Le pilote des pannes
+
+Depuis la PR #21, l'orchestrateur a un pilote (`orchestrateur/src/pilote.mjs`). Chaque minute, il
+lit la sonde du déployeur, **pas Sentry ni PostHog**. Pour une application de production en
+panne depuis 10 minutes (réglable), il décide par du code :
+
+- **attendre** : une mise en ligne est en cours, ou le projet est déjà en correction ou en
+  fabrication (il le dit une fois) ;
+- **prévenir une personne**, sans rien lancer d'autre : une cause hors du code de l'application
+  (serveur, mémoire, plusieurs applications à la fois), une cause inconnue, un projet qui n'est pas
+  « en production », un plafond atteint, ou une rechute (une panne dans les 7 jours qui suivent une
+  correction automatique de la même application) ;
+- **demander une correction** pour une panne du code de l'application. Le lot passe par la
+  fabrique, le vérificateur et la recette, puis s'arrête à l'aperçu. La mise en production reste
+  à une personne : le pilote n'a aucun moyen de mettre une application en ligne.
+
+Trois modes, dans la console (**Règles de l'usine**) ou dans la section `pilote` de
+`usine.config.yml` : coupé, **observer** (le mode par défaut : il dit ce qu'il aurait fait, sans
+rien lancer) et corriger. Plafonds : une correction automatique par application sur 7 jours, et
+trois par 24 heures pour toute l'usine.
+
+Ses messages arrivent comme les autres alertes de l'usine, sur Slack ou dans la console. Chaque
+décision est notée au journal (type `pilote`) : elle part donc vers PostHog comme un événement
+`journal`, sans son texte.
 
 ## Plafonds d'envoi
 
@@ -289,5 +312,6 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
   les retire, la console le montre : « n'envoie rien » ou « non vérifié ».
 - **Une même clé pour tous** : un produit pourrait envoyer des événements au nom d'un autre, ou
   épuiser le quota (voir `docs/SECURITE.md`).
-- **Le pilote des pannes ne voit que la sonde du déployeur** : ni les erreurs de Sentry, ni les
-  pouls de PostHog. Il observe par défaut (voir « Les IA, les journaux et Sentry »).
+- **Le pilote des pannes ne voit que ce que voit la sonde**, et il est en mode « observer » par
+  défaut. Une erreur qui ne fait pas tomber l'application (une page qui plante, une exception
+  attrapée), visible seulement dans Sentry ou dans les journaux, ne déclenche aucune correction.
