@@ -1,6 +1,7 @@
 import { StrictMode, Suspense, lazy } from "react"
 import { createRoot } from "react-dom/client"
 import "./styles.css"
+import "./posthog.js"
 import App from "./App.jsx"
 
 // Chargé à part : le kit ne pèse rien sur les écrans du produit.

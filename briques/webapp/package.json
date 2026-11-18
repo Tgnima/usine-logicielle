@@ -2,12 +2,21 @@
   "name": "produit",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "start": "node server/index.js",
     "test": "node --test --test-reporter=spec",
     "verify": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@opentelemetry/exporter-logs-otlp-http": "^0.301.2",
+    "@opentelemetry/resources": "^3.1.1",
+    "@opentelemetry/sdk-logs": "^3.1.1",
+    "posthog-js": "^1.447.15",
+    "posthog-node": "^5.71.0"
   }
 }
