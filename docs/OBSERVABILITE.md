@@ -119,7 +119,7 @@ usine qui contient la PR #23 a le module de sa pile dans `usine/` : celui de la 
 | Vers | Quoi | Quand |
 |---|---|---|
 | Sentry | Les erreurs du produit : chaque `console.error`, chaque exception non attrapée, et ce que le code signale avec `signalerErreur(error)`. Avec la pile d'appels, l'environnement et la version | À chaque erreur |
-| PostHog | `pouls` (distinct_id `produit:<slug>`) : le slug, l'environnement, la version, puis des nombres seulement : les compteurs métier ajoutés par `ajouterPouls()` (`ajouter_pouls()` en Python), les erreurs depuis le démarrage, la durée de marche et la mémoire | 30 s après le démarrage (`USINE_PREMIER_POULS_S` peut l'avancer), puis toutes les 5 minutes |
+| PostHog | `pouls` (distinct_id `produit:<slug>`) : le slug, l'environnement, la version, puis des nombres seulement : les compteurs métier ajoutés par `ajouterPouls()` (`ajouter_pouls()` en Python), les erreurs depuis le démarrage, la durée de marche et la mémoire | 30 s après le démarrage (`USINE_PREMIER_POULS_S` le règle, de 1 à 300 s), puis toutes les 5 minutes |
 
 En Python, les erreurs passent par `sentry-sdk`, initialisé avec `SENTRY_DSN`,
 `USINE_ENVIRONNEMENT` et `USINE_VERSION` : les exceptions non attrapées, celles des requêtes
@@ -136,7 +136,7 @@ clé). Caddy répond 404 à `/_usine/*` au public, que l'application soit proté
 | Produit | Erreurs de l'application et pouls | État, pannes, déploiements, journaux |
 |---|---|---|
 | Fabriqué à partir d'une brique par une usine qui contient la PR #9 (sur `main` depuis le 12 novembre 2026, première version publiée : v1.0.0) | Oui, dès que l'application a reçu les clés. La console ne peut le vérifier qu'avec un module qui publie `GET /_usine/observabilite` (PR #23 et après) : sinon, elle dit « non vérifié » | Oui |
-| Fabriqué par une usine plus ancienne | Non : le module n'est copié qu'à la création du dépôt, et une mise à jour de l'usine ne l'ajoute pas. Il faut l'ajouter au produit : copier `server/observabilite.js` de la brique, appeler `demarrerObservabilite()` dans `server/demarrage.js`, ajouter la route `GET /_usine/observabilite` dans `server/index.js` (comme carnet-citations #6, prospecta #78, pret-asso #23) | Oui |
+| Fabriqué par une usine plus ancienne | Non : le module n'est copié qu'à la création du dépôt, et une mise à jour de l'usine ne l'ajoute pas. Il faut l'ajouter au produit : copier `server/observabilite.js` de la brique, appeler `demarrerObservabilite()` dans `server/demarrage.js`, ajouter la route `GET /_usine/observabilite` dans `server/index.js`. C'est un geste à la main sur le dépôt du produit : `server/index.js` est protégé, une demande de corrections ne peut pas le changer | Oui |
 | **Repris** d'un dépôt existant, par une usine qui contient la PR #23 | Oui, en Node comme en Python : le module de sa pile est dans `usine/`, et l'épreuve de l'inventaire a exigé un vrai pouls (voir plus bas) | Oui |
 | **Repris** par une usine plus ancienne | Non : la reprise ne mettait le dépôt qu'au contrat d'hébergement (Dockerfile, port, `/api/health`, dossier de données). **Mais** le déployeur lui donne quand même `SENTRY_DSN`, `POSTHOG_TOKEN` et `POSTHOG_HOTE` : si son code contient déjà un kit Sentry ou PostHog qui lit ces variables, il enverra dans les projets de l'usine, sans le masquage ni les plafonds de l'usine | Oui |
 
@@ -222,13 +222,14 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
    - *reçu* : PostHog a accepté un pouls il y a moins de 15 minutes ; Sentry a accepté sa
      dernière erreur ;
    - *en échec* : le dernier envoi a été refusé ou n'a pas abouti, avec la raison (clé refusée,
-     quota atteint, pas de réponse à temps, service injoignable) ;
+     quota atteint, pas de réponse à temps, service injoignable, envoi refusé, souci chez le
+     service, envoi impossible) ;
    - *muet* : plus aucun pouls depuis 15 minutes, ou aucun après 10 minutes de marche ;
    - *n'envoie rien* : la clé est là, mais l'envoi n'est pas démarré dans son code, ou
      `sentry-sdk` manque (Python) ;
    - *non vérifié* : elle ne publie pas la route. Son module manque, ou il est plus ancien que la
-     PR #23 (acte-clair et vigie-copro envoient leur pouls sans la publier). Rien ne prouve alors
-     qu'elle envoie ;
+     PR #23 (un tel module envoie son pouls sans publier la route). Rien ne prouve alors qu'elle
+     envoie ;
    - *sans clé*, *en attente* (premier pouls à venir), *prête* (Sentry : aucune erreur à envoyer)
      ou *sans nouvelles* (pas de réponse, ou une sonde de plus de 3 minutes).
 
@@ -298,11 +299,13 @@ décision est notée au journal (type `pilote`) : elle part donc vers PostHog co
 - **Les produits fabriqués avant la PR #9 (v1.0.0) et ceux repris avant la PR #23** n'envoient
   pas leurs propres erreurs (voir le tableau plus haut). Ils restent suivis par le déployeur. Une
   mise à jour de l'usine ne leur ajoute pas le module : il faut le leur ajouter.
-- **Les modules d'avant la PR #23** (acte-clair, vigie-copro) envoient sans le dire à l'usine :
+- **Les modules d'avant la PR #23** envoient sans le dire à l'usine :
   la console les dit « non vérifié » tant que leur code n'a pas le module à jour et la route.
 - **Le niveau des lignes de journal est lu sur leur texte.** Les plantages Python et Node sont
   reconnus, mais pas ceux d'autres langages, ni un niveau numérique dans un journal JSON (pino).
-  Une trace dont le début est sorti des 200 dernières lignes n'est plus reconnue.
+  Une trace dont l'en-tête est sorti des 200 dernières lignes n'est reconnue qu'en partie : en
+  Python, les cadres et la ligne de l'exception restent `error` ; en Node, les lignes `at …` qui
+  restent passent en `info`.
 - **Les journaux d'un conteneur très bavard peuvent être tronqués** : au plus 200 lignes par
   conteneur et par passage.
 - **Le module des produits issus d'une brique n'est pas protégé.** `server/observabilite.js` et

@@ -189,6 +189,9 @@ require("http").createServer((q, r) => {
 // route qui dit l'état des envois (ETAT_OBS_OK ; SENTRY_PAS_PRET si sentry-sdk manque).
 // Le pouls vient du code du produit : rien de lui n'est écrit tel quel. Le nom d'une propriété
 // est réduit à des caractères sûrs, sinon un « \n@@ … » dans un nom imiterait un marqueur.
+// Limite : l'épreuve juge le travail de l'agent, pas un produit hostile. Pendant l'épreuve, le
+// produit tourne avec les mêmes droits que ce script : il pourrait écrire dans la capture ou dans
+// sa sortie. Le vérificateur est écrit juste avant d'être lancé, pour réduire cette fenêtre.
 export const VERIFIER_OBSERVABILITE = String.raw`// L'épreuve de l'observabilité d'un dépôt repris.
 const fs = require("fs")
 const [capture, route, delai] = process.argv.slice(2)
@@ -245,11 +248,12 @@ const EPREUVE = [
   libererPort(PORT_EPREUVE),
   // Un faux Sentry et un faux PostHog : l'application démarre avec leurs adresses, son premier pouls part après 2 s.
   ecrireFichier("/tmp/sorties/inventaire/capteur.cjs", CAPTEUR_OBSERVABILITE),
-  ecrireFichier("/tmp/sorties/inventaire/verifier-obs.cjs", VERIFIER_OBSERVABILITE),
   `fuser -k -n tcp ${PORT_CAPTEUR} >/dev/null 2>&1; rm -f /tmp/sorties/inventaire/capteur.jsonl; (setsid node /tmp/sorties/inventaire/capteur.cjs /tmp/sorties/inventaire/capteur.jsonl ${PORT_CAPTEUR} > /dev/null 2>&1 &)`,
   `rm -rf /tmp/inventaire-data; touch /tmp/sorties/inventaire/avant-demarrage; sleep 1`,
   `if [ -n "$DEMARRER" ]; then (PORT=${PORT_EPREUVE} DATA_DIR=/tmp/inventaire-data DEMO=1 PUBLIC_URL=http://localhost:${PORT_EPREUVE} ${ENV_EPREUVE_OBSERVABILITE} setsid bash -c "$DEMARRER" > /tmp/sorties/inventaire/app.log 2>&1 &); fi`,
   `for i in $(seq 1 45); do if curl -sf http://localhost:${PORT_EPREUVE}/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done`,
+  // Le vérificateur, écrit juste avant d'être lancé (le produit tourne déjà).
+  ecrireFichier("/tmp/sorties/inventaire/verifier-obs.cjs", VERIFIER_OBSERVABILITE),
   `if curl -sf http://localhost:${PORT_EPREUVE}/api/health > /dev/null; then node /tmp/sorties/inventaire/verifier-obs.cjs /tmp/sorties/inventaire/capteur.jsonl http://localhost:${PORT_EPREUVE}/_usine/observabilite ${DELAI_POULS_EPREUVE_S}; fi`,
   `sleep 2; echo "@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/inventaire/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' -not -path '*/__pycache__/*' -not -path './dist/*' 2>/dev/null | head -5 | tr '\\n' ' ')"`,
   libererPort(PORT_EPREUVE),

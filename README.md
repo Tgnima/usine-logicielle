@@ -431,7 +431,7 @@ docker compose exec orchestrateur node src/cli.mjs production 1
     réponse), *muet*, *n'envoie rien* (module pas démarré, ou `sentry-sdk` manquant), *sans clé*,
     *en attente*, *prête* (rien à envoyer encore) ou *sans nouvelles*. Une application qui ne
     publie pas cette route est dite *non vérifié* : son module manque, ou il est plus ancien que
-    cette version (acte-clair et vigie-copro envoient leur pouls sans publier la route). Rien ne
+    cette version (un tel module envoie son pouls sans publier la route). Rien ne
     prouve alors qu'elle envoie. Limite : PostHog accepte un pouls même avec un jeton inconnu. C'est le
     bouton « Tester » qui vérifie le jeton.
   - **Les journaux des conteneurs** sont classés par niveau (`niveauDe`, `deployeur/observation.mjs`).

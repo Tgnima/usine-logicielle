@@ -1805,14 +1805,15 @@ const nomAppli = (a) => `${a.nom}${a.environnement === "production" ? "" : " (ap
 const RAISONS_ENVOI = { "HTTP 401": "clé refusée", "HTTP 403": "clé refusée", "HTTP 429": "quota atteint", "délai dépassé": "pas de réponse à temps" }
 const raisonEnvoi = (r) => {
   r = r ?? ""
-  return RAISONS_ENVOI[r] ?? (/^E[A-Z]+$/.test(r) ? "service injoignable" : /^HTTP 5/.test(r) ? "souci chez le service" : /^HTTP 4/.test(r) ? "envoi refusé" : "envoi impossible")
+  // Un code système (ECONNREFUSED, EAI_AGAIN…) : injoignable ; un délai (UND_ERR_CONNECT_TIMEOUT) : pas de réponse.
+  return RAISONS_ENVOI[r] ?? (/TIMEOUT/.test(r) ? "pas de réponse à temps" : /^E[A-Z0-9_]+$/.test(r) ? "service injoignable" : /^HTTP 5/.test(r) ? "souci chez le service" : /^HTTP 4/.test(r) ? "envoi refusé" : "envoi impossible")
 }
 const SANS_NOUVELLES = ["", "sans nouvelles"]
 const ENVOIS_RECUS = { ok: ["vert", "reçu"], echec: ["rouge", "en échec"], muet: ["orange", "muet"], non_branche: ["orange", "n'envoie rien"], sans_cle: ["", "sans clé"], attente: ["", "en attente"], inconnu: SANS_NOUVELLES }
 // Le badge d'une application. Sentry : sans erreur à envoyer, elle est prête, pas en attente.
 // Sans réponse, l'usine ne sait pas : « sans nouvelles », jamais « n'envoie rien ».
-// Un module absent ou plus ancien ne se distingue pas de l'extérieur (acte-clair envoie son pouls
-// sans publier la route) : « non vérifié », jamais « n'envoie rien », qui serait faux pour lui.
+// Un module absent ou plus ancien ne se distingue pas de l'extérieur (un module d'avant la route
+// envoie son pouls sans la publier) : « non vérifié », jamais « n'envoie rien », qui serait faux pour lui.
 const badgeEnvoi = (s, a) => (s.id === "sentry" && a.etat === "attente" ? ["", "prête"]
   : a.etat === "non_branche" && a.raison === "sans_reponse" ? SANS_NOUVELLES
   : a.etat === "non_branche" && a.raison === "module_absent" ? ["orange", "non vérifié"]

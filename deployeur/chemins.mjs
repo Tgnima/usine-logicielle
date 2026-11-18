@@ -27,15 +27,16 @@ export function cheminsDeclares(contenu) {
   const chemins = []
   const refuses = []
   // Les chemins du portier et de l'usine ne se déclarent jamais publics, en minuscules ou non
-  // (Caddy ignore la casse), ni par un joker qui les couvrirait (« /_u* »).
+  // (Caddy ignore la casse), ni par un joker qui les couvrirait (« /_u* »), ni par « // » (Caddy le
+  // nettoie). La comparaison se fait par segment : « /_usines/* » n'est pas « /_usine/* ».
   const reserve = (c) => {
-    const base = c.toLowerCase().replace(/\*$/, "")
-    return ["/_portier", "/_usine"].some((r) => base.startsWith(r) || (c.endsWith("*") && r.startsWith(base)))
+    const base = c.toLowerCase().replace(/\/{2,}/g, "/").replace(/\*$/, "")
+    return ["/_portier", "/_usine"].some((r) => base === r || base.startsWith(`${r}/`) || (c.endsWith("*") && r.startsWith(base)))
   }
   for (const c of liste) {
     const ok = typeof c === "string"
       && /^\/[A-Za-z0-9._~\-/]*\*?$/.test(c) // un chemin simple, éventuellement terminé par *
-      && !c.includes("..") && !reserve(c)
+      && !c.includes("..") && !/(^|\/)\.(\/|$)/.test(c) && !reserve(c)
       && !TROP_LARGES.has(c) && c.replace(/\*$/, "").replace(/\/$/, "").length >= 3
     ;(ok ? chemins : refuses).push(String(c))
   }

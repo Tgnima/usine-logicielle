@@ -80,3 +80,9 @@ test("les chemins réservés ne passent ni en majuscules, ni par un joker qui le
   const { CHEMIN_OBSERVABILITE } = await import("../sonde.mjs")
   assert.ok(CHEMINS_INTERNES.some((c) => (c.endsWith("*") ? CHEMIN_OBSERVABILITE.startsWith(c.slice(0, -1)) : c === CHEMIN_OBSERVABILITE)))
 })
+
+test("les chemins réservés se comparent par segment, sans contournement par « // » ou « . »", () => {
+  const r = cheminsDeclares('{"chemins_publics": ["/_usines/*", "/_uploads/*", "/_up/*", "//_usine/*", "/./_usine/*", "/a/./b", "/_portier*"]}')
+  assert.deepEqual(r.chemins, ["/_usines/*", "/_uploads/*", "/_up/*"])
+  assert.deepEqual(r.refuses, ["//_usine/*", "/./_usine/*", "/a/./b", "/_portier*"])
+})

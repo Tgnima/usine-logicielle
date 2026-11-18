@@ -50,8 +50,8 @@ Ce qui est sur `main` sans être encore dans une version.
 
 **À faire** : rien pour l'usine. Une application fabriquée par une usine d'avant la v1.0.0, ou
 reprise avant cette version, n'envoie pas ses propres erreurs : le module ne lui est pas ajouté
-de lui-même. Une application dont le module est plus ancien que cette version (acte-clair,
-vigie-copro) envoie, mais la console la dit « non vérifié » tant que son code n'a pas le module
+de lui-même. Une application dont le module est plus ancien que cette version
+envoie, mais la console la dit « non vérifié » tant que son code n'a pas le module
 à jour et la route `GET /_usine/observabilite` (`docs/OBSERVABILITE.md`). Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
 commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
 ou le retire de `.usine/e2e/`.
