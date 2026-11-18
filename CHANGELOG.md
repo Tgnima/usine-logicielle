@@ -28,15 +28,16 @@ Ce qui est sur `main` sans être encore dans une version.
   `KeyError: 'plan'`) ou une exception Node (`TypeError: …` et sa pile) part vers PostHog au
   niveau `error`, et non plus `info`. Une ligne ordinaire ne change pas de niveau.
 - **La console dit ce que chaque application envoie vraiment** à Sentry et à PostHog (reçu, en
-  échec, muet, n'envoie rien…), au lieu de « N sur N ont la dernière clé ». Chaque produit le
+  échec, muet, non vérifié…), au lieu de « N sur N ont la dernière clé ». Chaque produit le
   dit à l'usine par `GET /_usine/observabilite`, que Caddy ne sert jamais au public.
 - **Un dépôt repris envoie ses erreurs et son pouls**, dans sa pile. En Python, c'est un module
   avec `sentry-sdk` (`briques/reprise/observabilite.py`). L'épreuve de l'inventaire exige un
   vrai pouls avant d'aller plus loin.
 
 **À faire** : rien pour l'usine. Les applications créées avant le module d'observabilité (ou
-avec un module plus ancien que cette version) apparaissent « n'envoie rien » dans la console tant
-que leur code n'a pas reçu le module à jour et la route `GET /_usine/observabilite`. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
+avec un module plus ancien que cette version, comme acte-clair et vigie-copro) apparaissent « non
+vérifié » dans la console tant que leur code n'a pas reçu le module à jour et la route
+`GET /_usine/observabilite`. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
 commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
 ou le retire de `.usine/e2e/`.
 

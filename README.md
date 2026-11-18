@@ -426,10 +426,11 @@ docker compose exec orchestrateur node src/cli.mjs production 1
     réseau du produit. Caddy ne la sert jamais au public (`CHEMINS_INTERNES`, `deployeur/chemins.mjs`).
     La console en tire un état par application : *reçu* (PostHog a accepté un pouls il y a
     moins de 15 min ; Sentry, la dernière erreur), *en échec* (avec la raison : clé refusée, pas de
-    réponse), *muet*, *n'envoie rien* (module absent ou pas démarré, ou `sentry-sdk` manquant),
-    *sans clé*, *en attente* ou *prête* (rien à envoyer encore). Une application qui ne publie
-    pas cette route, parce que son module est plus ancien, est dite *n'envoie rien* : rien ne
-    prouve qu'elle envoie. Limite : PostHog accepte un pouls même avec un jeton inconnu. C'est le
+    réponse), *muet*, *n'envoie rien* (module pas démarré, ou `sentry-sdk` manquant), *sans clé*,
+    *en attente*, *prête* (rien à envoyer encore) ou *sans nouvelles*. Une application qui ne
+    publie pas cette route est dite *non vérifié* : son module manque, ou il est plus ancien que
+    cette version (acte-clair et vigie-copro envoient leur pouls sans publier la route). Rien ne
+    prouve alors qu'elle envoie. Limite : PostHog accepte un pouls même avec un jeton inconnu. C'est le
     bouton « Tester » qui vérifie le jeton.
   - **Les journaux des conteneurs** sont classés par niveau (`niveauDe`, `deployeur/observation.mjs`).
     Une exception Python (`Traceback (most recent call last):`, les cadres, puis

@@ -1811,7 +1811,12 @@ const SANS_NOUVELLES = ["", "sans nouvelles"]
 const ENVOIS_RECUS = { ok: ["vert", "reçu"], echec: ["rouge", "en échec"], muet: ["orange", "muet"], non_branche: ["orange", "n'envoie rien"], sans_cle: ["", "sans clé"], attente: ["", "en attente"], inconnu: SANS_NOUVELLES }
 // Le badge d'une application. Sentry : sans erreur à envoyer, elle est prête, pas en attente.
 // Sans réponse, l'usine ne sait pas : « sans nouvelles », jamais « n'envoie rien ».
-const badgeEnvoi = (s, a) => (s.id === "sentry" && a.etat === "attente" ? ["", "prête"] : a.etat === "non_branche" && a.raison === "sans_reponse" ? SANS_NOUVELLES : ENVOIS_RECUS[a.etat] ?? SANS_NOUVELLES)
+// Un module absent ou plus ancien ne se distingue pas de l'extérieur (acte-clair envoie son pouls
+// sans publier la route) : « non vérifié », jamais « n'envoie rien », qui serait faux pour lui.
+const badgeEnvoi = (s, a) => (s.id === "sentry" && a.etat === "attente" ? ["", "prête"]
+  : a.etat === "non_branche" && a.raison === "sans_reponse" ? SANS_NOUVELLES
+  : a.etat === "non_branche" && a.raison === "module_absent" ? ["orange", "non vérifié"]
+  : ENVOIS_RECUS[a.etat] ?? SANS_NOUVELLES)
 function phraseEnvoi(s, a) {
   const posthog = s.id === "posthog"
   const cleRefusee = ["HTTP 401", "HTTP 403"].includes(a.raison)
@@ -1825,7 +1830,7 @@ function phraseEnvoi(s, a) {
   if (a.etat === "non_branche") return a.raison === "module_arrete" ? "A la clé, mais rien ne part : l'envoi n'est pas démarré dans son code."
     : a.raison === "sdk_absent" ? "A la clé, mais rien ne part : il manque à son code la bibliothèque de Sentry."
     : a.raison === "sans_reponse" ? "Ne répond pas quand l'usine lui demande ce qu'elle envoie."
-    : "Son code ne le prévoit pas encore (application créée ou reprise avant cet envoi)."
+    : "Rien ne prouve qu'elle envoie : son code n'a pas le module d'observabilité de l'usine, ou une version plus ancienne qui ne dit pas ce qu'elle envoie."
   return "L'usine n'a pas encore pu lui demander ce qu'elle envoie."
 }
 // Ce qui demande quelque chose d'abord, une ligne chacune ; ce qui va bien, regroupé sur une ligne.
