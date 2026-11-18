@@ -25,6 +25,7 @@ import { demarrerConsole } from "./console.mjs"
 import { demarrerSynchronisationPortier, portier } from "./portier.mjs"
 import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
+import { demarrerPilote } from "./pilote.mjs"
 import { demarrerDomaines, ouvrirDomaines } from "./domaines.mjs"
 
 // D'abord : une erreur de démarrage (contrat illisible, secret manquant) part aussi vers Sentry.
@@ -77,6 +78,7 @@ demarrerSynchronisationPortier(ctx)
 demarrerCycle(ctx)
 demarrerDomaines(ctx)
 surveillerSante(ctx)
+demarrerPilote(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).
 // Elle n'écoute que dans le conteneur.

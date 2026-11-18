@@ -244,3 +244,21 @@ test("reprendre un dépôt : une adresse illisible est refusée avant tout appel
   assert.match(r.corps.erreur, /illisible/)
   assert.equal((await appel("/api/projets/reprendre", { methode: "POST", corps: {} })).status, 400)
 })
+
+test("le pilote des pannes : trois modes, une liste fermée, réservé aux administrateurs et tracé", async () => {
+  const avant = await json(await appel("/api/reglages"))
+  assert.equal(avant.corps.pilote.mode, "observer", "par défaut, il observe")
+  assert.equal(avant.corps.pilote.par_produit, 1)
+  assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "production" } })).status, 400)
+  assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: {} })).status, 400)
+  assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "corriger" }, session: "membre" })).status, 403)
+  const r = await json(await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "corriger" } }))
+  assert.equal(r.statut, 200)
+  assert.match(r.corps.message, /jusqu'à l'aperçu/)
+  assert.equal((await json(await appel("/api/reglages"))).corps.pilote.mode, "corriger")
+  const { corps: h } = await json(await appel("/api/historique?type=reglage"))
+  assert.ok(h.some((l) => /Pilote des pannes : corriger jusqu'à l'aperçu/.test(l.message) && l.par === "admin@exemple.test"))
+  assert.equal((await appel("/api/historique?type=pilote")).status, 200)
+  // Remis comme avant : les autres tests ne dépendent pas de ce réglage.
+  assert.equal((await appel("/api/reglages/pilote", { methode: "PUT", corps: { mode: "observer" } })).status, 200)
+})
