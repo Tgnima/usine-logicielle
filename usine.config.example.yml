@@ -124,11 +124,11 @@ relais:
 # états vides, mobile) construit à partir des remarques du relecteur design. Une fois par projet.
 finition: true
 
-# Le pilote des pannes (orchestrateur/src/pilote.mjs) : une application en ligne en panne à cause de
-# son code est corrigée seule, jusqu'à l'aperçu. La mise en ligne pour de vrai reste à une personne
-# (politiques.mettre_en_production). Le mode se change aussi dans la console (Règles de l'usine).
+# La boucle d'amélioration (orchestrateur/src/pilote.mjs et propositions.mjs) : une application en
+# ligne en panne à cause de son code, ou une nouvelle erreur dans Sentry, devient une proposition de
+# correction. Une personne la lance ou l'écarte (console, Slack) : rien ne part sans elle, et la
+# correction s'arrête à l'aperçu. Le mode se change aussi dans la console (Règles de l'usine).
+# Sentry et PostHog sont lus avec les clés de leurs connecteurs (console, Connecteurs), en lecture seule.
 pilote:
-  mode: observer                   # coupe | observer (dit ce qu'il aurait fait) | corriger
+  mode: observer                   # coupe | observer (dit ce qu'il aurait proposé) | proposer
   minutes_avant_action: 10         # une panne plus courte se règle souvent seule (Docker relance l'application)
-  corrections_par_application: 1   # sur 7 jours ; une panne qui revient dans la semaine : une personne
-  corrections_par_jour: 3          # pour toute l'usine

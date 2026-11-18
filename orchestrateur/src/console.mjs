@@ -42,6 +42,8 @@ import { lireReorientation } from "./reorientation.mjs"
 import { ecartsEnCorrections, lireRecette, pointsACorriger, propositionsRecette } from "./recette.mjs"
 import { elementsAttente } from "./attention.mjs"
 import { MODES_PILOTE, etatPilote, reglerPilote } from "./pilote.mjs"
+import { ecarterProposition, etatPropositions, lancerProposition } from "./propositions.mjs"
+import { etatSources } from "./signaux.mjs"
 import { fileAttente } from "./visibilite.mjs"
 import { ETAPES_TACHE, attendDecision, etapeTache, normaliserQuestions, phase, presenterDecision } from "./presentation.mjs"
 import { GOUFFRE, SEUIL, etageAtteint, verdictPyramide } from "./pyramide.mjs"
@@ -263,7 +265,7 @@ export function estimation(ctx, nbTaches = null) {
 }
 
 // L'historique : qui a fait quoi (validations, décisions, production, corrections, réglages…).
-const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur", "reglage", "pilote"]
+const TYPES_HISTORIQUE = ["demande", "validation", "decision", "production", "abandon", "cycle", "plan", "domaine", "corrections", "remarque", "escalade", "erreur", "reglage", "pilote", "proposition"]
 function historique(ctx, { projet = null, type = null } = {}) {
   const types = type && TYPES_HISTORIQUE.includes(type) ? [type] : TYPES_HISTORIQUE
   const filtre = projet ? "AND j.projet_id = ?" : ""
@@ -306,7 +308,9 @@ async function reglages(ctx) {
       demo: !!config.demo?.actif,
       perimetre_protege: config.perimetre_protege ?? [],
     },
-    pilote: etatPilote(ctx),
+    // Le pilote et la boucle d'amélioration : le mode, les pannes, les propositions, et ce que
+    // l'usine arrive à lire de Sentry et de PostHog (sans jamais montrer une clé).
+    pilote: { ...etatPilote(ctx), propositions: etatPropositions(ctx.db), sources: etatSources(ctx) },
   }
 }
 
@@ -532,6 +536,9 @@ const ROUTES = [
     if (!MODES_PILOTE.includes(mode)) throw erreur(400, "Choisis un des trois modes du pilote.")
     return reglerPilote(ctx, mode, qui.email)
   }],
+  // La boucle d'amélioration (propositions.mjs) : seule une personne lance ou écarte une proposition.
+  ["POST", /^\/api\/propositions\/(\d{1,9})\/lancer$/, (ctx, [id], _c, qui) => lancerProposition(ctx, Number(id), qui.email)],
+  ["POST", /^\/api\/propositions\/(\d{1,9})\/ecarter$/, (ctx, [id], _c, qui) => ecarterProposition(ctx, Number(id), qui.email)],
   // GitHub : l'application de l'usine (le retour de GitHub est traité dans traiter(), c'est une navigation).
   ["POST", /^\/api\/github\/connexion$/, (ctx, _p, c, qui) => demarrerConnexion(ctx, { organisation: c.organisation, console: adresseTableau(ctx.config) }, qui.email)],
   ["DELETE", /^\/api\/github$/, (ctx, _p, _c, qui) => oublierForge(ctx, qui.email)],

@@ -1,8 +1,9 @@
 // La file d'attention : ce qui attend une personne, en trois groupes, avec un seul compte partout
 // (l'accueil, la page Visibilité, le titre de l'onglet, les notifications).
 //
-//   decider     une décision (A, B ou C), un plan, des questions, la fiche d'un public, un produit
-//               prêt à mettre en ligne ;
+//   decider     une décision (A, B ou C), une correction proposée par la boucle d'amélioration
+//               (Lancer ou Écarter), un plan, des questions, la fiche d'un public, un produit prêt à
+//               mettre en ligne ;
 //   debloquer   ce qui ne bougera pas seul, avec une seule action par cas : un projet en échec ou une
 //               réorientation dont l'analyse a échoué (Relancer), la fabrication en pause faute
 //               d'accès (reprise à telle heure), le coffre des clés verrouillé (à régler sur le
@@ -22,6 +23,7 @@ import { enregistrementDns, ipServeur } from "./domaines.mjs"
 import { etatFournisseurs } from "./fournisseurs.mjs"
 import { facturationsEnCours } from "./moteurs.mjs"
 import { normaliserQuestions, presenterDecision } from "./presentation.mjs"
+import { ligneContexte, ligneSignal, propositionsOuvertes } from "./propositions.mjs"
 import { reorientationEnPreparation } from "./reorientation.mjs"
 import { dernierEtatUsine } from "./sante.mjs"
 
@@ -30,12 +32,12 @@ export const GROUPES = ["decider", "debloquer", "reparer"]
 // L'ordre dans un groupe : une décision d'abord ; un projet en échec avant une pause ; une panne de
 // l'usine avant celle d'un produit (elle les arrête tous).
 const ORDRE = {
-  decision: 0, plan: 1, questions: 2, persona: 3, livre: 4,
+  decision: 0, proposition: 1, plan: 2, questions: 3, persona: 4, livre: 5,
   echec: 10, pause: 11, coffre: 12, tache: 13, dns: 14,
   usine: 20, sonde: 21, panne: 22,
 }
 const GROUPE_DU_TYPE = {
-  decision: "decider", plan: "decider", questions: "decider", persona: "decider", livre: "decider",
+  decision: "decider", proposition: "decider", plan: "decider", questions: "decider", persona: "decider", livre: "decider",
   echec: "debloquer", pause: "debloquer", coffre: "debloquer", tache: "debloquer", dns: "debloquer",
   usine: "reparer", sonde: "reparer", panne: "reparer",
 }
@@ -148,6 +150,17 @@ function aDecider(ctx, raisons) {
         consigne: Boolean(t) && !SANS_CONSIGNE.includes(e.raison) && d.options.some((o) => o.cle === "A"),
         options: d.options.map((o) => ({ cle: o.cle, libelle: o.libelle, consequence: o.consequence || o.detail || "", recommande: o.recommande })),
       },
+    })
+  }
+  // Une correction proposée (propositions.mjs) : ce que l'usine a relevé, puis Lancer ou Écarter.
+  for (const p of propositionsOuvertes(db)) {
+    const [premier] = p.signaux
+    liste.push({
+      groupe: "decider", type: "proposition", cle: `proposition:${p.id}`, projet: p.projet_id,
+      titre: `${p.nom ?? p.produit} · correction proposée${p.rechute_de ? " (rechute)" : ""}`,
+      detail: premier ? `${premier.source === "sentry" ? "Erreur Sentry" : "Panne"} : ${premier.titre}${p.signaux.length > 1 ? ` · ${pluriel(p.signaux.length - 1, "autre signal", "autres signaux")}` : ""}` : "",
+      depuis: iso(p.cree_le), lien: `#/projets/${p.projet_id}`,
+      action: { type: "proposition", id: p.id, faits: p.signaux.slice(0, 4).map((s) => premiereLigne(ligneSignal(s))), contexte: ligneContexte(p.contexte) },
     })
   }
   // depuis : la dernière modification du projet, à peu près le moment où il s'est mis à attendre.

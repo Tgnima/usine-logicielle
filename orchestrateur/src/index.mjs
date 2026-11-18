@@ -26,6 +26,7 @@ import { demarrerSynchronisationPortier, portier } from "./portier.mjs"
 import { demarrerCycle, mettreAJourUsine, ouvrirCycle } from "./cycle.mjs"
 import { surveillerSante } from "./sante.mjs"
 import { demarrerPilote } from "./pilote.mjs"
+import { demarrerBoucle, proposer } from "./propositions.mjs"
 import { demarrerDomaines, ouvrirDomaines } from "./domaines.mjs"
 
 // D'abord : une erreur de démarrage (contrat illisible, secret manquant) part aussi vers Sentry.
@@ -78,8 +79,10 @@ demarrerSynchronisationPortier(ctx)
 demarrerCycle(ctx)
 demarrerDomaines(ctx)
 surveillerSante(ctx)
-// Le pilote ne reçoit que la demande de corrections : il n'a aucun moyen de mettre en ligne.
-demarrerPilote(ctx, { corriger: livraison.demanderCorrections })
+// La boucle d'amélioration : le pilote (pannes) et la lecture de Sentry ne font que proposer. Seule
+// une personne lance une correction (lancerProposition, depuis la console ou Slack).
+demarrerPilote(ctx, { proposer })
+demarrerBoucle(ctx)
 
 // L'API locale, pour la CLI (docker compose exec orchestrateur node src/cli.mjs …).
 // Elle n'écoute que dans le conteneur.

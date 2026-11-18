@@ -12,15 +12,25 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
-- **Le pilote des pannes** : quand une application en ligne tombe en panne à cause de son code
-  (elle s'arrête à chaque démarrage, répond par une erreur ou ne répond plus) depuis 10 minutes,
-  l'usine demande seule une correction. Le lot passe par la fabrique, le vérificateur et la recette,
-  puis s'arrête à l'aperçu : la mise en ligne pour de vrai reste à une personne. Une cause hors du
-  code (serveur, mémoire, plusieurs applications à la fois), un plafond atteint (trois corrections
-  par 24 h pour l'usine) ou une panne qui revient dans la semaine qui suit une correction
-  automatique de la même application : un message, et rien d'autre. Trois modes, dans la console (Règles de l'usine) : coupé, observer
-  (par défaut : il dit ce qu'il aurait fait, sans rien lancer) et corriger. Réglages : section
+- **La boucle d'amélioration** : un incident en production devient une proposition de
+  correction, que l'on lance ou que l'on écarte depuis la console (Ce qui t'attend) ou depuis
+  Slack. Rien ne part sans une personne. Deux sortes d'incidents en font naître une :
+  - une panne due au code (elle s'arrête à chaque démarrage, répond par une erreur ou ne répond
+    plus) depuis 10 minutes, vue par la sonde ;
+  - une erreur Sentry nouvelle, qui revient ou en hausse, dans une application en production.
+
+  Une proposition regroupe les signaux d'un même produit, avec les chiffres de PostHog. Lancée,
+  elle devient une demande de corrections. Le lot s'arrête à l'aperçu, et la mise en ligne reste
+  à une personne. Une fois en ligne, l'usine vérifie pendant 7 jours que l'incident ne revient pas
+  (« tenue », ou « rechute » à proposer de nouveau). Une cause hors du code (serveur, mémoire,
+  plusieurs applications à la fois) donne un message, sans proposition. Trois modes, dans la
+  console (Règles de l'usine) : coupé, observer (par défaut) et proposer. Réglages : section
   `pilote` de `usine.config.yml`.
+- **Connecteur PostHog** (lecture seule, serveur MCP de PostHog, clé personnelle « MCP Server »).
+  Les connecteurs Sentry et PostHog sont conseillés aussi pour l'analyste (rôle « plan »).
+  **À faire pour s'en servir** : dans la console, Connecteurs, colle le jeton de lecture de
+  Sentry et la clé de PostHog, puis active-les pour « plan » et « construction ». Sans eux, la
+  boucle marche avec la sonde seule.
 - **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une
   régression, que le codeur répare, sauf si un critère de la tâche en cours change exprès ce
   comportement. Le vérificateur cite ce critère, et l'usine vérifie qu'il existe et que le test
