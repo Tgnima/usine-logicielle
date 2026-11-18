@@ -1,7 +1,7 @@
 // La sonde des produits : lecture de docker inspect, clés, redémarrages récents, jugement.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { FORMAT_INSPECT, SEUIL_BOUCLE, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, noterRedemarrages, versionDeLImage } from "../sonde.mjs"
+import { FORMAT_INSPECT, SEUIL_BOUCLE, cleDuConteneur, conteneurActif, inspectIncomplet, jugerProduit, lireInspect, lireObservabilite, noterRedemarrages, versionDeLImage } from "../sonde.mjs"
 
 const enMarche = (autres = {}) => ({ nom: "usine-prod-vigie-copro-blue", etat: "running", sante: "healthy", redemarrages: 0, demarre_le: "2026-11-08T22:09:00Z", code_sortie: 0, oom: false, image: "usine-produit-vigie-copro:b2ac2d85bd6b", ...autres })
 const repond = { code: 200, ms: 40 }
@@ -158,4 +158,32 @@ test("inspectIncomplet : un conteneur parti est nommé dans l'erreur ; un inspec
   const prefixes = ["usine-apercu-vigie-copro-12", "usine-apercu-vigie-copro"]
   assert.equal(inspectIncomplet(prefixes, [enMarche({ nom: "usine-apercu-vigie-copro-12" })], "/usine-apercu-vigie-copro-12\trunning\t\t0\tx\t0\tfalse\ti\nCannot connect to the Docker daemon"), true)
   assert.equal(inspectIncomplet(prefixes, [enMarche({ nom: "usine-apercu-vigie-copro-12" })], "Error: No such object: usine-apercu-vigie-copro"), false)
+})
+
+test("lireObservabilite : ce que le produit dit de ses envois, réduit à des comptes et des dates", () => {
+  const reponse = {
+    contrat: 1, pile: "python", demarre: true, en_marche_s: 312.4, erreurs_depuis_demarrage: 2,
+    sentry: { actif: true, suivi: true, envoyees: 1, echecs: 0, ignorees: 3, dernier_ok: "2026-11-18T10:00:00.000Z", dernier_echec: null },
+    posthog: { actif: true, suivi: true, envoyes: 2, echecs: 1, dernier_ok: "2026-11-18T10:05:00Z", dernier_echec: { le: "2026-11-18T09:55:00.123456Z", raison: "HTTP 401 <script>alert(1)</script>", detail: "phc_secret" } },
+    autre: "ignoré",
+  }
+  assert.deepEqual(lireObservabilite(200, JSON.stringify(reponse)), {
+    publie: true, pile: "python", demarre: true, en_marche_s: 312,
+    sentry: { actif: true, pret: true, suivi: true, envoyes: 1, echecs: 0, dernier_ok: "2026-11-18T10:00:00.000Z", dernier_echec: null },
+    posthog: { actif: true, pret: true, suivi: true, envoyes: 2, echecs: 1, dernier_ok: "2026-11-18T10:05:00Z", dernier_echec: { le: "2026-11-18T09:55:00.123456Z", raison: "HTTP 401 scriptalert1script" } },
+  })
+})
+
+test("lireObservabilite : un module absent ou ancien ne publie rien, sans être une panne", () => {
+  assert.deepEqual(lireObservabilite(404, "Not Found"), { publie: false, raison: "absent" })
+  // Un produit plus ancien sert sa page d'accueil sur toute adresse inconnue.
+  assert.deepEqual(lireObservabilite(200, "<!doctype html><html>"), { publie: false, raison: "absent" })
+  assert.deepEqual(lireObservabilite(200, JSON.stringify({ ok: true })), { publie: false, raison: "absent" })
+  assert.deepEqual(lireObservabilite(200, JSON.stringify({ contrat: 1, x: "y".repeat(9000) })), { publie: false, raison: "absent" })
+  assert.deepEqual(lireObservabilite(null, ""), { publie: false, raison: "sans_reponse" })
+  // Des champs d'un mauvais type : rien n'est inventé.
+  const bizarre = lireObservabilite(200, JSON.stringify({ contrat: 1, pile: "php", demarre: "oui", sentry: "x", posthog: { actif: 1, envoyes: -3, dernier_ok: "hier" } }))
+  assert.deepEqual([bizarre.pile, bizarre.demarre, bizarre.sentry.actif, bizarre.posthog.actif, bizarre.posthog.envoyes, bizarre.posthog.dernier_ok], [null, false, false, false, null, null])
+  // Python : la clé est là, mais sentry-sdk manque.
+  assert.equal(lireObservabilite(200, JSON.stringify({ contrat: 1, sentry: { actif: true, pret: false } })).sentry.pret, false)
 })

@@ -24,8 +24,19 @@ Ce qui est sur `main` sans être encore dans une version.
   (`autonomie.minutes_cliquet` dans `usine.config.yml`), dans un ordre tiré au sort. Les tests non
   rejoués faute de temps sont nommés au journal et passent en premier à la vérification suivante.
   Un test qui échoue est relancé une fois avant d'être compté.
+- **Les plantages sont des erreurs dans les journaux** : une trace Python (`Traceback`, ses cadres,
+  `KeyError: 'plan'`) ou une exception Node (`TypeError: …` et sa pile) part vers PostHog au
+  niveau `error`, et non plus `info`. Une ligne ordinaire ne change pas de niveau.
+- **La console dit ce que chaque application envoie vraiment** à Sentry et à PostHog (reçu, en
+  échec, muet, n'envoie rien…), au lieu de « N sur N ont la dernière clé ». Chaque produit le
+  dit à l'usine par `GET /_usine/observabilite`, que Caddy ne sert jamais au public.
+- **Un dépôt repris envoie ses erreurs et son pouls**, dans sa pile. En Python, c'est un module
+  avec `sentry-sdk` (`briques/reprise/observabilite.py`). L'épreuve de l'inventaire exige un
+  vrai pouls avant d'aller plus loin.
 
-**À faire** : rien. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
+**À faire** : rien pour l'usine. Les applications créées avant le module d'observabilité (ou
+avec un module plus ancien que cette version) apparaissent « n'envoie rien » dans la console tant
+que leur code n'a pas reçu le module à jour et la route `GET /_usine/observabilite`. Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
 commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
 ou le retire de `.usine/e2e/`.
 

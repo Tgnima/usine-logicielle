@@ -125,3 +125,35 @@ export function inspectIncomplet(noms, conteneurs, sortie) {
   const partis = new Set([...String(sortie ?? "").matchAll(/No such (?:object|container): ([^\s]+)/g)].map((m) => m[1]))
   return noms.some((n) => !decrits.has(n) && !partis.has(n))
 }
+
+// Ce que le produit dit de ses envois : GET /_usine/observabilite (server/observabilite.js de la
+// brique, usine/observabilite.mjs ou .py d'un dépôt repris), appelé en direct sur son réseau.
+// La réponse vient du code du produit : on n'en garde que des booléens, des nombres, des dates et
+// une raison courte. Toute autre réponse (404, la page de l'application, un JSON d'une autre forme)
+// veut dire que le produit ne publie pas l'état de ses envois : son module est absent ou ancien.
+export const CONTRAT_OBSERVABILITE = 1
+export const TAILLE_MAX_OBSERVABILITE = 8_000
+export function lireObservabilite(code, texte) {
+  if (code === null || code === undefined) return { publie: false, raison: "sans_reponse" }
+  let j = null
+  try {
+    if (code === 200 && String(texte ?? "").length <= TAILLE_MAX_OBSERVABILITE) j = JSON.parse(texte)
+  } catch {}
+  if (!j || typeof j !== "object" || j.contrat !== CONTRAT_OBSERVABILITE) return { publie: false, raison: "absent" }
+  const nombre = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null)
+  const date = (v) => (typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null)
+  const raison = (v) => (typeof v === "string" ? v.replace(/[^\p{L}\p{N} .:_-]/gu, "").trim().slice(0, 60) || null : null)
+  const canal = (c, envoyes) => {
+    const o = c && typeof c === "object" ? c : {}
+    const echec = o.dernier_echec && typeof o.dernier_echec === "object" && date(o.dernier_echec.le) ? { le: date(o.dernier_echec.le), raison: raison(o.dernier_echec.raison) } : null
+    return { actif: o.actif === true, pret: o.pret !== false, suivi: o.suivi !== false, envoyes: nombre(o[envoyes]), echecs: nombre(o.echecs), dernier_ok: date(o.dernier_ok), dernier_echec: echec }
+  }
+  return {
+    publie: true,
+    pile: ["node", "python"].includes(j.pile) ? j.pile : null,
+    demarre: j.demarre === true,
+    en_marche_s: nombre(j.en_marche_s),
+    sentry: canal(j.sentry, "envoyees"),
+    posthog: canal(j.posthog, "envoyes"),
+  }
+}

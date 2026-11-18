@@ -78,9 +78,100 @@ test("mode : direct seulement si l'usine peut écrire ; un direct impossible est
   assert.deepEqual(choisirMode("auto", { ...ecrit, archive: true }), { mode: "copie" })
 })
 
+test("porte de l'inventaire : l'observabilité fait partie du contrat, éprouvée par un vrai pouls", () => {
+  const inv = { pile: "python", commandes: { installer: "pip install -r requirements.txt", construire: "true", tester: "pytest", demarrer: "python app.py" } }
+  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "", MODULE_INTACT: "", POULS_OK: "", POULS_SUR: "", ETAT_OBS_OK: "" }
+  assert.deepEqual(porteInventaire(tout, inv), [])
+  const sans = (...cles) => Object.fromEntries(Object.entries(tout).filter(([k]) => !cles.includes(k)))
+  assert.match(porteInventaire(sans("MODULE_INTACT"), inv).join(), /cp \/opt\/usine\/briques\/reprise\/observabilite\.py usine\/observabilite\.py/)
+  assert.match(porteInventaire(sans("MODULE_INTACT"), { ...inv, pile: "node" }).join(), /usine\/observabilite\.mjs/)
+  assert.match(porteInventaire(sans("POULS_OK", "POULS_SUR"), inv).join(), /aucun pouls.*demarrer_observabilite\(\)/)
+  assert.match(porteInventaire({ ...sans("POULS_SUR"), POULS_TEXTE: "client" }, inv).join(), /autre chose que des compteurs \(client\)/)
+  assert.match(porteInventaire(sans("ETAT_OBS_OK"), inv).join(), /\/_usine\/observabilite.*etat_observabilite\(\)/)
+  assert.match(porteInventaire({ ...tout, SENTRY_PAS_PRET: "" }, inv).join(), /sentry-sdk n'est pas installé/)
+  // Une application qui ne démarre pas : un seul reproche, pas une cascade sur l'observabilité.
+  assert.deepEqual(porteInventaire(sans("APP_STARTED", "POULS_OK", "POULS_SUR", "ETAT_OBS_OK"), inv).length, 1)
+})
+
+// L'épreuve pour de vrai : le faux PostHog de l'usine, le module de chaque pile démarré avec les
+// variables de l'épreuve, puis le vérificateur et ses marqueurs.
+async function epreuveObservabilite(lancerProduit) {
+  const { spawn } = await import("node:child_process")
+  const { createServer } = await import("node:net")
+  const { writeFileSync } = await import("node:fs")
+  const { CAPTEUR_OBSERVABILITE, ENV_EPREUVE_OBSERVABILITE, PORT_CAPTEUR, VERIFIER_OBSERVABILITE } = await import("../src/reprise.mjs")
+  const portLibre = () => new Promise((ok) => { const s = createServer().listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => ok(port)) }) })
+  const dossier = mkdtempSync(join(tmpdir(), "epreuve-obs-"))
+  const [portCapteur, portProduit] = [await portLibre(), await portLibre()]
+  writeFileSync(join(dossier, "capteur.cjs"), CAPTEUR_OBSERVABILITE)
+  writeFileSync(join(dossier, "verifier.cjs"), VERIFIER_OBSERVABILITE)
+  const { NODE_TEST_CONTEXT, ...envDeBase } = process.env
+  const env = { ...envDeBase, PORT: String(portProduit) }
+  for (const paire of ENV_EPREUVE_OBSERVABILITE.split(" ")) {
+    const [cle, ...valeur] = paire.split("=")
+    env[cle] = valeur.join("=").replace(`:${PORT_CAPTEUR}`, `:${portCapteur}`)
+  }
+  const capteur = spawn(process.execPath, [join(dossier, "capteur.cjs"), join(dossier, "capture.jsonl"), String(portCapteur)], { stdio: "ignore" })
+  const produit = lancerProduit(env, dossier)
+  try {
+    const route = `http://127.0.0.1:${portProduit}/_usine/observabilite`
+    for (let i = 0; i < 100; i++) {
+      if (await fetch(route).then(() => true, () => false)) break
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    const sortie = execFileSync(process.execPath, [join(dossier, "verifier.cjs"), join(dossier, "capture.jsonl"), route, "15"], { encoding: "utf8" })
+    return sortie.split("\n").filter((l) => l.startsWith("@@ ")).map((l) => l.slice(3).split(" ")[0])
+  } finally {
+    produit.kill()
+    capteur.kill()
+  }
+}
+
+test("épreuve de l'observabilité : le module de la brique (node) envoie un pouls que le faux PostHog reçoit", async () => {
+  const { spawn } = await import("node:child_process")
+  const { writeFileSync } = await import("node:fs")
+  const { pathToFileURL } = await import("node:url")
+  const module = pathToFileURL(join(import.meta.dirname, "..", "..", "briques", "webapp", "server", "observabilite.js")).href
+  const marqueurs = await epreuveObservabilite((env, dossier) => {
+    writeFileSync(join(dossier, "produit.mjs"), `import { createServer } from "node:http"
+import { demarrerObservabilite, etatObservabilite } from ${JSON.stringify(module)}
+demarrerObservabilite()
+createServer((q, r) => { r.setHeader("content-type", "application/json"); r.end(JSON.stringify(q.url === "/_usine/observabilite" ? etatObservabilite() : { ok: true })) }).listen(Number(process.env.PORT), "127.0.0.1")
+`)
+    return spawn(process.execPath, [join(dossier, "produit.mjs")], { env, stdio: "ignore" })
+  })
+  assert.deepEqual(marqueurs.sort(), ["ETAT_OBS_OK", "POULS_OK", "POULS_SUR"])
+})
+
+test("épreuve de l'observabilité : le module Python (briques/reprise) envoie un pouls que le faux PostHog reçoit", async (t) => {
+  const { spawn, spawnSync } = await import("node:child_process")
+  const python = ["python3", "python"].find((p) => spawnSync(p, ["--version"]).status === 0)
+  if (!python) return t.skip("Python n'est pas installé")
+  const avecSdk = spawnSync(python, ["-c", "import sentry_sdk"]).status === 0
+  const dossierModule = join(import.meta.dirname, "..", "..", "briques", "reprise")
+  const { writeFileSync } = await import("node:fs")
+  const marqueurs = await epreuveObservabilite((env, dossier) => {
+    writeFileSync(join(dossier, "produit.py"), `import json, os, sys
+sys.path.insert(0, ${JSON.stringify(dossierModule)})
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from observabilite import demarrer_observabilite, etat_observabilite
+demarrer_observabilite()
+class R(BaseHTTPRequestHandler):
+    def do_GET(self):
+        corps = json.dumps(etat_observabilite() if self.path == "/_usine/observabilite" else {"ok": True}).encode()
+        self.send_response(200); self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(corps)
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", int(os.environ["PORT"])), R).serve_forever()
+`)
+    return spawn(python, [join(dossier, "produit.py")], { env, stdio: "ignore" })
+  })
+  // Sans sentry-sdk, la clé est là mais Sentry ne peut pas démarrer : la porte le dit.
+  assert.deepEqual(marqueurs.sort(), avecSdk ? ["ETAT_OBS_OK", "POULS_OK", "POULS_SUR"] : ["ETAT_OBS_OK", "POULS_OK", "POULS_SUR", "SENTRY_PAS_PRET"])
+})
+
 test("porte de l'inventaire : des commandes éprouvées par le code, pas une déclaration", () => {
   const inv = { pile: "node", commandes: { installer: "npm ci", construire: "true", tester: "npm test", demarrer: "npm start" } }
-  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "" }
+  const tout = { INSTALL_OK: "", BUILD_OK: "", TESTS_PASSES: "3", TESTS_ECHECS: "0", DOCKERFILE_OK: "", APP_STARTED: "", ECRIT_DANS_CODE: "", MODULE_INTACT: "", POULS_OK: "", POULS_SUR: "", ETAT_OBS_OK: "" }
   assert.deepEqual(porteInventaire(tout, inv), [])
   assert.match(porteInventaire(tout, null).join(), /absent/)
   assert.match(porteInventaire({ ...tout, TESTS_PASSES: "0" }, inv).join(), /aucun test/)

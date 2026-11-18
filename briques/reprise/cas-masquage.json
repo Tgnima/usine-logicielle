@@ -1,0 +1,74 @@
+{
+  "commentaire": "Le masquage de commun/observabilite.mjs, cas par cas : le module Python des dépôts repris (observabilite.py) doit rendre exactement la même chose. Régénéré par la même entrée si un masque change.",
+  "cas": [
+    {
+      "entree": "relance de lea.martin@exemple.fr au 06 12 34 56 78, lien /api/public/r/k3Jx9QmZ2vT8pL4wR7nY1aB6",
+      "sortie": "relance de [email] au [téléphone], lien /api/public/r/[jeton]"
+    },
+    {
+      "entree": "lea@exemple.fr 06 12 34 56 78 FR76 3000 6000 0112 3456 7890 189 10.0.0.1 ::1",
+      "sortie": "[email] [téléphone] [iban] [ip] [ip]"
+    },
+    {
+      "entree": "Bearer abcdefghijklmnop ghp_abcdefghijklmnopqrstuvwxyz0123 token=abc",
+      "sortie": "Bearer [secret] [secret] token=[secret]"
+    },
+    {
+      "entree": "/api/public/r/k3Jx9QmZ2vT8pL4wR7nY1aB6 https://u:p@h.fr",
+      "sortie": "/api/public/r/[jeton] https://[secret]@h.fr"
+    },
+    {
+      "entree": "\u001b[31mtexte ordinaire 2026-11-10T10:00:00Z\u0007",
+      "sortie": "texte ordinaire 2026-11-10T10:00:00Z"
+    },
+    {
+      "entree": "clone https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz0123@github.com/o/r.git",
+      "sortie": "clone https://[secret]@github.com/o/r.git"
+    },
+    {
+      "entree": "jeton phc_abcdefghijklmnopqrstuv et clé sk-proj-abcdefghijklmnop1234, xoxb-1234567890-abcdef",
+      "sortie": "jeton [secret] et clé [secret], [secret]"
+    },
+    {
+      "entree": "Authorization: Basic dXNlcjpwYXNzd29yZA== ; password=\"s3cr3t!\" ; mot_de_passe : hunter2 ; api_key=abc123",
+      "sortie": "Authorization: [secret] [secret] ; password=\"[secret]\" ; mot_de_passe : [secret] ; api_key=[secret]"
+    },
+    {
+      "entree": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+      "sortie": "[secret]"
+    },
+    {
+      "entree": "appel au +33 6 12 34 56 78 ou au 01.23.45.67.89, IP 192.168.1.20 et fe80:0000:0000:0000:0202:b3ff:fe1e:8329",
+      "sortie": "appel au [téléphone] ou au [téléphone], IP [ip] et [ip]"
+    },
+    {
+      "entree": "fe80::1 et 2001:db8::8a2e:370:7334 ; un horaire 10:30 ; le :: seul reste",
+      "sortie": "[ip] et [ip] ; un horaire 10:30 ; le :: seul reste"
+    },
+    {
+      "entree": "session 123e4567-e89b-12d3-a456-426614174000 ; usine-prod-vigie-copro-blue ; un_nom_de_fichier_sans_chiffres_du_tout",
+      "sortie": "session [jeton] ; usine-prod-vigie-copro-blue ; un_nom_de_fichier_sans_chiffres_du_tout"
+    },
+    {
+      "entree": "AKIAABCDEFGHIJKLMNOP usp_abcdefghijklmnop1234 github_pat_11ABCDEFG0123456789_abcdef",
+      "sortie": "[secret] [secret] [secret]"
+    },
+    {
+      "entree": "2026-11-10T10:00:00.123Z déploiement production/vigie-copro @ 94f260e5a1b2 en 1234 ms, node 24.20.0, lot 3/5 : 12 tests",
+      "sortie": "2026-11-10T10:00:00.123Z déploiement production/vigie-copro @ 94f260e5a1b2 en 1234 ms, node 24.20.0, lot 3/5 : 12 tests"
+    },
+    {
+      "entree": "Écrit par Élodie à Montréal : « ça marche » — 3 €",
+      "sortie": "Écrit par Élodie à Montréal : « ça marche » — 3 €"
+    },
+    {
+      "entree": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sortie": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "entree": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "maximum": 10,
+      "sortie": "aaaaaaaaa…"
+    }
+  ]
+}

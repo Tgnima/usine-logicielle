@@ -8,6 +8,11 @@
 
 export const CHEMINS_PUBLICS = ["/api/health", "/public/*", "/api/public/*", "/t/*", "/desinscription/*"]
 
+// Les chemins d'une application réservés à l'usine : Caddy ne les sert jamais, à personne (404),
+// même pour une application publique. Seul le déployeur les appelle, sur le réseau du produit :
+// /_usine/observabilite dit ce que le produit envoie vraiment à Sentry et à PostHog.
+export const CHEMINS_INTERNES = ["/_usine/*"]
+
 // (« /assets/* » reste permis : ce sont les fichiers statiques de la page, sans aucune donnée.)
 const TROP_LARGES = new Set(["/", "/*", "/api", "/api/*", "/api/", "/index.html"])
 
@@ -24,7 +29,7 @@ export function cheminsDeclares(contenu) {
   for (const c of liste) {
     const ok = typeof c === "string"
       && /^\/[A-Za-z0-9._~\-/]*\*?$/.test(c) // un chemin simple, éventuellement terminé par *
-      && !c.includes("..") && !c.startsWith("/_portier")
+      && !c.includes("..") && !c.startsWith("/_portier") && !c.startsWith("/_usine")
       && !TROP_LARGES.has(c) && c.replace(/\*$/, "").replace(/\/$/, "").length >= 3
     ;(ok ? chemins : refuses).push(String(c))
   }
@@ -67,4 +72,32 @@ export function sousReseau(produit, essai = 0, plage = "10.231.0.0/16") {
   for (const c of String(produit)) h = (h * 31 + c.charCodeAt(0)) >>> 0
   const cas = (h + essai) % 2048
   return `${a}.${b}.${cas >> 3}.${(cas & 7) * 32}/27`
+}
+
+// Un site Caddy. Protégé (par défaut) : le portier vérifie chaque requête, sauf les chemins
+// publics ; l'en-tête d'identité ne peut pas venir du visiteur. Public ou protégé, les chemins
+// réservés à l'usine (CHEMINS_INTERNES) répondent 404 : seul le déployeur les joint, en direct.
+export function blocCaddy(hote, cible, { protege = true, publics = CHEMINS_PUBLICS, https = true, portier = "portier:8080" } = {}) {
+  const site = https ? hote : `http://${hote}`
+  const entetes = `\theader {\n\t\tStrict-Transport-Security "max-age=31536000"\n\t\tX-Content-Type-Options "nosniff"\n\t\tReferrer-Policy "strict-origin-when-cross-origin"\n\t\tX-Frame-Options "SAMEORIGIN"\n\t\t-Server\n\t}\n`
+  // Un chemin seul, sans matcher nommé : Caddy range ces handle avant les autres (les plus précis d'abord).
+  const internes = CHEMINS_INTERNES.map((c) => `\thandle ${c} {\n\t\trespond 404\n\t}\n`).join("")
+  if (!protege) return `${site} {\n\tencode zstd gzip\n${entetes}\trequest_header -X-Usine-Utilisateur\n${internes}\thandle {\n\t\treverse_proxy ${cible}\n\t}\n}`
+  return `${site} {
+\tencode zstd gzip
+${entetes}\trequest_header -X-Usine-Utilisateur
+${internes}\thandle /_portier/api/* {
+\t\trespond 404
+\t}
+\thandle /_portier/* {
+\t\treverse_proxy ${portier}
+\t}
+${publics.length ? `\t@public path ${publics.join(" ")}\n\thandle @public {\n\t\treverse_proxy ${cible}\n\t}\n` : ""}\thandle {
+\t\tforward_auth ${portier} {
+\t\t\turi /_portier/verifier
+\t\t\tcopy_headers X-Usine-Utilisateur
+\t\t}
+\t\treverse_proxy ${cible}
+\t}
+}`
 }

@@ -1784,13 +1784,50 @@ function destinatairesService(s) {
     : dernier ? `Le déployeur : dernier envoi réussi ${ilYa(dernier)}.` : "Le déployeur : clé reçue, rien d'envoyé pour l'instant."
   // Une mise en ligne en échec : l'ancienne version tourne encore, avec ses anciennes clés.
   const enEchec = (ap?.en_retard ?? []).filter((a) => a.echec).map((a) => `${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}`)
-  const ligneApplis = !ap?.total ? "Aucune application en ligne pour l'instant."
-    : ap.a_jour === ap.total ? `Les applications : ${ap.total} sur ${ap.total} ont la dernière clé.`
-    : html`Les applications : ${ap.a_jour} sur ${ap.total} ont la dernière clé. Les autres la recevront à leur prochaine mise en ligne.
+  const retard = ap ? ap.total - ap.a_jour : 0
+  const suite = html`${s.envois_applications && retard ? html`<span class="aide">${retard === 1 ? "Une application n'a pas encore la dernière clé : elle la recevra à sa prochaine mise en ligne." : `${retard} applications n'ont pas encore la dernière clé : elles la recevront à leur prochaine mise en ligne.`}</span>` : ""}
       ${enEchec.length ? html`<span class="aide">Dernière mise en ligne en échec pour ${enEchec.join(", ")} : l'ancienne version tourne, avec les anciennes clés.</span>` : ""}
-      ${ap.en_cours ? html`<span class="aide">Redémarrage en cours…</span>` : ""}
-      ${ap.a_faire ? html`<button type="button" class="btn btn-s btn-petit" data-action="appliquer-services">Appliquer maintenant</button>` : ""}`
+      ${ap?.en_cours ? html`<span class="aide">Redémarrage en cours…</span>` : ""}
+      ${ap?.a_faire ? html`<button type="button" class="btn btn-s btn-petit" data-action="appliquer-services">Appliquer maintenant</button>` : ""}`
+  // Sentry et PostHog : ce que chaque application fait vraiment de la clé, pas seulement si elle l'a reçue.
+  const ligneApplis = !ap?.total ? "Aucune application en ligne pour l'instant."
+    : s.envois_applications ? envoisApplications(s, suite)
+    : ap.a_jour === ap.total ? `Les applications : ${ap.total} sur ${ap.total} ont la dernière clé.`
+    : html`Les applications : ${ap.a_jour} sur ${ap.total} ont la dernière clé. Les autres la recevront à leur prochaine mise en ligne. ${suite}`
   return html`<ul style="margin:0;padding-left:18px;font-size:14px"><li>${ligneDeployeur}</li><li>${ligneApplis}</li></ul>`
+}
+
+// Ce qui arrive vraiment, application par application : l'application elle-même dit à l'usine
+// la réponse de Sentry ou de PostHog à son dernier envoi (services.mjs, envoisApplication).
+const RAISONS_ENVOI = { "HTTP 401": "clé refusée", "HTTP 403": "clé refusée", "HTTP 400": "clé refusée", "HTTP 429": "quota atteint", "délai dépassé": "pas de réponse à temps" }
+const raisonEnvoi = (r) => RAISONS_ENVOI[r] ?? (/^E[A-Z]+$/.test(r ?? "") ? "service injoignable" : r || "raison inconnue")
+const ENVOIS_RECUS = { ok: ["vert", "reçu"], echec: ["rouge", "en échec"], muet: ["orange", "muet"], non_branche: ["orange", "n'envoie rien"], sans_cle: ["", "sans clé"], attente: ["", "en attente"], inconnu: ["", "inconnu"] }
+function phraseEnvoi(s, a) {
+  const posthog = s.id === "posthog"
+  const ancienne = a.a_jour ? "" : " Elle a une ancienne clé : elle recevra la dernière à sa prochaine mise en ligne."
+  if (a.etat === "ok") return posthog ? `PostHog a reçu son pouls ${ilYa(a.le)}.` : `Sentry a reçu sa dernière erreur ${ilYa(a.le)}.`
+  if (a.etat === "echec") return `${posthog ? "Son dernier pouls n'est pas arrivé" : "Sa dernière erreur n'est pas arrivée"} (${raisonEnvoi(a.raison)}), ${ilYa(a.le)}.${ancienne}`
+  if (a.etat === "muet") return a.le ? `Plus aucun pouls depuis ${depuisParis(a.le)}.` : "Aucun pouls depuis son démarrage."
+  if (a.etat === "attente") return posthog ? "Vient de démarrer : son premier pouls part dans les minutes qui viennent."
+    : a.raison === "reponse_invisible" ? "Prête : ses erreurs partent, sans accusé de réception." : "Prête : aucune erreur à envoyer depuis son démarrage."
+  if (a.etat === "sans_cle") return `N'a pas encore la clé.${a.a_jour ? "" : " Elle la recevra à sa prochaine mise en ligne."}`
+  if (a.etat === "non_branche") return a.raison === "module_arrete" ? "A la clé, mais rien ne part : l'envoi n'est pas démarré dans son code."
+    : a.raison === "sdk_absent" ? "A la clé, mais rien ne part : il manque à son code la bibliothèque de Sentry."
+    : a.raison === "sans_reponse" ? "Ne dit pas ce qu'elle envoie : pas de réponse."
+    : "N'envoie rien : son code ne le prévoit pas encore (application créée ou reprise avant cet envoi)."
+  return "Pas de nouvelles pour l'instant."
+}
+function envoisApplications(s, suite) {
+  const liste = s.envois_applications
+  const recus = liste.filter((a) => a.etat === "ok" || (s.id === "sentry" && a.etat === "attente")).length
+  const lignes = liste.map((a) => {
+    // Sentry : une application sans erreur à envoyer est prête, pas en attente.
+    const [couleur, mot] = s.id === "sentry" && a.etat === "attente" ? ["", "prête"] : ENVOIS_RECUS[a.etat] ?? ENVOIS_RECUS.inconnu
+    return html`<li><span class="barre" style="flex-wrap:wrap;gap:6px;justify-content:flex-start"><strong>${a.nom}${a.environnement === "production" ? "" : " (aperçu)"}</strong><span class="badge ${couleur}">${mot}</span></span><span class="aide">${phraseEnvoi(s, a)}</span></li>`
+  })
+  return html`Les applications : ${s.id === "posthog" ? `${recus} sur ${liste.length} envoient bien leur pouls.` : `${recus} sur ${liste.length} prêtes à envoyer leurs erreurs.`}
+    <ul class="pile" style="margin:6px 0 0;padding-left:18px;gap:6px">${lignes}</ul>
+    ${suite}`
 }
 
 function boutonsService(s) {

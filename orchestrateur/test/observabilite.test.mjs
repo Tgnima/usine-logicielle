@@ -344,3 +344,12 @@ test("une panne garde l'heure de son début, jusqu'au prochain envoi réussi", a
   await o.battement("usine-orchestrateur")
   assert.equal(o.etat().battement.premier_echec, null)
 })
+
+test("le module Python des dépôts repris masque comme l'usine : cas-masquage.json suit le module commun", async () => {
+  const { readFileSync } = await import("node:fs")
+  const usine = await import("../../commun/observabilite.mjs")
+  const { cas } = JSON.parse(readFileSync(new URL("../../briques/reprise/cas-masquage.json", import.meta.url), "utf8"))
+  assert.ok(cas.length > 10)
+  // Un masque ajouté ou changé ici : régénérer les sorties attendues, que le test Python rejoue (briques/reprise).
+  for (const c of cas) assert.equal(usine.nettoyer(c.entree, c.maximum ?? 1000), c.sortie, c.entree)
+})
