@@ -11,6 +11,11 @@
 //   - toutes les 5 minutes, un événement « pouls » : des COMPTEURS seulement (nombres et
 //     booléens), jamais un texte saisi, un nom, une adresse.
 //
+// Ce que l'usine en voit : GET /_usine/observabilite (server/index.js) répond etatObservabilite(),
+// des comptes et des dates, jamais une clé. La sonde du déployeur l'appelle sur le réseau du produit,
+// et Caddy ne sert jamais /_usine/* au public. La console dit ainsi, application par application,
+// si le pouls arrive à PostHog et si les erreurs arrivent à Sentry.
+//
 // Ajouter un compteur au pouls : dans server/demarrage.js, ajouterPouls(() => ({ en_retard: n })).
 // Signaler une erreur attrapée : signalerErreur(error, { etape: "relève" }).
 // Ne modifie pas ce fichier : le masquage des données personnelles y vit, identique à celui de
@@ -84,6 +89,11 @@ const versTexte = (x) => (typeof x === "string" ? x : inspect(x, { depth: 2, bre
 
 // --- L'instance --------------------------------------------------------------------------------
 const PERIODE_POULS_MS = 5 * 60_000
+// La forme de etatObservabilite() : la sonde de l'usine la reconnaît à ce numéro.
+export const CONTRAT_OBSERVABILITE = 1
+
+// La raison d'un envoi refusé, en quelques mots : un code HTTP ou un délai, jamais une clé.
+const raisonEchec = (e) => (e?.name === "TimeoutError" ? "délai dépassé" : /^HTTP \d{3}$/.test(e?.message ?? "") ? e.message : nettoyer(e?.cause?.code ?? e?.message ?? e, 80))
 
 export function creerObservabilite({ env = process.env, fetch: fetchFourni = null, delaiMs = 5_000, erreursParHeure = 20, signaler = (t) => console.warn(t) } = {}) {
   const horsReseau = Boolean(env.NODE_TEST_CONTEXT) && !fetchFourni
@@ -96,6 +106,8 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
   const environnement = env.USINE_ENVIRONNEMENT === "apercu" ? "apercu" : env.USINE_ENVIRONNEMENT === "production" ? "production" : "developpement"
   const version = env.USINE_VERSION ? nettoyer(env.USINE_VERSION, 40) : null
   const comptes = { erreurs: { envoyees: 0, echecs: 0, ignorees: 0 }, pouls: { envoyes: 0, echecs: 0 } }
+  // Le dernier envoi accepté et le dernier refusé, par canal : ce que la console montre.
+  const derniers = { erreurs: { ok: null, echec: null }, pouls: { ok: null, echec: null } }
   const vues = new Map()
   let fenetre = { debut: Date.now(), n: 0 }
   let enPauseJusqua = 0
@@ -108,11 +120,13 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
       if (res.status === 429 && canal === "erreurs") enPauseJusqua = Date.now() + (Number(res.headers?.get?.("retry-after")) || 60) * 1000
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       comptes[canal][canal === "erreurs" ? "envoyees" : "envoyes"] += 1
+      derniers[canal].ok = new Date().toISOString()
       if (injoignable) signaler("Observabilité : envois rétablis.")
       injoignable = false
       return true
     } catch (e) {
       comptes[canal].echecs += 1
+      derniers[canal].echec = { le: new Date().toISOString(), raison: raisonEchec(e) }
       // Signalé une fois, par console.warn : jamais console.error, qui repartirait vers Sentry.
       if (!injoignable) signaler(`Observabilité : envoi impossible (${nettoyer(e?.message ?? e, 200)}) ; les suivants sont ignorés sans bruit.`)
       injoignable = true
@@ -178,7 +192,9 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
   // Après une exception non attrapée, le processus s'arrête comme avant (code 1), l'erreur partie.
   let demarre = false
   let erreursVues = 0 // chaque console.error depuis le démarrage : un compteur du pouls
-  function demarrer({ premierPoulsMs = 30_000 } = {}) {
+  // USINE_PREMIER_POULS_S : le délai du premier pouls (l'épreuve d'un dépôt repris l'avance).
+  const premierPoulsDefaut = Number(env.USINE_PREMIER_POULS_S) >= 1 && Number(env.USINE_PREMIER_POULS_S) <= 300 ? Number(env.USINE_PREMIER_POULS_S) * 1000 : 30_000
+  function demarrer({ premierPoulsMs = premierPoulsDefaut } = {}) {
     if (demarre || (!dsn && !jeton)) return
     demarre = true
     const ecrire = console.error.bind(console)
@@ -208,7 +224,21 @@ export function creerObservabilite({ env = process.env, fetch: fetchFourni = nul
     }
   }
 
-  return { actif: { sentry: Boolean(dsn), posthog: Boolean(jeton) }, produit, environnement, demarrer, signalerErreur, ajouterPouls, envoyerPouls, etat: () => structuredClone(comptes) }
+  // Ce que la sonde de l'usine lit : le module est-il démarré, a-t-il ses clés, et la réponse du
+  // dernier envoi de chaque canal (suivi : le module voit la réponse de Sentry et de PostHog).
+  function etatEnvois() {
+    return {
+      contrat: CONTRAT_OBSERVABILITE,
+      pile: "node",
+      demarre,
+      en_marche_s: Math.round(process.uptime()),
+      erreurs_depuis_demarrage: erreursVues,
+      sentry: { actif: Boolean(dsn), suivi: true, ...comptes.erreurs, dernier_ok: derniers.erreurs.ok, dernier_echec: derniers.erreurs.echec },
+      posthog: { actif: Boolean(jeton), suivi: true, ...comptes.pouls, dernier_ok: derniers.pouls.ok, dernier_echec: derniers.pouls.echec },
+    }
+  }
+
+  return { actif: { sentry: Boolean(dsn), posthog: Boolean(jeton) }, produit, environnement, demarrer, signalerErreur, ajouterPouls, envoyerPouls, etat: () => structuredClone(comptes), etatEnvois }
 }
 
 // L'instance du produit.
@@ -216,3 +246,4 @@ const instance = creerObservabilite()
 export const demarrerObservabilite = (options) => instance.demarrer(options)
 export const ajouterPouls = (fonction) => instance.ajouterPouls(fonction)
 export const signalerErreur = (erreur, options) => instance.signalerErreur(erreur, options)
+export const etatObservabilite = () => instance.etatEnvois()

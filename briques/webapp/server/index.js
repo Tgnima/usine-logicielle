@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { routes } from "./routes/index.js"
 import { entetes, gestionErreurs, limiter } from "./securite.js"
+import { etatObservabilite } from "./observabilite.js"
 
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
 let meta = null
@@ -39,6 +40,11 @@ export function creerApp() {
       res.status(503).json({ ok: false, erreur: "base de données indisponible" })
     }
   })
+
+  // Ce que l'observabilité envoie vraiment (server/observabilite.js), pour la sonde de l'usine :
+  // des comptes et des dates, jamais une clé. Le déployeur l'appelle sur le réseau du produit ;
+  // Caddy ne sert jamais /_usine/* au public.
+  app.get("/_usine/observabilite", (_req, res) => res.json(etatObservabilite()))
 
   app.use("/api", routes())
 

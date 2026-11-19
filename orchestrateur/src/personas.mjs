@@ -346,10 +346,13 @@ export function missionEnMarkdown(plan, { persona = null, repris = false, pile =
       ]
       : ["- On reste dans la brique de départ et ses conventions (AGENTS.md)."]),
     "- Le contrat d'hébergement : un Dockerfile à la racine ; l'application écoute sur $PORT, répond 200 sur GET /api/health, et n'écrit que dans $DATA_DIR.",
+    repris
+      ? "- L'observabilité : les erreurs partent vers Sentry et le pouls vers PostHog par le module de l'usine, usine/observabilite.mjs ou .py (protégé). GET /_usine/observabilite dit à l'usine ce qu'il envoie : on ne retire ni l'appel au démarrage, ni cette route."
+      : "- L'observabilité : les erreurs partent vers Sentry et le pouls vers PostHog par server/observabilite.js, qu'on ne modifie pas. GET /_usine/observabilite dit à l'usine ce qu'il envoie.",
     "- Le produit est servi derrière la page de connexion de l'usine : il ne code jamais d'authentification.",
     "- Aucun secret dans le code : tout passe par des variables d'environnement.",
     "- Un test ne se supprime pas et ne s'affaiblit pas.",
-    "- MISSION.md, ICP.md, docs/PLAN.md, docs/DESIGN.md et .usine/ sont protégés : l'usine les remet en l'état avant chaque contrôle.",
+    `- MISSION.md, ICP.md, docs/PLAN.md, docs/DESIGN.md${repris ? ", .usine/ et le module usine/observabilite" : " et .usine/"} sont protégés : l'usine les remet en l'état avant chaque contrôle.`,
     "",
   ].join("\n")
 }

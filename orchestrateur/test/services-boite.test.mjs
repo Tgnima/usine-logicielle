@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { DatabaseSync } from "node:sqlite"
-import { appliquerAuxApplications, applicationsEtCles, contenuBoite, couperService, etatServices, poserService, reprendreService, retirerService, valeurService, versionBoite } from "../src/services.mjs"
+import { appliquerAuxApplications, applicationsEtCles, contenuBoite, couperService, envoisApplication, etatServices, poserService, reprendreService, retirerService, valeurService, versionBoite } from "../src/services.mjs"
 
 const DSN = "https://0123456789abcdef0123456789abcdef@o4500000000000001.ingest.de.sentry.io/4500000000000002"
 const JETON = "phc_jetondetestjetondetest1234WXYZ"
@@ -76,6 +76,61 @@ test("les applications et leurs clés : à jour si elles ont reçu la dernière 
     assert.equal(sentry.deployeur.a_jour, true)
     assert.equal(sentry.deployeur.envoi.erreurs.dernier_ok, "2026-11-13T11:59:00.000Z")
     assert.match(e.services.find((s) => s.id === "posthog").deployeur.envoi.evenements.dernier_echec.message, /refuse ce jeton/)
+  } finally {
+    fin()
+  }
+})
+
+// Constat du 18 nov. 2026 : « N sur N ont la dernière clé » ne disait pas qui s'en sert. Trois produits
+// avaient la clé sans module pour l'envoyer.
+const T = Date.parse("2026-11-18T12:00:00.000Z")
+const avant = (min) => new Date(T - min * 60_000).toISOString()
+const envois = (posthog = {}, sentry = {}, autres = {}) => ({ publie: true, pile: "node", demarre: true, en_marche_s: 3600, sentry: { actif: true, suivi: true, envoyes: 0, echecs: 0, dernier_ok: null, dernier_echec: null, ...sentry }, posthog: { actif: true, suivi: true, envoyes: 1, echecs: 0, dernier_ok: avant(3), dernier_echec: null, ...posthog }, ...autres })
+
+test("envoisApplication : PostHog, le pouls est-il vraiment arrivé ?", () => {
+  const e = (o) => envoisApplication("posthog", o, { maintenant: T })
+  assert.deepEqual(e(envois()), { etat: "ok", le: avant(3) })
+  assert.deepEqual(e(envois({ dernier_ok: avant(40) })), { etat: "muet", le: avant(40) })
+  assert.deepEqual(e(envois({ dernier_ok: avant(10), dernier_echec: { le: avant(4), raison: "HTTP 401" } })), { etat: "echec", le: avant(4), raison: "HTTP 401" })
+  // Un échec ancien, suivi d'un pouls accepté : c'est réparé.
+  assert.equal(e(envois({ dernier_ok: avant(1), dernier_echec: { le: avant(6), raison: "délai dépassé" } })).etat, "ok")
+  // Aucun pouls encore : attendu juste après le démarrage, pas après 10 min.
+  assert.deepEqual(e(envois({ dernier_ok: null }, {}, { en_marche_s: 40 })), { etat: "attente", le: null })
+  assert.deepEqual(e(envois({ dernier_ok: null }, {}, { en_marche_s: 900 })), { etat: "muet", le: null })
+  assert.deepEqual(e(envois({ actif: false })), { etat: "sans_cle" })
+  assert.deepEqual(e(envois({}, {}, { demarre: false })), { etat: "non_branche", raison: "module_arrete" })
+  assert.deepEqual(e({ publie: false, raison: "absent" }), { etat: "non_branche", raison: "module_absent" })
+  assert.deepEqual(e(null), { etat: "inconnu" })
+})
+
+test("envoisApplication : Sentry, sans erreur à envoyer, rien n'est attendu", () => {
+  const e = (o) => envoisApplication("sentry", o, { maintenant: T })
+  assert.deepEqual(e(envois()), { etat: "attente", raison: "aucune_erreur" })
+  assert.deepEqual(e(envois({}, { envoyes: 1, dernier_ok: avant(120) })), { etat: "ok", le: avant(120) })
+  assert.deepEqual(e(envois({}, { dernier_echec: { le: avant(2), raison: "HTTP 403" } })), { etat: "echec", le: avant(2), raison: "HTTP 403" })
+  assert.deepEqual(e(envois({}, { suivi: false })), { etat: "attente", raison: "reponse_invisible" })
+  assert.deepEqual(e(envois({}, { pret: false }, { pile: "python" })), { etat: "non_branche", raison: "sdk_absent" })
+})
+
+test("la console dit, application par application, ce qui arrive vraiment", () => {
+  const { ctx, fin } = ctxDe()
+  try {
+    poserService(ctx, "POSTHOG_TOKEN", JETON, "admin@exemple.fr", {}, regler)
+    mkdirSync(ctx.config.etatDir, { recursive: true })
+    writeFileSync(join(ctx.config.etatDir, "statut.json"), JSON.stringify({
+      "production/demo-a": { etat: "ok", conteneur: "usine-prod-demo-a-blue", boite: 1 },
+      "apercu/demo-b": { etat: "ok", conteneur: "usine-apercu-demo-b", boite: 1 },
+    }))
+    const sante = (le) => ({ le, boite: { version: 1 }, applications: { le, produits: { "production/demo-a": { etat: "ok", observabilite: envois({ dernier_ok: new Date(Date.now() - 60_000).toISOString() }) }, "apercu/demo-b": { etat: "ok", observabilite: { publie: false, raison: "absent" } } } } })
+    writeFileSync(join(ctx.config.etatDir, "sante.json"), JSON.stringify(sante(new Date().toISOString())))
+    const posthog = etatServices(ctx, instance).services.find((s) => s.id === "posthog")
+    assert.deepEqual(posthog.envois_applications.map((a) => [a.nom, a.environnement, a.etat, a.raison ?? null]), [["Démo A", "production", "ok", null], ["Démo B", "apercu", "non_branche", "module_absent"]])
+    // Les deux ont la dernière clé : le compte d'avant les aurait dites prêtes toutes les deux.
+    assert.deepEqual(posthog.envois_applications.map((a) => a.a_jour), [true, true])
+    // Une sonde de plus de 3 min ne dit plus rien de sûr.
+    writeFileSync(join(ctx.config.etatDir, "sante.json"), JSON.stringify(sante(new Date(Date.now() - 10 * 60_000).toISOString())))
+    assert.deepEqual(etatServices(ctx, instance).services.find((s) => s.id === "posthog").envois_applications.map((a) => a.etat), ["inconnu", "inconnu"])
+    assert.equal(etatServices(ctx, instance).services.find((s) => s.id === "smtp").envois_applications, undefined)
   } finally {
     fin()
   }
