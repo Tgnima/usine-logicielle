@@ -12,6 +12,10 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+## v1.2.0
+
+Ce qui a été fusionné du 18 au 19 novembre 2026.
+
 - **Le pilote des pannes** : quand une application en ligne tombe en panne à cause de son code
   (elle s'arrête à chaque démarrage, répond par une erreur ou ne répond plus) depuis 10 minutes,
   l'usine demande seule une correction. Le lot passe par la fabrique, le vérificateur et la recette,
@@ -76,15 +80,19 @@ Ce qui est sur `main` sans être encore dans une version.
   le serveur de modèles. L'usine elle-même garde ses modèles : la fabrication et la vérification ne
   changent pas.
 
-**À faire** : rien pour l'usine. Une application fabriquée par une usine d'avant la v1.0.0, ou
-reprise avant cette version, n'envoie pas ses propres erreurs : le module ne lui est pas ajouté
-de lui-même. Une application dont le module est plus ancien que cette version
-envoie, mais la console la dit « non vérifié » tant que son code n'a pas le module
-à jour et la route `GET /_usine/observabilite` (`docs/OBSERVABILITE.md`). Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
-commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
-ou le retire de `.usine/e2e/`. Pour qu'une application déjà livrée utilise le serveur de modèles, elle doit recevoir le
-nouveau `server/llm.js` de la brique (une petite correction par application) ; les nouvelles
-applications l'ont d'office.
+**À faire** : rien pour l'usine. À savoir pour les applications :
+
+- Une application fabriquée par une usine d'avant la v1.0.0, ou reprise avant cette version,
+  n'envoie pas ses propres erreurs : le module ne lui est pas ajouté de lui-même.
+- Une application dont le module est plus ancien que cette version envoie, mais la console la dit
+  « non vérifié » tant que son code n'a pas le module à jour et la route
+  `GET /_usine/observabilite` (`docs/OBSERVABILITE.md`).
+- Pour qu'une application déjà livrée utilise le serveur de modèles, elle doit recevoir le nouveau
+  `server/llm.js` de la brique (une petite correction par application) ; les nouvelles
+  applications l'ont d'office.
+- Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un commit direct,
+  par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour ou le
+  retire de `.usine/e2e/`.
 
 ## v1.1.1
 
