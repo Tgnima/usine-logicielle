@@ -136,6 +136,7 @@ const SECTIONS_REGLAGES = [
   ["etat", "État de l'usine", "Services et mises à jour"],
   ["historique", "Historique", "Qui a fait quoi"],
   ["regles", "Règles de l'usine", "Qui décide quoi"],
+  ["apropos", "À propos", "La version de l'usine"],
 ]
 
 function lireRoute() {
@@ -1377,6 +1378,45 @@ function fenetreBudget() {
   </form>`)
 }
 
+// À propos : la version de l'usine qui tourne sur ce serveur, son canal et ses mises à jour.
+// Le déployeur la lit dans le dépôt du serveur (verifierMiseAJour) : l'étiquette vX.Y.Z du code
+// en service, sinon son commit (une version de développement, sur le canal main).
+const CANAUX = { stable: "les versions publiées", main: "chaque fusion sur main (serveur de test)" }
+const VERSION_PUBLIEE = /^v\d+\.\d+\.\d+$/
+const lienDepot = (depot, chemin) => (/^[\w.-]+\/[\w.-]+$/.test(depot ?? "") ? `https://github.com/${depot}/${chemin}` : null)
+
+function vueAPropos() {
+  const r = etat.resume
+  if (!r) return html`<div class="chargement">Chargement…</div>`
+  const mj = r.usine.mise_a_jour ?? {}
+  const v = mj.version
+  const publiee = VERSION_PUBLIEE.test(v ?? "")
+  const notes = v ? lienDepot(mj.depot, publiee ? `releases/tag/${v}` : `commit/${v}`) : null
+  const versions = lienDepot(mj.depot, "releases")
+  const n = mj.disponible ?? 0
+  const etatMaj = mj.en_cours ? `en cours depuis ${momentParis(mj.en_cours)}` : mj.erreur ? "vérification impossible" : n ? `${n} changement${n > 1 ? "s" : ""} disponible${n > 1 ? "s" : ""}` : mj.verifie_le ? "l'usine est à jour" : "pas encore vérifiées"
+  const d = mj.derniere
+  return html`
+    <div><h1>À propos</h1><p class="chapeau">La version de l'usine qui tourne sur ce serveur, et ses mises à jour.</p></div>
+    <section class="carte carte-p pile" aria-labelledby="version-usine">
+      <h2 id="version-usine" class="surtitre">Version en service</h2>
+      <div class="mono" style="font-size:28px;font-weight:700">${v ?? "—"}</div>
+      <p class="aide" style="margin:0">${publiee ? "Une version publiée." : v ? "Une version de développement : ce commit n'est pas une version publiée." : "Pas encore lue : l'usine lit sa version au démarrage, puis la revérifie régulièrement."}</p>
+      ${notes || versions ? html`<div class="rangee">${notes ? html`<a href="${notes}" target="_blank" rel="noopener">${publiee ? "Ce qui a changé dans cette version" : "Voir ce commit"}</a>` : ""}${versions ? html`<a href="${versions}" target="_blank" rel="noopener">Toutes les versions</a>` : ""}</div>` : ""}
+    </section>
+    <section class="carte carte-p grille" style="font-size:14px" aria-label="Mises à jour">
+      <div><div class="aide">Canal</div><strong>${CANAUX[mj.canal] ?? mj.canal ?? "—"}</strong></div>
+      <div><div class="aide">Mises à jour</div><strong>${etatMaj}</strong></div>
+      <div><div class="aide">Dernière vérification</div>${mj.verifie_le ? momentParis(mj.verifie_le) : "—"}</div>
+      ${d?.terminee_le ? html`<div><div class="aide">Dernière mise à jour lancée depuis la console</div>${momentParis(d.terminee_le)}, ${d.reussie ? "réussie" : `en échec (code ${d.code})`}</div>` : ""}
+    </section>
+    ${mj.erreur ? html`<div class="message erreur"><span>La vérification des mises à jour échoue depuis ${momentParis(mj.erreur.depuis)} : ${mj.erreur.message}</span></div>` : ""}
+    ${n > 0 && !mj.en_cours ? html`<section class="carte carte-p barre" style="gap:12px;flex-wrap:wrap;border-color:var(--accent)"><span><strong>Une nouvelle version est disponible${VERSION_PUBLIEE.test(mj.cible ?? "") ? ` : ${mj.cible}` : ""}</strong><br><span class="aide">L'usine finit ce qu'elle fait, se met à jour et redémarre (quelques minutes).</span></span><button type="button" class="btn btn-p" data-action="usine" data-quoi="mettre-a-jour">Mettre à jour l'usine</button></section>
+      ${mj.commits?.length ? html`<details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Ce qui arrive</summary>
+        <ul class="pile" style="gap:4px;margin:8px 0 0;padding-left:18px;font-size:14px">${mj.commits.map((c) => { const [h, ...m] = String(c).split(" "); return html`<li><span class="mono aide">${h}</span> ${m.join(" ")}</li>` })}</ul>
+        ${n > mj.commits.length ? html`<div class="aide">et ${n - mj.commits.length} autre${n - mj.commits.length > 1 ? "s" : ""}.</div>` : ""}</details>` : ""}` : ""}`
+}
+
 function vueEtatUsine() {
   const s = etat.sante
   if (!s) return html`<div class="chargement">Vérification de l'usine…</div>`
@@ -2075,7 +2115,7 @@ function vueRegles() {
 // Les réglages : un sous-menu à gauche, la section à droite.
 function vueReglages() {
   const s = etat.route.section ?? "integrations"
-  const contenu = { integrations: vueIntegrations, connecteurs: vueConnecteurs, equipe: vueEquipe, utilisation: vueUtilisation, etat: vueEtatUsine, historique: vueHistorique, regles: vueRegles }[s]
+  const contenu = { integrations: vueIntegrations, connecteurs: vueConnecteurs, equipe: vueEquipe, utilisation: vueUtilisation, etat: vueEtatUsine, historique: vueHistorique, regles: vueRegles, apropos: vueAPropos }[s]
   return html`
     ${barreHaut()}
     <div class="reglages">
@@ -2760,7 +2800,8 @@ function rendre() {
     $("#cote-bas").innerHTML = html`${r.usine.mise_a_jour?.disponible ? html`<a href="#/reglages/etat" class="carte" style="display:block;padding:12px;color:var(--encre);text-decoration:none"><strong style="display:block">Mise à jour disponible</strong><span class="aide">${r.usine.mise_a_jour.disponible} changement(s)</span></a>` : ""}
       ${"Notification" in window && Notification.permission === "default" ? html`<button type="button" class="btn btn-s btn-petit" data-action="notifications">Me prévenir des décisions</button>` : ""}
       ${"Notification" in window && Notification.permission === "denied" ? html`<span class="aide">Notifications bloquées dans le navigateur</span>` : ""}
-      <a href="${r.usine.portail}" target="_blank" rel="noopener">Mes applications</a><span class="aide" id="moi"></span>`[BRUT]
+      <a href="${r.usine.portail}" target="_blank" rel="noopener">Mes applications</a><span class="aide" id="moi"></span>
+      <a href="#/reglages/apropos" class="aide" title="À propos de l'usine">${r.usine.mise_a_jour?.version ? `Usine ${r.usine.mise_a_jour.version}` : "À propos"}</a>`[BRUT]
     if (etat.moi) $("#moi").textContent = `${etat.moi.email} · administrateur`
   }
 }
