@@ -32,7 +32,7 @@ Le produit est publié derrière la page de connexion de l'usine (le portier) : 
 // Le cadre d'un dépôt repris : on part de l'existant (l'inventaire), dans sa pile.
 const cadreRepris = (pile, inventaire) => `Le produit EXISTE déjà : c'est un dépôt repris (souvent issu d'un reverse engineering qui en a reproduit une partie). On ne le réécrit pas : on garde ce qui marche, on répare ce qui est cassé, on ajoute ce qui manque, et on le spécialise pour le persona.
 Pile du dépôt : ${pile}. On y reste : pas d'autre langage, pas de nouveau framework sans nécessité.
-L'usine a déjà mis le dépôt au contrat d'hébergement (Dockerfile, $PORT, GET /api/health, données dans $DATA_DIR) : ce n'est pas une tâche.
+L'usine a déjà mis le dépôt au contrat d'hébergement (Dockerfile, $PORT, GET /api/health, données dans $DATA_DIR, erreurs et pouls par le module d'observabilité de l'usine, usine/observabilite.*, protégé) : ce n'est pas une tâche.
 L'inventaire de l'usine (constaté en lançant le code) :
 <inventaire>
 ${inventaire}
@@ -246,7 +246,7 @@ export async function analyserCorrections(config, projet, plan, retours, context
   const derniere = Math.max(...plan.lots.flatMap((l) => l.taches.map((t) => Number(t.cle.slice(1)))))
   const journal = (nom, texte) => (texte ? `\nJournal récent ${nom} (les dernières lignes) :\n<journal_${nom}>\n${texte}\n</journal_${nom}>\n` : `\n(Aucun journal ${nom} disponible.)\n`)
   const cadre = projet.origine && plan.pile
-    ? `Le produit est un dépôt repris (pile ${plan.pile}) que l'usine a terminé : on reste dans sa pile, on ne le réécrit pas. Il respecte le contrat d'hébergement de l'usine (Dockerfile, $PORT, GET /api/health, données dans $DATA_DIR). Il est publié derrière la page de connexion de l'usine : il ne code jamais d'authentification.`
+    ? `Le produit est un dépôt repris (pile ${plan.pile}) que l'usine a terminé : on reste dans sa pile, on ne le réécrit pas. Il respecte le contrat d'hébergement de l'usine (Dockerfile, $PORT, GET /api/health, données dans $DATA_DIR, erreurs et pouls par le module d'observabilité de l'usine, usine/observabilite.*, protégé). Il est publié derrière la page de connexion de l'usine : il ne code jamais d'authentification.`
     : brique
   const texte = `${cadre}
 ${contexte.persona ? `\nIl est construit pour ce persona (ICP.md) :\n<persona>\n${contexte.persona}\n</persona>\n` : ""}
@@ -305,7 +305,7 @@ ${regleProteges(config, projet)}`
 // livre : le produit était livré (ou en ligne) avant la réorientation, pas en fabrication.
 export async function analyserReorientation(config, projet, plan, { gardes, nonFaites, derniere, consigne, persona = null, proposition = null, retours = null, mesurer, ctx = null, reference = null, livre = false }) {
   const repris = Boolean(projet.origine && plan.pile)
-  const texte = `${repris ? `Le produit est un dépôt repris (pile ${plan.pile}) : on reste dans sa pile, on ne le réécrit pas. Il respecte le contrat d'hébergement de l'usine (Dockerfile, $PORT, GET /api/health, données dans $DATA_DIR) et il est publié derrière la page de connexion de l'usine : il ne code jamais d'authentification.` : brique}
+  const texte = `${repris ? `Le produit est un dépôt repris (pile ${plan.pile}) : on reste dans sa pile, on ne le réécrit pas. Il respecte le contrat d'hébergement de l'usine (Dockerfile, $PORT, GET /api/health, données dans $DATA_DIR, erreurs et pouls par le module d'observabilité de l'usine, usine/observabilite.*, protégé) et il est publié derrière la page de connexion de l'usine : il ne code jamais d'authentification.` : brique}
 
 Le produit « ${plan.nom} » est ${livre ? "LIVRÉ (tous ses lots sont faits)" : "EN COURS de fabrication"}. Demande d'origine :
 <demande>

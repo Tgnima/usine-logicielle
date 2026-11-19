@@ -1,7 +1,7 @@
 // Ce que le déployeur dit de chaque produit à PostHog et Sentry : états, incidents, déploiements, journaux.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { PERIODE_ETAT_MS, lignesNouvelles, niveauDe, proprietesDeploiement, proprietesEtat, suivreEtats } from "../observation.mjs"
+import { PERIODE_ETAT_MS, lignesNouvelles, niveauDe, niveauxDe, proprietesDeploiement, proprietesEtat, suivreEtats } from "../observation.mjs"
 
 const produit = (etat, autres = {}) => ({ etat, raison: etat === "ok" ? "répond en 40 ms" : "ne répond pas à /api/health", version: "b2ac2d85bd6b", deploiement: "ok", http: etat === "ok" ? { code: 200, ms: 40 } : { code: null, ms: 10_000 }, docker: { etat: "running", redemarrages_30_min: 0, oom: false, demarre_le: "x", code_sortie: 0, sante: null, redemarrages: 0 }, conteneur: "usine-prod-vigie-copro-blue", ...autres })
 
@@ -86,9 +86,81 @@ test("lignesNouvelles : les lignes après la dernière envoyée, une ligne coup�
 
 test("niveauDe : le texte de la ligne dit son niveau", () => {
   assert.equal(niveauDe("Échec de l'envoi"), "error")
-  assert.equal(niveauDe("TypeError: x is undefined"), "info") // seul le mot « error » isolé compte
   assert.equal(niveauDe("Uncaught exception"), "error")
-  assert.equal(niveauDe("(node:1) DeprecationWarning"), "info")
+  assert.equal(niveauDe("ERROR:root:connexion perdue"), "error")
+  assert.equal(niveauDe("[2026-11-18 10:00:00 +0000] [7] [ERROR] Exception in worker process"), "error")
+  assert.equal(niveauDe("(node:1) [DEP0040] DeprecationWarning: The `punycode` module is deprecated."), "warn")
+  assert.equal(niveauDe("(node:1) DeprecationWarning"), "warn")
   assert.equal(niveauDe("[DEP0040] deprecated"), "warn")
+  assert.equal(niveauDe("/app/main.py:3: UserWarning: format obsolète"), "warn")
   assert.equal(niveauDe("GET /api/health 200"), "info")
+})
+
+// Constat du 18 nov. 2026 : ces lignes, écrites par un vrai plantage, donnaient « info ».
+test("niveauDe : les exceptions de Python et de Node sont des erreurs", () => {
+  for (const ligne of [
+    "Traceback (most recent call last):",
+    '  File "/app/main.py", line 10, in <module>',
+    "ZeroDivisionError: division by zero",
+    "KeyError: 'plan'",
+    "TypeError: Cannot read properties of undefined (reading 'plan')",
+    "TypeError [ERR_INVALID_ARG_TYPE]: The \"path\" argument must be of type string",
+    "sqlite3.OperationalError: no such table: prets",
+    "requests.exceptions.ConnectionError: HTTPSConnectionPool(host='api', port=443)",
+    "RangeError: Maximum call stack size exceeded",
+    "CRITICAL:root:base de données introuvable",
+    "[2026-11-18 10:00:00 +0000] [1] [CRITICAL] WORKER TIMEOUT (pid:8)",
+  ]) assert.equal(niveauDe(ligne), "error", ligne)
+})
+
+test("niveauDe : une ligne ordinaire ne passe pas en erreur", () => {
+  for (const ligne of [
+    "Serveur prêt sur le port 3000",
+    "GET /api/errors 200 12 ms",
+    "INFO:     Uvicorn running on http://0.0.0.0:3000 (Press CTRL+C to quit)",
+    "INFO:     127.0.0.1:52000 - \"GET /api/health HTTP/1.1\" 200 OK",
+    "KeyError handling enabled", // le nom d'une classe sans les deux-points
+    "ErrorBoundary: rendu", // ne finit pas par Error
+    "Envoi impossible (TypeError: fetch failed)", // au milieu d'une phrase
+    "3 erreurs corrigées, 0 errors, error_count=0",
+    "Critical path : 120 ms",
+    "  - Local: http://localhost:3000", // en retrait, après une ligne ordinaire
+    "Node.js v24.11.0",
+  ]) assert.equal(niveauDe(ligne, "info"), "info", ligne)
+})
+
+test("niveauxDe : une trace Python est une erreur de bout en bout, une pile Node aussi", () => {
+  const python = [
+    "INFO:     Started server process [1]",
+    "Traceback (most recent call last):",
+    '  File "/app/main.py", line 10, in <module>',
+    "    main()",
+    '  File "/app/main.py", line 7, in main',
+    "    total = 1 / 0",
+    "            ~~^~~",
+    "ZeroDivisionError: division by zero",
+    "INFO:     Shutting down",
+  ]
+  assert.deepEqual(niveauxDe(python), ["info", "error", "error", "error", "error", "error", "error", "error", "info"])
+  // Le nom de l'exception ne finit pas toujours par Error : c'est la fin de la trace qui compte.
+  assert.deepEqual(niveauxDe(["Traceback (most recent call last):", '  File "/app/m.py", line 1, in <module>', "django.core.exceptions.ImproperlyConfigured: SECRET_KEY manquant", "Démarrage"]), ["error", "error", "error", "info"])
+  const node = [
+    "Serveur prêt sur le port 3000",
+    "TypeError: Cannot read properties of undefined (reading 'plan')",
+    "    at calculer (/app/server/actions/prets.js:12:20)",
+    "    at async /app/server/routes/index.js:40:5",
+    "Node.js v24.11.0",
+    "Serveur prêt sur le port 3000",
+  ]
+  assert.deepEqual(niveauxDe(node), ["info", "error", "error", "error", "info", "info"])
+})
+
+test("lignesNouvelles : une trace commencée avant la dernière ligne envoyée reste une erreur", () => {
+  const sortie = [
+    "2026-11-18T10:00:00.000000000Z Traceback (most recent call last):",
+    '2026-11-18T10:00:00.000000001Z   File "/app/main.py", line 3, in <module>',
+    "2026-11-18T10:00:00.000000002Z     plan = regles['plan']",
+    "2026-11-18T10:00:00.000000003Z KeyError: 'plan'",
+  ].join("\n")
+  assert.deepEqual(lignesNouvelles(sortie, "2026-11-18T10:00:00.000000001Z").map((l) => [l.texte, l.niveau]), [["    plan = regles['plan']", "error"], ["KeyError: 'plan'", "error"]])
 })

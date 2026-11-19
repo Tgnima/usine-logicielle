@@ -23,7 +23,7 @@ Ce qui est sur `main` sans être encore dans une version.
   `pilote` de `usine.config.yml`.
 - **Documentation de l'observabilité** (`docs/OBSERVABILITE.md`) : brancher Sentry et PostHog,
   ce que l'usine et chaque produit envoient, quels produits envoient leurs propres erreurs (pas
-  ceux fabriqués par une usine d'avant la v1.0.0, ni les dépôts repris), ce qui n'est pas masqué
+  ceux fabriqués par une usine d'avant la v1.0.0, ni les dépôts repris avant cette version), ce qui n'est pas masqué
   (les noms, l'adresse d'une requête en erreur 500), lire et vérifier ce qui remonte, ce que fait
   le pilote des pannes, limites connues.
 - **Le cliquet ne se réécrit plus en silence** : un test de `.usine/e2e/` qui échoue est une
@@ -38,6 +38,15 @@ Ce qui est sur `main` sans être encore dans une version.
   (`autonomie.minutes_cliquet` dans `usine.config.yml`), dans un ordre tiré au sort. Les tests non
   rejoués faute de temps sont nommés au journal et passent en premier à la vérification suivante.
   Un test qui échoue est relancé une fois avant d'être compté.
+- **Les plantages sont des erreurs dans les journaux** : une trace Python (`Traceback`, ses cadres,
+  `KeyError: 'plan'`) ou une exception Node (`TypeError: …` et sa pile) part vers PostHog au
+  niveau `error`, et non plus `info`. Une ligne ordinaire ne change pas de niveau.
+- **La console dit ce que chaque application envoie vraiment** à Sentry et à PostHog (reçu, en
+  échec, muet, non vérifié…), au lieu de « N sur N ont la dernière clé ». Chaque produit le
+  dit à l'usine par `GET /_usine/observabilite`, que Caddy ne sert jamais au public.
+- **Un dépôt repris envoie ses erreurs et son pouls**, dans sa pile. En Python, c'est un module
+  avec `sentry-sdk` (`briques/reprise/observabilite.py`). L'épreuve de l'inventaire exige un
+  vrai pouls avant d'aller plus loin.
 - **Les applications peuvent utiliser ton propre serveur de modèles** (par exemple un GPU avec
   llama-server, API compatible OpenAI) : console, Réglages, Intégrations, « IA des applications ».
   Elles l'essaient d'abord, avec un délai court (après une panne, il est laissé de côté 5 minutes),
@@ -48,11 +57,15 @@ Ce qui est sur `main` sans être encore dans une version.
   le serveur de modèles. L'usine elle-même garde ses modèles : la fabrication et la vérification ne
   changent pas.
 
-**À faire** : rien pour l'usine. Un test du cliquet devenu faux à cause d'un changement fait hors de
-l'usine (un commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le
-mette à jour ou le retire de `.usine/e2e/`. Pour qu'une application déjà livrée utilise le serveur de
-modèles, elle doit recevoir le nouveau `server/llm.js` de la brique (une petite correction par
-application) ; les nouvelles applications l'ont d'office.
+**À faire** : rien pour l'usine. Une application fabriquée par une usine d'avant la v1.0.0, ou
+reprise avant cette version, n'envoie pas ses propres erreurs : le module ne lui est pas ajouté
+de lui-même. Une application dont le module est plus ancien que cette version
+envoie, mais la console la dit « non vérifié » tant que son code n'a pas le module
+à jour et la route `GET /_usine/observabilite` (`docs/OBSERVABILITE.md`). Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
+commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
+ou le retire de `.usine/e2e/`. Pour qu'une application déjà livrée utilise le serveur de modèles, elle doit recevoir le
+nouveau `server/llm.js` de la brique (une petite correction par application) ; les nouvelles
+applications l'ont d'office.
 
 ## v1.1.1
 

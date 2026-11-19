@@ -7,7 +7,8 @@
 //
 // Le contrat d'hébergement est le même pour tous (le déployeur n'a qu'une façon de servir) :
 // un Dockerfile à la racine, l'application écoute sur $PORT, répond 200 sur GET /api/health,
-// écrit seulement dans $DATA_DIR.
+// écrit seulement dans $DATA_DIR, et envoie ses erreurs et son pouls par le module d'observabilité
+// de l'usine (GET /_usine/observabilite dit ce qu'il envoie).
 
 // Strict (le verrou fait foi) : le vérificateur refuse une PR dont le verrou ne suit pas.
 const INSTALLER_NPM = "npm ci --no-audit --no-fund"
@@ -23,7 +24,9 @@ export const PROFIL_BRIQUE = {
 
 // Les fichiers qui jugent un dépôt repris : l'usine les remet tels qu'ils sont sur la branche
 // de base avant chaque contrôle. (Ceux d'une brique sont dans usine.config.yml.)
-export const PROTEGES_REPRIS = ["Dockerfile", "MISSION.md", "ICP.md", "docs/PLAN.md", "docs/DESIGN.md", ".usine/**"]
+// usine/observabilite.* : le module d'observabilité de l'usine (reprise.mjs, MODULES_OBSERVABILITE),
+// déposé tel quel. Seulement ces deux fichiers : un dépôt peut avoir son propre dossier usine/.
+export const PROTEGES_REPRIS = ["Dockerfile", "MISSION.md", "ICP.md", "docs/PLAN.md", "docs/DESIGN.md", ".usine/**", "usine/observabilite.mjs", "usine/observabilite.py"]
 // Le cadre du produit, protégé partout : l'usine ne réécrit jamais sa propre mission.
 export const PROTEGES_TOUJOURS = ["MISSION.md", "ICP.md"]
 

@@ -62,3 +62,43 @@ test("un service injoignable : rien n'est levé, le produit continue", async () 
   assert.equal(await o.signalerErreur(new Error("x")), false)
   assert.deepEqual(o.etat().pouls, { envoyes: 0, echecs: 1 })
 })
+
+test("ce que l'usine en voit : la réponse du dernier envoi de chaque canal, jamais une clé", async () => {
+  let statut = 200
+  const o = creerObservabilite({ env: ENV, fetch: async () => new Response(null, { status: statut }), signaler: () => {} })
+  assert.equal(await o.envoyerPouls(), true)
+  statut = 401
+  assert.equal(await o.envoyerPouls(), false)
+  const e = o.etatEnvois()
+  assert.deepEqual([e.contrat, e.pile, e.demarre], [1, "node", false])
+  assert.deepEqual([e.posthog.actif, e.posthog.suivi, e.posthog.envoyes, e.posthog.echecs, e.posthog.dernier_echec.raison], [true, true, 1, 1, "HTTP 401"])
+  assert.match(e.posthog.dernier_ok, /^\d{4}-\d\d-\d\dT/)
+  assert.deepEqual([e.sentry.actif, e.sentry.envoyees, e.sentry.dernier_ok, e.sentry.dernier_echec], [true, 0, null, null])
+  assert.ok(!JSON.stringify(e).includes("phc_") && !JSON.stringify(e).includes("clepublique"))
+  // Un service injoignable : la raison technique courte, pas le message entier.
+  const injoignable = creerObservabilite({ env: ENV, fetch: async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }) }, signaler: () => {} })
+  await injoignable.envoyerPouls()
+  assert.equal(injoignable.etatEnvois().posthog.dernier_echec.raison, "ECONNREFUSED")
+})
+
+test("sans clé : le module le dit, et rien ne démarre", () => {
+  const o = creerObservabilite({ env: { USINE_PRODUIT: "mon-produit" }, fetch: async () => new Response(null), signaler: () => {} })
+  o.demarrer()
+  const e = o.etatEnvois()
+  assert.deepEqual([e.demarre, e.sentry.actif, e.posthog.actif], [false, false, false])
+})
+
+test("GET /_usine/observabilite : la sonde de l'usine lit l'état des envois", async () => {
+  const { dbDeTest } = await import("../server/db.js")
+  const { creerApp } = await import("../server/index.js")
+  dbDeTest()
+  const serveur = creerApp().listen(0)
+  try {
+    const res = await fetch(`http://127.0.0.1:${serveur.address().port}/_usine/observabilite`)
+    assert.equal(res.status, 200)
+    const e = await res.json()
+    assert.deepEqual([e.contrat, e.pile, typeof e.sentry.actif, typeof e.posthog.actif], [1, "node", "boolean", "boolean"])
+  } finally {
+    serveur.close()
+  }
+})

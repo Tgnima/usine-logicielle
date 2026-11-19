@@ -2,7 +2,9 @@
 
 Ce que l'usine envoie à Sentry et à PostHog, comment le brancher, comment le lire et comment
 vérifier que ça arrive. Écrit d'après le code de `main` du 18 novembre 2026 (après la v1.1.1), mis
-à jour le 19 novembre avec le pilote des pannes (PR #21).
+à jour le 19 novembre avec le pilote des pannes (PR #21), puis avec la PR #23 : chaque produit dit
+à l'usine ce qu'il envoie, les plantages sont des erreurs dans les journaux, et un dépôt repris
+envoie ses erreurs et son pouls.
 Les chemins des écrans de Sentry et de PostHog sont ceux de cette date : ces services peuvent
 les changer. Tout est facultatif : sans clé, rien ne part.
 
@@ -15,6 +17,8 @@ les changer. Tout est facultatif : sans clé, rien ne part.
   produit, le pouls des produits qui ont le module) et les journaux des conteneurs des produits.
 - **Une seule clé Sentry et un seul jeton PostHog** servent à l'usine et à tous ses produits.
   Chaque envoi porte l'identifiant du produit (son slug, par exemple `vigie-copro`).
+- **La console dit, application par application**, si son pouls arrive à PostHog et si ses
+  erreurs arrivent à Sentry : voir « Vérifier que ça remonte ».
 - **Ce qui sort est nettoyé**, mais pas tout : voir « Ce qui est masqué, et ce qui ne l'est pas ».
 
 ## Brancher Sentry et PostHog
@@ -84,30 +88,65 @@ produits, quelle que soit leur pile (Node, Python, etc.).
 | PostHog | `etat_produit` (distinct_id `produit:<slug>`) : état (`ok`, `alerte`, `panne`, ou `inconnu` pendant un déploiement), raison, version, état du dernier déploiement, état Docker, code et temps de réponse de `/api/health`, redémarrages des 30 dernières minutes, mémoire dépassée, et s'il s'agit d'un changement (avec l'état précédent) | Toutes les 5 minutes, et à chaque changement d'état |
 | Sentry | Un incident « `<slug> (<environnement>) en panne : <raison>` ». Toutes les pannes d'un même produit, dans un même environnement, ont la même empreinte : elles vont dans un seul sujet | Quand la panne est vue sur deux relevés de suite (un relevé par minute) |
 | PostHog | `deploiement` : résultat (`ok`, `echec`, `abandonne`), durée, reprise, couleur, raison d'un échec (sa première ligne) | À chaque mise en ligne |
-| PostHog (journaux) | Les nouvelles lignes de `docker logs` du conteneur en service de chaque produit (celui qu'indique `statut.json`). `service.name` porte le slug, `deployment.environment` l'environnement. Le niveau (`error`, `warn`, `info`) est deviné d'après des mots de la ligne | Environ une fois par minute au calme (tous les trois tours du déployeur), au plus 200 lignes par conteneur et par passage. Au premier passage après la pose du jeton, ses 200 dernières lignes partent d'un coup |
+| PostHog (journaux) | Les nouvelles lignes de `docker logs` du conteneur en service de chaque produit (celui qu'indique `statut.json`). `service.name` porte le slug, `deployment.environment` l'environnement. Le niveau (`error`, `warn`, `info`) se lit sur le texte de la ligne (voir plus bas) | Environ une fois par minute au calme (tous les trois tours du déployeur), au plus 200 lignes par conteneur et par passage. Au premier passage après la pose du jeton, ses 200 dernières lignes partent d'un coup |
 
 La raison d'une panne est écrite par la sonde du déployeur, par exemple : « ne répond pas à
 /api/health », « /api/health répond 500 », « arrêté (exited, code de sortie 1) », « redémarre en
 boucle ».
 
+**Le niveau d'une ligne de journal** (`niveauDe` et `niveauxDe`, `deployeur/observation.mjs`) :
+- `error` : un mot comme « error », « erreur », « exception », « fatal », « échec » ; `CRITICAL` ;
+  et un plantage, de bout en bout. En Python : `Traceback (most recent call last):`, les cadres
+  (`File "/app/main.py", line 10`), le code, puis la ligne de l'exception (`KeyError: 'plan'`,
+  `sqlite3.OperationalError: …`, même si son nom ne finit pas par `Error`). En Node :
+  `TypeError: …` ou `TypeError [ERR_…]: …`, puis sa pile (les lignes en retrait qui suivent) ;
+- `warn` : « warning », « deprecated », ou une classe d'avertissement (`DeprecationWarning: …`) ;
+- `info` : le reste. Le nom d'une exception ne compte qu'en tête de ligne : « KeyError handling
+  enabled » ou « Envoi impossible (TypeError: fetch failed) » restent des informations.
+
+**Ce que la sonde lit aussi**, chaque minute, sans rien envoyer : `GET /_usine/observabilite`
+de chaque produit qui répond, pour savoir ce qu'il envoie lui-même (voir « Vérifier que ça
+remonte »).
+
 ### Ce que le produit envoie lui-même, s'il a le module
 
 Un produit fabriqué à partir d'une brique (`webapp`, et ses surcouches `site`, `api` et `pwa`)
-contient `server/observabilite.js`, branché dans `server/demarrage.js`. Ce module envoie, côté
-serveur seulement :
+contient `server/observabilite.js`, branché dans `server/demarrage.js`. Un dépôt repris par une
+usine qui contient la PR #23 a le module de sa pile dans `usine/` : celui de la brique en Node
+(`usine/observabilite.mjs`), `usine/observabilite.py` en Python (`briques/reprise/`, avec
+`sentry-sdk`). Ces modules envoient, côté serveur seulement :
 
 | Vers | Quoi | Quand |
 |---|---|---|
 | Sentry | Les erreurs du produit : chaque `console.error`, chaque exception non attrapée, et ce que le code signale avec `signalerErreur(error)`. Avec la pile d'appels, l'environnement et la version | À chaque erreur |
-| PostHog | `pouls` (distinct_id `produit:<slug>`) : le slug, l'environnement, la version, puis des nombres seulement : les compteurs métier ajoutés par `ajouterPouls()`, les erreurs depuis le démarrage, la durée de marche et la mémoire | 30 s après le démarrage, puis toutes les 5 minutes |
+| PostHog | `pouls` (distinct_id `produit:<slug>`) : le slug, l'environnement, la version, puis des nombres seulement : les compteurs métier ajoutés par `ajouterPouls()` (`ajouter_pouls()` en Python), les erreurs depuis le démarrage, la durée de marche et la mémoire | 30 s après le démarrage (`USINE_PREMIER_POULS_S` le règle, de 1 à 300 s), puis toutes les 5 minutes |
+
+En Python, les erreurs passent par `sentry-sdk`, initialisé avec `SENTRY_DSN`,
+`USINE_ENVIRONNEMENT` et `USINE_VERSION` : les exceptions non attrapées, celles des requêtes
+(intégrations de `sentry-sdk`), chaque `logging.error`, et `signaler_erreur(exc)`. Sous gunicorn
+avec plusieurs workers, chaque worker envoie son propre pouls.
+
+Chaque module répond aussi `GET /_usine/observabilite` : démarré ou non, clés présentes ou non,
+et la réponse de Sentry et de PostHog à son dernier envoi (des comptes et des dates, jamais une
+clé). Caddy répond 404 à `/_usine/*` au public, que l'application soit protégée ou publique
+(`CHEMINS_INTERNES`, `deployeur/chemins.mjs`) : seul le déployeur la lit, sur le réseau du produit.
 
 **Quels produits envoient leurs propres erreurs :**
 
 | Produit | Erreurs de l'application et pouls | État, pannes, déploiements, journaux |
 |---|---|---|
-| Fabriqué à partir d'une brique par une usine qui contient la PR #9 (sur `main` depuis le 12 novembre 2026, première version publiée : v1.0.0) | Oui, dès que l'application a reçu les clés | Oui |
-| Fabriqué par une usine plus ancienne | Non : le module n'est copié qu'à la création du dépôt, et une mise à jour de l'usine ne l'ajoute pas. Il faut l'ajouter au produit, par exemple par une demande de corrections | Oui |
-| **Repris** d'un dépôt existant, quelle que soit sa pile | Non : la reprise ne met le dépôt qu'au contrat d'hébergement (Dockerfile, port, `/api/health`, dossier de données). **Mais** le déployeur lui donne quand même `SENTRY_DSN`, `POSTHOG_TOKEN` et `POSTHOG_HOTE` : si son code contient déjà un kit Sentry ou PostHog qui lit ces variables, il enverra dans les projets de l'usine, sans le masquage ni les plafonds de l'usine | Oui |
+| Fabriqué à partir d'une brique par une usine qui contient la PR #9 (sur `main` depuis le 12 novembre 2026, première version publiée : v1.0.0) | Oui, dès que l'application a reçu les clés. La console ne peut le vérifier qu'avec un module qui publie `GET /_usine/observabilite` (PR #23 et après) : sinon, elle dit « non vérifié » | Oui |
+| Fabriqué par une usine plus ancienne | Non : le module n'est copié qu'à la création du dépôt, et une mise à jour de l'usine ne l'ajoute pas. Il faut l'ajouter au produit : copier `server/observabilite.js` de la brique, appeler `demarrerObservabilite()` dans `server/demarrage.js`, ajouter la route `GET /_usine/observabilite` dans `server/index.js`. C'est un geste à la main sur le dépôt du produit : `server/index.js` est protégé, une demande de corrections ne peut pas le changer | Oui |
+| **Repris** d'un dépôt existant, par une usine qui contient la PR #23 | Oui, en Node comme en Python : le module de sa pile est dans `usine/`, et l'épreuve de l'inventaire a exigé un vrai pouls (voir plus bas) | Oui |
+| **Repris** par une usine plus ancienne | Non : la reprise ne mettait le dépôt qu'au contrat d'hébergement (Dockerfile, port, `/api/health`, dossier de données). **Mais** le déployeur lui donne quand même `SENTRY_DSN`, `POSTHOG_TOKEN` et `POSTHOG_HOTE` : si son code contient déjà un kit Sentry ou PostHog qui lit ces variables, il enverra dans les projets de l'usine, sans le masquage ni les plafonds de l'usine | Oui |
+
+**La reprise d'un dépôt** (`orchestrateur/src/reprise.mjs`). L'agent de l'inventaire copie tel quel
+le module de la pile du dépôt dans `usine/`, l'appelle au démarrage et ajoute la route ; en Python,
+il ajoute `sentry-sdk` aux dépendances. L'épreuve démarre ensuite l'application devant un faux
+Sentry et un faux PostHog locaux. Elle exige le module intact (celui de sa pile), un pouls de
+compteurs reçu, sans profil ni géolocalisation, et la route. Sinon, l'agent a un second essai,
+puis la reprise s'arrête, expliquée. Les deux fichiers du module sont ensuite protégés
+(`PROTEGES_REPRIS`, `orchestrateur/src/profil.mjs`).
 
 ## Ce qui est masqué, et ce qui ne l'est pas
 
@@ -123,6 +162,11 @@ serveur seulement :
 - Les événements PostHog ne créent aucun profil de personne (`$process_person_profile: false`) et
   demandent à PostHog de ne pas les géolocaliser (`$geoip_disable: true`). Vérifié le 12 novembre
   2026 : les pouls arrivent sans ville ni coordonnées.
+- Le module Python des dépôts repris masque de la même façon : les mêmes cas
+  (`briques/reprise/cas-masquage.json`) sont rejoués par les tests de l'usine et par ceux du module.
+  Il n'envoie à Sentry ni variables locales, ni code source, ni corps, en-têtes ou paramètres de
+  requête, ni utilisateur, ni fil d'Ariane : d'une requête, seulement la méthode et l'adresse
+  sans ses paramètres (`_avant_envoi`).
 - Rien ne part du navigateur d'un produit fabriqué à partir d'une brique : sa politique de
   sécurité (CSP) l'interdit. Ce n'est pas garanti pour un produit repris.
 
@@ -170,14 +214,34 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
      quand le dernier envoi a réussi, ou depuis quand les envois échouent, et pourquoi ;
    - pour le déployeur, une seule ligne : le premier canal en échec, sinon son dernier envoi
      réussi ;
-   - rien sur ce que les produits envoient eux-mêmes.
-2. **« Les applications : N sur N ont la dernière clé »** compte les applications qui ont reçu la
-   dernière version des clés **posées dans la console**. Ce n'est pas la preuve qu'elles s'en
-   servent : une application sans module les reçoit aussi. Avec des clés posées seulement sur le
-   serveur, toutes les applications sont comptées à jour, même celles lancées avant la clé, et
-   **Appliquer maintenant** n'apparaît pas : redéploie-les pour qu'elles la reçoivent.
-3. **La preuve** est ce que montrent Sentry et PostHog : un sujet dans Sentry, un événement ou
-   une ligne de journal dans PostHog. La requête SQL ci-dessus le montre produit par produit.
+   - pour Sentry et PostHog, **chaque application** : ce qu'elle fait vraiment de la clé.
+2. **L'état de chaque application** vient de ce que son module répond sur
+   `GET /_usine/observabilite`, lu chaque minute par la sonde du déployeur
+   (`envoisApplication`, `orchestrateur/src/services.mjs`). Ce qui demande quelque chose vient en
+   premier, ce qui va bien est regroupé sur une ligne :
+   - *reçu* : PostHog a accepté un pouls il y a moins de 15 minutes ; Sentry a accepté sa
+     dernière erreur ;
+   - *en échec* : le dernier envoi a été refusé ou n'a pas abouti, avec la raison (clé refusée,
+     quota atteint, pas de réponse à temps, service injoignable, envoi refusé, souci chez le
+     service, envoi impossible) ;
+   - *muet* : plus aucun pouls depuis 15 minutes, ou aucun après 10 minutes de marche ;
+   - *n'envoie rien* : la clé est là, mais l'envoi n'est pas démarré dans son code, ou
+     `sentry-sdk` manque (Python) ;
+   - *non vérifié* : elle ne publie pas la route. Son module manque, ou il est plus ancien que la
+     PR #23 (un tel module envoie son pouls sans publier la route). Rien ne prouve alors qu'elle
+     envoie ;
+   - *sans clé*, *en attente* (premier pouls à venir), *prête* (Sentry : aucune erreur à envoyer)
+     ou *sans nouvelles* (pas de réponse, ou une sonde de plus de 3 minutes).
+
+   Les applications qui n'ont pas la dernière version des clés **posées dans la console** sont
+   nommées, avec **Appliquer maintenant**. Avec des clés posées seulement sur le serveur, toutes
+   les applications sont comptées à jour, même celles lancées avant la clé, et **Appliquer
+   maintenant** n'apparaît pas : redéploie-les pour qu'elles la reçoivent.
+3. **« Reçu » veut dire que le service a répondu 2xx.** Sentry refuse une clé inconnue. PostHog,
+   lui, accepte un pouls même avec un jeton inconnu : c'est le bouton **Tester** qui juge le
+   jeton. La preuve finale reste ce que montrent Sentry et PostHog : un sujet dans Sentry, un
+   événement ou une ligne de journal dans PostHog. La requête SQL ci-dessus le montre produit par
+   produit.
 
 ## Les IA, les journaux et Sentry
 
@@ -222,7 +286,7 @@ décision est notée au journal (type `pilote`) : elle part donc vers PostHog co
 ## Plafonds d'envoi
 
 - Pour chaque processus, une même erreur ne part qu'une fois par heure, et 20 erreurs par heure
-  au plus. Le plafond vaut séparément pour l'orchestrateur, pour le déployeur, et pour chaque
+  au plus. Le module Python applique les mêmes plafonds. Le plafond vaut séparément pour l'orchestrateur, pour le déployeur, et pour chaque
   produit dans chaque environnement.
 - Pour le déployeur, les incidents de panne comptent dans ce plafond : au-delà de 20 par heure,
   des pannes ne partent plus.
@@ -232,17 +296,23 @@ décision est notée au journal (type `pilote`) : elle part donc vers PostHog co
 
 ## Limites connues
 
-- **Les produits fabriqués avant la PR #9 et les produits repris** n'envoient pas leurs propres
-  erreurs (voir le tableau plus haut). Ils restent suivis par le déployeur.
-- **Le niveau des lignes de journal est deviné.** Une ligne d'exception comme
-  `ZeroDivisionError: division by zero`, `KeyError: 'plan'`, `TypeError: …` ou
-  `Traceback (most recent call last):` est classée `info`. Seules les lignes qui contiennent un
-  mot comme « error » ou « exception » isolé sont classées `error`.
+- **Les produits fabriqués avant la PR #9 (v1.0.0) et ceux repris avant la PR #23** n'envoient
+  pas leurs propres erreurs (voir le tableau plus haut). Ils restent suivis par le déployeur. Une
+  mise à jour de l'usine ne leur ajoute pas le module : il faut le leur ajouter.
+- **Les modules d'avant la PR #23** envoient sans le dire à l'usine :
+  la console les dit « non vérifié » tant que leur code n'a pas le module à jour et la route.
+- **Le niveau des lignes de journal est lu sur leur texte.** Les plantages Python et Node sont
+  reconnus, mais pas ceux d'autres langages, ni un niveau numérique dans un journal JSON (pino).
+  Une trace dont l'en-tête est sorti des 200 dernières lignes n'est reconnue qu'en partie : en
+  Python, les cadres et la ligne de l'exception restent `error` ; en Node, les lignes `at …` qui
+  restent passent en `info`.
 - **Les journaux d'un conteneur très bavard peuvent être tronqués** : au plus 200 lignes par
   conteneur et par passage.
-- **Le module des produits n'est pas protégé.** `server/observabilite.js` et
+- **Le module des produits issus d'une brique n'est pas protégé.** `server/observabilite.js` et
   `server/demarrage.js` ne sont pas dans le périmètre protégé : la consigne « Ne modifie pas »
-  n'empêche pas une tâche de retirer le masquage ou le branchement.
+  n'empêche pas une tâche de retirer le masquage ou le branchement. Celui d'un dépôt repris l'est
+  (`usine/observabilite.mjs` ou `.py`), mais pas l'appel au démarrage ni la route. Si une tâche
+  les retire, la console le montre : « n'envoie rien » ou « non vérifié ».
 - **Une même clé pour tous** : un produit pourrait envoyer des événements au nom d'un autre, ou
   épuiser le quota (voir `docs/SECURITE.md`).
 - **Le pilote des pannes ne voit que ce que voit la sonde**, et il est en mode « observer » par

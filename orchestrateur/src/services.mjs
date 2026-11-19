@@ -28,6 +28,7 @@ import { redemanderEtat } from "./github.mjs"
 import { MONITEUR, obs, reglerObservabilite } from "./observabilite.mjs"
 import { courrielDuServeur, envoyerEssai, reglerCourriel, verifierCourriel } from "./courriel.mjs"
 import { PASSERELLE } from "./moteurs.mjs"
+import { SONDE_PERIMEE_S } from "./sante.mjs"
 
 const erreur = (code, message, extra = {}) => Object.assign(new Error(message), { code, ...extra })
 
@@ -666,6 +667,53 @@ const CANAUX_DEPLOYEUR = { sentry: ["erreurs"], posthog: ["evenements", "journau
 // Un canal d'envoi, tel que la console le montre : jamais une clé, l'échec traduit en clair.
 const canalAffiche = (id, c) => ({ envoyes: c.envoyes, echecs: c.echecs, joignable: c.joignable, dernier_ok: c.dernier_ok ?? null, premier_echec: c.premier_echec ?? null, dernier_echec: c.dernier_echec ? { le: c.dernier_echec.le, message: traduireEchec(id, c.dernier_echec.detail) } : null })
 
+// Ce qu'une application fait vraiment de la clé de Sentry ou de PostHog. La sonde du déployeur
+// lit chaque minute GET /_usine/observabilite de l'application (sante.json : applications.produits,
+// champ observabilite) : son module dit s'il est démarré, s'il a la clé, et la réponse du service à
+// son dernier envoi. Avoir reçu la clé ne suffit pas : il faut que l'application s'en serve.
+//   ok          PostHog : un pouls accepté il y a moins de 15 min ; Sentry : sa dernière erreur acceptée ;
+//   echec       le dernier envoi a été refusé, ou n'a pas abouti (raison : « HTTP 401 », « délai dépassé ») ;
+//   attente     tout est en place, rien à constater encore (premier pouls à venir, aucune erreur à envoyer) ;
+//   muet        PostHog : plus aucun pouls depuis 15 min, ou aucun depuis 10 min de marche ;
+//   sans_cle    l'application n'a pas la clé ;
+//   non_branche le module n'est pas démarré, ou il manque au code de l'application (ou il est trop ancien
+//               pour le dire) : rien ne dit qu'elle envoie quoi que ce soit ;
+//   inconnu     l'application ne répond pas, ou la sonde est trop vieille pour en dire quelque chose.
+// PostHog accepte un pouls même avec un jeton inconnu : c'est le bouton « Tester » qui juge le jeton.
+export const POULS_MUET_MS = 15 * 60_000
+const PREMIER_POULS_MAX_S = 10 * 60
+export function envoisApplication(service, o, { maintenant = Date.now() } = {}) {
+  if (!o) return { etat: "inconnu" }
+  if (!o.publie) return { etat: "non_branche", raison: o.raison === "sans_reponse" ? "sans_reponse" : "module_absent" }
+  const c = o[service]
+  if (!c?.actif) return { etat: "sans_cle" }
+  if (!o.demarre) return { etat: "non_branche", raison: "module_arrete" }
+  // Python : la clé est là, mais sentry-sdk manque (ou n'a pas pu démarrer).
+  if (c.pret === false) return { etat: "non_branche", raison: "sdk_absent" }
+  const ok = c.dernier_ok ? Date.parse(c.dernier_ok) : NaN
+  const echec = c.dernier_echec?.le ? Date.parse(c.dernier_echec.le) : NaN
+  if (Number.isFinite(echec) && !(ok >= echec)) return { etat: "echec", le: c.dernier_echec.le, raison: c.dernier_echec.raison ?? null }
+  if (service === "posthog") {
+    if (Number.isFinite(ok)) return { etat: maintenant - ok <= POULS_MUET_MS ? "ok" : "muet", le: c.dernier_ok }
+    return { etat: (o.en_marche_s ?? 0) < PREMIER_POULS_MAX_S ? "attente" : "muet", le: null }
+  }
+  // Sentry : une application sans erreur n'envoie rien, c'est normal.
+  if (Number.isFinite(ok)) return { etat: "ok", le: c.dernier_ok }
+  return { etat: "attente", raison: c.suivi === false ? "reponse_invisible" : "aucune_erreur" }
+}
+
+// L'état des envois de chaque application en ligne, pour Sentry et PostHog.
+function envoisDesApplications(service, applications, sante, maintenant = Date.now()) {
+  const sonde = sante?.applications
+  const recente = Boolean(sonde?.produits) && (maintenant - new Date(sonde.le).getTime()) / 1000 <= SONDE_PERIMEE_S
+  return applications.map((a) => ({
+    nom: a.nom,
+    environnement: a.environnement,
+    a_jour: a.a_jour,
+    ...envoisApplication(service, recente ? sonde.produits[a.cle]?.observabilite ?? null : null, { maintenant }),
+  }))
+}
+
 export function etatServices(ctx, instance = obs) {
   const etat = instance.etat()
   const sante = lireJson(join(ctx.config.etatDir ?? "/app/etat", "sante.json"))
@@ -728,6 +776,8 @@ export function etatServices(ctx, instance = obs) {
       }),
       envoi: Object.fromEntries((CANAUX[id] ?? []).map((c) => [c, canalAffiche(id, etat[c])])),
       deployeur: id === "slack" ? null : deployeur(id),
+      // Sentry et PostHog : ce que chaque application fait vraiment de la clé.
+      ...(id === "sentry" || id === "posthog" ? { envois_applications: envoisDesApplications(id, applications, sante) } : {}),
       ...(id === "slack" ? { connecte: Boolean(ctx.slackConnecte?.()) } : {}),
       // L'envoi d'emails est complet quand ce qui sert a un serveur d'envoi et un expéditeur.
       ...(id === "smtp" ? { complet: (({ hote, expediteur }) => Boolean(hote && expediteur))(bloc ?? courrielDuServeur()) } : {}),
