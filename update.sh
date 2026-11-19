@@ -62,7 +62,9 @@ principal() {
   fi
 
   echo "• $avant → $ref ($apres) :"
-  git log --format='    %s' "HEAD..$ref" | head -25
+  # La limite dans git, pas par « | head » : avec pipefail, git recevrait SIGPIPE (code 141) au-delà
+  # de 25 changements, et le script s'arrêterait là.
+  git log -n 25 --format='    %s' "HEAD..$ref"
   [ -f CHANGELOG.md ] && echo "  (le détail et les gestes à faire : CHANGELOG.md, après la mise à jour)"
 
   # 1. L'usine finit sa tâche en cours, puis s'arrête. Un arrêt déjà demandé par quelqu'un est gardé.
@@ -74,7 +76,10 @@ principal() {
     fi
     echo "• Attente de la fin de la tâche en cours (30 min au plus)…"
     for i in $(seq 1 180); do
-      cli statut | grep -qE '"en_cours": "' || break
+      # Lu en entier avant de chercher : « cli statut | grep -q » pourrait recevoir SIGPIPE et faire
+      # croire, avec pipefail, qu'aucune tâche ne tourne.
+      statut=$(cli statut 2> /dev/null || true)
+      grep -qE '"en_cours": "' <<< "$statut" || break
       [ "$i" = 180 ] && { echo "Une tâche tourne encore au bout de 30 min : mise à jour abandonnée, rien n'a changé."; exit 1; }
       sleep 10
     done
