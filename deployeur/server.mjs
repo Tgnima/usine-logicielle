@@ -567,7 +567,8 @@ async function ecrireSante() {
     conteneurs,
     produits: placeProduits,
     entretien: dernierEntretien,
-    mise_a_jour: miseAJour,
+    // Le dépôt de l'usine (public) : la page « À propos » de la console y renvoie vers les notes de version.
+    mise_a_jour: { ...miseAJour, depot: DEPOT_USINE || null },
     boucle_le: boucleLe, // la fin du dernier tour de déploiement : un tour bloqué se voit
     applications: etatApplications, // la sonde des produits (sonderProduits), produit par produit
     boite: boite ? { version: boite.version, le: boite.le } : null,

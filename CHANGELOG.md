@@ -12,6 +12,13 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **À propos, dans la console** : Réglages, « À propos », montre la version de l'usine en service
+  (`v1.2.0`, ou le commit sur le canal `main`), son canal, l'état des mises à jour et la date de
+  la dernière vérification. Des liens mènent aux notes de cette version et à toutes les versions.
+  Le bas du menu affiche aussi la version (« Usine v1.2.0 ») et ouvre cette page. Quand une
+  mise à jour est disponible, la page la nomme, liste ce qui arrive et propose le bouton « Mettre
+  à jour l'usine ».
+
 ## v1.2.0
 
 Ce qui a été fusionné du 18 au 19 novembre 2026.
