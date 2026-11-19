@@ -122,6 +122,7 @@ const etat = {
   jetons: null, // les jetons « depuis ma machine »
   jetonCree: null, // le jeton qui vient d'être créé, montré une seule fois
   envoyes: new Map(), // la file d'attention : les actions déjà envoyées (clé → { le, texte, projet }), tant qu'elles y restent
+  faitsOuverts: new Set(), // les propositions dont « Ce que l'usine a relevé » est ouvert
   consignesOuvertes: new Set(), // les décisions dont la saisie « Autre consigne » est ouverte (Visibilité)
   brouillons: new Map(), // la consigne tapée pour chaque décision (id → texte) : elle survit à chaque nouveau rendu
 }
@@ -2020,21 +2021,33 @@ function fenetrePasserelle(s) {
   </div>`)
 }
 
-// Le pilote des pannes (pilote.mjs) : trois modes, et ses dernières décisions.
+// La boucle d'amélioration (pilote.mjs, propositions.mjs) : quatre modes, ce qui attend, ce que l'usine
+// arrive à lire de Sentry et de PostHog, et ses dernières décisions.
 const MODES_PILOTE = [
   ["coupe", "Coupé", "L'usine te prévient des pannes, sans rien faire d'autre."],
-  ["observer", "Observer", "Pour chaque panne, elle te dit ce qu'elle aurait fait. Rien n'est lancé."],
-  ["corriger", "Corriger", "Elle prépare seule la correction et la met sur l'aperçu. La mise en ligne pour de vrai reste à toi."],
+  ["observer", "Observer", "Pour chaque panne ou nouvelle erreur, elle te dit ce qu'elle aurait fait. Rien n'est lancé."],
+  ["proposer", "Proposer", "Elle te propose une correction, avec ce qu'elle a relevé. Rien ne part sans toi : tu la lances ou tu l'écartes."],
+  ["corriger", "Corriger", "Elle prépare seule la correction d'une panne et la met sur l'aperçu. Une nouvelle erreur, elle, t'est seulement proposée. La mise en ligne pour de vrai reste à toi."],
 ]
+// Une source : branchée ou non, sa dernière lecture, ou ce qui manque pour la brancher.
+function ligneSource(nom, s, manque, mode) {
+  if (!s?.branche) return `${nom} : pas branché (${manque})`
+  if (!s.le) return mode === "coupe" ? `${nom} : pas lu en mode Coupé` : `${nom} : branché, pas encore lu`
+  return s.ok ? `${nom} : lu le ${heure(s.le)}` : `${nom} : lecture ratée le ${heure(s.le)} · ${String(s.message ?? "").replace(/^lecture impossible : /, "")}`
+}
 function cartePilote(p) {
   if (!p) return ""
   const choisi = MODES_PILOTE.find(([id]) => id === p.mode) ?? MODES_PILOTE[1]
-  return html`<section class="carte carte-p pile" aria-labelledby="pilote"><h2 id="pilote">Pannes des applications en ligne</h2>
-      <p class="aide" style="margin:0">Quand une application en ligne tombe en panne à cause de son code, l'usine peut en préparer la correction seule. Si la cause est ailleurs (serveur, mémoire), ou si la panne revient dans la semaine qui suit ${p.par_produit === 1 ? "une correction" : `${p.par_produit} corrections`}, elle te passe la main.</p>
-      <div><div class="segmente" role="group" aria-label="Pannes des applications en ligne">${MODES_PILOTE.map(([id, nom]) => html`<button type="button" data-action="pilote-mode" data-id="${id}" aria-pressed="${String(p.mode === id)}">${nom}</button>`)}</div></div>
+  const n = p.propositions ?? {}
+  const compte = [n.ouvertes ? `${n.ouvertes} à décider` : null, n.en_route ? `${n.en_route} en cours de correction` : null, n.suivies ? `${n.suivies} suivie${n.suivies > 1 ? "s" : ""} après la mise en ligne` : null].filter(Boolean)
+  return html`<section class="carte carte-p pile" aria-labelledby="pilote"><h2 id="pilote">Pannes et erreurs des applications en ligne</h2>
+      <p class="aide" style="margin:0">Quand une application en ligne tombe en panne à cause de son code, ou qu'une nouvelle erreur apparaît dans Sentry, l'usine peut te proposer une correction. Tu la lances ou tu l'écartes depuis « Ce qui t'attend » ou depuis Slack. Une correction lancée s'arrête à l'aperçu ; une fois en ligne, l'usine vérifie pendant 7 jours que le problème ne revient pas.</p>
+      <div><div class="segmente" role="group" aria-label="Pannes et erreurs des applications en ligne">${MODES_PILOTE.map(([id, nom]) => html`<button type="button" data-action="pilote-mode" data-id="${id}" aria-pressed="${String(p.mode === id)}">${nom}</button>`)}</div></div>
       <p style="margin:0;font-size:14px">${choisi[2]}</p>
+      ${compte.length ? html`<p style="margin:0;font-size:14px"><strong>Propositions :</strong> ${compte.join(" · ")}</p>` : ""}
+      <p class="aide" style="margin:0">${ligneSource("Sentry", p.sources?.sentry, "ajoute Sentry dans Intégrations, puis son connecteur de lecture dans Connecteurs", p.mode)} · ${ligneSource("PostHog", p.sources?.posthog, "active le connecteur PostHog, avec sa clé", p.mode)}</p>
       ${p.pannes.length ? html`<p style="margin:0;font-size:14px"><strong>En panne maintenant :</strong> ${p.pannes.map((x) => `${x.nom} (depuis ${heure(x.depuis)})`).join(", ")}</p>` : ""}
-      ${p.journal.length ? html`<details id="pilote-journal" ${etat.piloteOuvert ? "open" : ""}><summary style="cursor:pointer">Ses dernières décisions</summary><ul class="pile" style="gap:6px;margin:8px 0 0;padding-left:18px;font-size:14px">${p.journal.map((j) => html`<li><span class="aide">${heure(j.le)}</span> ${j.message}</li>`)}</ul></details>` : html`<p class="aide" style="margin:0">Aucune panne vue pour l'instant.</p>`}
+      ${p.journal.length ? html`<details id="pilote-journal" ${etat.piloteOuvert ? "open" : ""}><summary style="cursor:pointer">Ses dernières décisions</summary><ul class="pile" style="gap:6px;margin:8px 0 0;padding-left:18px;font-size:14px">${p.journal.map((j) => html`<li><span class="aide">${heure(j.le)}</span> ${j.message}</li>`)}</ul></details>` : html`<p class="aide" style="margin:0">Aucune panne ni erreur vue pour l'instant.</p>`}
     </section>`
 }
 
@@ -2042,7 +2055,7 @@ function vueRegles() {
   const k = etat.reglages?.contrat
   if (!k) return html`<div class="chargement">Chargement…</div>`
   return html`
-    <div><h1>Règles de l'usine</h1><p class="chapeau">Ces règles sont appliquées par l'usine elle-même. Elles se changent sur le serveur, par un technicien, sauf les pannes des applications en ligne, qui se règlent ici.</p></div>
+    <div><h1>Règles de l'usine</h1><p class="chapeau">Ces règles sont appliquées par l'usine elle-même. Elles se changent sur le serveur, par un technicien, sauf les pannes et erreurs des applications en ligne, qui se règlent ici.</p></div>
     <section class="carte carte-p pile" aria-labelledby="qui-decide"><h2 id="qui-decide">Qui décide</h2>
       ${Object.entries(k.politiques).map(([a, v]) => html`<div class="barre" style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--trait-2)"><span>${ACTIONS_POLITIQUES[a] ?? a}</span><span class="badge ${v === "manuel" ? "orange" : v === "jamais" ? "rouge" : "vert"}">${POLITIQUES[v] ?? v}</span></div>`)}</section>
     ${cartePilote(etat.reglages?.pilote)}
@@ -2207,9 +2220,9 @@ async function suivreDirect() {
 }
 setInterval(suivreDirect, 3000)
 
-const TYPES_HISTO = { pilote: "Panne", demande: "Demande", validation: "Validation", decision: "Décision", production: "Mise en ligne", abandon: "Abandon", cycle: "Aperçu", plan: "Plan", domaine: "Adresse web", corrections: "Corrections", remarque: "Remarque", escalade: "Décision demandée", erreur: "Problème", relance: "Relance", reglage: "Réglage" }
-const PICTOS_HISTO = { demande: "✎", validation: "✓", decision: "◆", production: "↗", abandon: "✕", cycle: "▣", plan: "☰", domaine: "@", corrections: "↺", remarque: "❝", escalade: "!", erreur: "!", relance: "↻", reglage: "⚙", pilote: "⟳" }
-const FILTRES_HISTO = [["", "Tout"], ["demande", "Demandes"], ["validation", "Validations"], ["decision", "Décisions"], ["production", "Mises en ligne"], ["erreur", "Problèmes"], ["reglage", "Réglages"], ["pilote", "Pannes"]]
+const TYPES_HISTO = { pilote: "Panne", proposition: "Proposition", demande: "Demande", validation: "Validation", decision: "Décision", production: "Mise en ligne", abandon: "Abandon", cycle: "Aperçu", plan: "Plan", domaine: "Adresse web", corrections: "Corrections", remarque: "Remarque", escalade: "Décision demandée", erreur: "Problème", relance: "Relance", reglage: "Réglage" }
+const PICTOS_HISTO = { demande: "✎", validation: "✓", decision: "◆", production: "↗", abandon: "✕", cycle: "▣", plan: "☰", domaine: "@", corrections: "↺", remarque: "❝", escalade: "!", erreur: "!", relance: "↻", reglage: "⚙", pilote: "⟳", proposition: "◇" }
+const FILTRES_HISTO = [["", "Tout"], ["demande", "Demandes"], ["validation", "Validations"], ["decision", "Décisions"], ["production", "Mises en ligne"], ["erreur", "Problèmes"], ["reglage", "Réglages"], ["pilote", "Pannes"], ["proposition", "Propositions"]]
 const dateDe = (le) => new Date(String(le).replace(" ", "T") + (String(le).includes("Z") ? "" : "Z"))
 function jourDe(le) {
   const d = dateDe(le)
@@ -2280,7 +2293,7 @@ const badgeProduit = (e) => {
   const [nom, ton] = ETATS_PRODUIT[e] ?? ETATS_PRODUIT.inconnu
   return html`<span class="badge ${ton}"><span class="point ${e === "ok" ? "" : e}" aria-hidden="true"></span>${nom}</span>`
 }
-const PICTOS_ATTENTE = { decision: "◆", plan: "☰", questions: "?", persona: "◎", livre: "↗", echec: "↻", pause: "‖", coffre: "✱", tache: "■", dns: "@", usine: "!", sonde: "?", panne: "!" }
+const PICTOS_ATTENTE = { decision: "◆", proposition: "↺", plan: "☰", questions: "?", persona: "◎", livre: "↗", echec: "↻", pause: "‖", coffre: "✱", tache: "■", dns: "@", usine: "!", sonde: "?", panne: "!" }
 const JAUGES = { ok: "bleue", alerte: "orange", panne: "rouge" }
 const lieuProduit = (x) => (x.environnement === "apercu" ? "aperçu" : "production")
 
@@ -2319,6 +2332,15 @@ function actionAttente(x) {
   if (x.decision) return choixSurPlace(x.decision, x.projet)
   const a = x.action
   if (!a) return ""
+  // Une correction proposée : ce que l'usine a relevé, puis Lancer (l'action principale) ou Écarter.
+  // Le détail technique est replié, et le reste au rafraîchissement (etat.faitsOuverts). Le projet en
+  // travail : Lancer attend qu'il ait fini (le serveur refuserait).
+  if (a.type === "proposition") return html`<div class="pile" style="gap:8px">
+      ${a.faits?.length || a.contexte ? html`<details data-faits="${a.id}" ${etat.faitsOuverts.has(a.id) ? "open" : ""}><summary tabindex="0" data-quoi="faits-${a.id}" style="cursor:pointer;font-size:14px">Ce que l'usine a relevé (détail technique)</summary>
+        ${a.faits?.length ? html`<ul class="pile" style="gap:4px;margin:8px 0 0;padding-left:18px;font-size:14px;overflow-wrap:anywhere">${a.faits.map((f) => html`<li>${nettoyer(f)}</li>`)}</ul>` : ""}
+        ${a.contexte ? html`<p class="aide" style="margin:6px 0 0;overflow-wrap:anywhere">${nettoyer(a.contexte)}</p>` : ""}</details>` : ""}
+      <div class="rangee"><button type="button" class="btn btn-p btn-petit" data-action="proposition-lancer" data-id="${a.id}" data-cle="${cleAttente(x)}" aria-label="Lancer la correction : ${x.titre}" ${brut(a.en_travail ? "disabled" : "")}>Lancer la correction</button><button type="button" class="btn btn-s btn-petit" data-action="proposition-ecarter" data-id="${a.id}" data-cle="${cleAttente(x)}" aria-label="Écarter : ${x.titre}">Écarter</button><span class="aide">${a.en_travail ? "Le projet est en travail : tu pourras la lancer quand il aura fini." : "La correction s'arrête à l'aperçu : la mise en ligne reste à toi."}</span></div>
+    </div>`
   if (a.type === "relancer") return html`<div class="rangee"><button type="button" class="btn btn-s btn-petit" data-action="relancer-attente" data-id="${a.projet}" data-cle="${cleAttente(x)}">${a.libelle}</button><span class="aide">${x.refait}</span></div>`
   if (a.type === "lien") return html`<div class="rangee"><a class="btn btn-s btn-petit" href="${a.lien}" data-quoi="action-${cleAttente(x)}">${a.libelle}</a>${a.aide ? html`<span class="aide">${a.aide}</span>` : ""}</div>`
   if (a.type === "commande") return html`<div><strong style="font-size:14px">${a.libelle}</strong><div class="aide">${a.aide}</div><pre class="commande mono">${a.commandes.join("\n")}</pre></div>`
@@ -3199,8 +3221,33 @@ const ACTIONS = {
   "pilote-mode": (el) => {
     const mode = el.dataset.id
     if (mode === etat.reglages?.pilote?.mode) return
-    if (mode === "corriger" && !confirmer("L'usine corrigera seule le code d'une application en ligne en panne, jusqu'à l'aperçu. La mise en ligne pour de vrai restera à toi. Activer ?")) return
+    if (mode === "corriger" && !confirmer("L'usine corrigera seule le code d'une application en ligne en panne, jusqu'à l'aperçu, sans te demander. La mise en ligne pour de vrai restera à toi. Activer ?")) return
     return agir(() => api("PUT", "reglages/pilote", { mode }))
+  },
+  // Une correction proposée (propositions.mjs) : un seul clic compte ; refusée, elle redevient cliquable.
+  "proposition-lancer": async (el) => {
+    const cle = el.dataset.cle
+    etat.envoyes.set(cle, { le: new Date().toISOString(), texte: "Correction lancée" })
+    // Le focus passe sur le texte qui remplace les boutons (comme pour une décision).
+    rendre()
+    $(`#envoye-${cle.replace(/[^a-z0-9-]/gi, "-")}`)?.focus({ preventScroll: true })
+    const r = await agir(() => api("POST", `propositions/${el.dataset.id}/lancer`, {}), { succes: "Correction lancée : l'analyste enquête, puis le lot s'arrête à l'aperçu." })
+    if (!r) {
+      etat.envoyes.delete(cle)
+      rendre()
+    }
+  },
+  "proposition-ecarter": async (el) => {
+    if (!confirmer("Écarter cette correction ? Si le même problème revient, il ne te sera pas reproposé pendant 7 jours.")) return
+    const cle = el.dataset.cle
+    etat.envoyes.set(cle, { le: new Date().toISOString(), texte: "Proposition écartée" })
+    rendre()
+    $(`#envoye-${cle.replace(/[^a-z0-9-]/gi, "-")}`)?.focus({ preventScroll: true })
+    const r = await agir(() => api("POST", `propositions/${el.dataset.id}/ecarter`, {}), { succes: "Proposition écartée." })
+    if (!r) {
+      etat.envoyes.delete(cle)
+      rendre()
+    }
   },
   "tester-fournisseurs": () => agir(() => api("POST", "fournisseurs/tester", {})),
   "tester-service": (el) => agirFenetre(() => api("POST", `services/${el.dataset.service}/tester`, {})),
@@ -3931,6 +3978,7 @@ document.addEventListener("toggle", (e) => {
   if (e.target.id === "ft-calcul") etat.calculOuvert = e.target.open
   if (e.target.id === "menu-projet") etat.menuProjet = e.target.open
   if (e.target.id === "pilote-journal") etat.piloteOuvert = e.target.open
+  if (e.target.dataset?.faits) etat.faitsOuverts[e.target.open ? "add" : "delete"](Number(e.target.dataset.faits))
 }, true)
 
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------

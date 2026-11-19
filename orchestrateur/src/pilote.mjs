@@ -9,16 +9,21 @@
 //              atteint, ou une rechute (une panne dans les 7 jours qui suivent une correction
 //              automatique de la même application, quelle que soit la version) : un message, une
 //              seule fois par panne, et rien d'autre ;
-//   corriger   une panne du code de l'application : une demande de corrections avec ce que voit la
-//              sonde. Le lot passe par la fabrique, le vérificateur et la recette, puis s'arrête à
-//              l'aperçu. La mise en ligne pour de vrai reste à une personne (politique
+//   proposer   (mode « proposer ») une panne du code de l'application devient une proposition de
+//              correction (propositions.mjs, la boucle d'amélioration) : une personne la lance ou
+//              l'écarte, rien ne part sans elle ;
+//   corriger   (mode « corriger ») une panne du code de l'application : une demande de corrections
+//              avec ce que voit la sonde. Le lot passe par la fabrique, le vérificateur et la recette,
+//              puis s'arrête à l'aperçu. La mise en ligne pour de vrai reste à une personne (politique
 //              mettre_en_production).
 //
-// Le pilote ne reçoit qu'une fonction, `corriger` (demanderCorrections de livraison.mjs, donnée par
-// index.mjs) : il n'a aucun moyen de mettre une application en ligne.
+// Le pilote ne reçoit que deux fonctions (index.mjs) : `proposer` (propositions.mjs) et `corriger`
+// (demanderCorrections de livraison.mjs, appelée seulement en mode « corriger ») : il n'a aucun moyen
+// de mettre une application en ligne.
 //
-// Trois modes, réglés dans la console (Règles de l'usine) : coupé, observer (par défaut : il dit ce
-// qu'il aurait fait, sans rien lancer) et corriger. Plafonds (section pilote de usine.config.yml) :
+// Quatre modes, réglés dans la console (Règles de l'usine) : coupé, observer (par défaut : il dit ce
+// qu'il aurait fait, sans rien lancer), proposer et corriger. Le mode vaut aussi pour la lecture de
+// Sentry (propositions.mjs), qui ne fait jamais que proposer. Plafonds (section pilote de usine.config.yml) :
 // une correction automatique par application sur 7 jours, trois par 24 h pour toute l'usine. Une
 // correction est comptée dès qu'elle est décidée, et la mémoire est écrite avant tout envoi. Les
 // tâches du lot passent par la vérification des budgets de la fabrique ; l'analyse qui prépare le
@@ -30,8 +35,8 @@ import { noter } from "./db.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { SONDE_PERIMEE_S, dernierEtatUsine, lireSanteServeur } from "./sante.mjs"
 
-export const MODES_PILOTE = ["coupe", "observer", "corriger"]
-export const LIBELLES_PILOTE = { coupe: "coupé", observer: "observer", corriger: "corriger jusqu'à l'aperçu" }
+export const MODES_PILOTE = ["coupe", "observer", "proposer", "corriger"]
+export const LIBELLES_PILOTE = { coupe: "coupé", observer: "observer", proposer: "proposer une correction", corriger: "corriger jusqu'à l'aperçu" }
 export const PAR_PILOTE = "l'usine (pilote)"
 const MINUTE_MS = 60_000
 export const JOUR_MS = 24 * 60 * MINUTE_MS
@@ -108,7 +113,7 @@ export function choisirAction({ classe, pourquoi, projet, produit, corrections =
   }
   const toutes = corrections.filter((c) => maintenant - c.le < JOUR_MS).length
   if (toutes >= reglages.parJour) return { type: "humain", pourquoi: `l'usine a déjà fait ${toutes} correction${toutes > 1 ? "s" : ""} automatique${toutes > 1 ? "s" : ""} en 24 h : c'est son plafond` }
-  return { type: reglages.mode === "corriger" ? "corriger" : "observer", pourquoi }
+  return { type: ["corriger", "proposer"].includes(reglages.mode) ? reglages.mode : "observer", pourquoi }
 }
 
 // Un passage : les décisions à exécuter, et la mémoire à garder (jamais modifiée en place).
@@ -202,6 +207,30 @@ export function texteCorrection(d, maintenant = Date.now()) {
   ].join("\n")
 }
 
+// Le signal d'une panne pour la boucle d'amélioration (mode « proposer ») : ce que voit la sonde, rien
+// de personnel. Une seule clé par application : une panne qui revient après une correction mise en
+// ligne est reconnue comme une rechute (propositions.mjs).
+export function signalPanne(d, maintenant = Date.now()) {
+  const p = d.panne ?? {}
+  const c = p.docker ?? {}
+  return {
+    source: "sonde",
+    produit: d.produit,
+    cle: `panne:${d.produit}`,
+    le: new Date(maintenant).toISOString(),
+    titre: `en panne depuis ${depuisMin(d, maintenant)} min, ${d.pourquoi}`,
+    detail: {
+      raison: p.raison ?? "raison inconnue",
+      ...(p.version ? { version: String(p.version) } : {}),
+      ...(c.etat ? { conteneur: String(c.etat) } : {}),
+      ...(Number.isFinite(c.redemarrages_30_min) ? { redemarrages_30_min: c.redemarrages_30_min } : {}),
+      ...(c.code_sortie !== null && c.code_sortie !== undefined && Number.isFinite(Number(c.code_sortie)) ? { code_sortie: Number(c.code_sortie) } : {}),
+      ...(c.oom ? { oom: true } : {}),
+      ...(Number.isFinite(p.http?.code) ? { http_code: p.http.code } : {}),
+    },
+  }
+}
+
 const majuscule = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1)
 const dateCourte = (le) => new Date(le).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
 const depuisMin = (d, maintenant) => Math.max(1, Math.round((maintenant - d.depuis) / MINUTE_MS))
@@ -236,16 +265,25 @@ export function lireMemoirePilote(db, maintenant = Date.now()) {
   }
 }
 
-// Exécute une décision déjà enregistrée : un message, une demande de corrections, et toujours une
-// ligne de journal. Les textes pour une personne disent « l'usine » et « en ligne » ; le détail de
-// la sonde ne part que dans Slack.
-async function executer(ctx, d, maintenant, corriger) {
+// Exécute une décision déjà enregistrée : un message, une proposition, une demande de corrections, et
+// toujours une ligne de journal. Les textes pour une personne disent « l'usine » et « en ligne » ; le
+// détail de la sonde ne part que dans Slack et dans la proposition.
+async function executer(ctx, d, maintenant, { corriger = null, proposer = null } = {}) {
   const { db } = ctx
   const projetId = d.projet?.id ?? null
   const noterPilote = (message) => noter(db, { projet: projetId, type: "pilote", message })
   const alerter = (texte) => ctx.notifier.alerte(texte, BOUTON_SANTE).catch((e) => console.error("Pilote (message) :", e.message))
   const constat = d.type === "retabli" ? "" : `${d.nom} est en panne en ligne depuis ${depuisMin(d, maintenant)} min`
   const detail = d.panne?.raison ? `\nDétail : ${court(d.panne.raison)}` : ""
+  if (d.type === "proposer") {
+    if (typeof proposer !== "function") return noterPilote("Aucune proposition possible : la boucle d'amélioration n'est pas branchée.")
+    // La proposition s'annonce elle-même (Slack, file d'attention), avec ses boutons.
+    const r = await proposer(ctx, signalPanne(d, maintenant), { maintenant }).catch((e) => ({ action: "erreur", pourquoi: e.message }))
+    if (r.action === "creer" || r.action === "ajouter") return noterPilote(`Correction proposée : ${constat}. ${majuscule(d.pourquoi)}. Elle attend une décision (proposition n° ${r.id}).`)
+    if (r.action === "ignorer") return noterPilote(`Pas de nouvelle proposition : ${constat}. ${majuscule(court(r.pourquoi))}.`)
+    noterPilote(`Proposition impossible : ${court(r.pourquoi)}`)
+    return alerter(`:raising_hand: *Pannes* : ${constat}. L'usine n'a pas pu en faire une proposition : ${court(r.pourquoi)}. À toi de voir.${detail}`)
+  }
   if (d.type === "corriger") {
     noterPilote(`${MARQUE_CORRECTION} : ${constat}. ${majuscule(d.pourquoi)}.`)
     if (typeof corriger !== "function") return noterPilote("Correction automatique impossible : aucune fonction de correction n'est branchée.")
@@ -262,7 +300,7 @@ async function executer(ctx, d, maintenant, corriger) {
   }
   if (d.type === "observer") {
     noterPilote(`Observation : l'usine aurait demandé une correction. ${constat}. ${majuscule(d.pourquoi)}.`)
-    return alerter(`:eyes: *Pannes (observation)* : ${constat}. En mode « corriger », l'usine aurait demandé une correction : ${d.pourquoi}. Rien n'a été lancé.${detail}`)
+    return alerter(`:eyes: *Pannes (observation)* : ${constat}. En mode « corriger », l'usine aurait demandé une correction ; en mode « proposer », elle te l'aurait proposée : ${d.pourquoi}. Rien n'a été lancé.${detail}`)
   }
   if (d.type === "humain" || d.type === "rechute") {
     noterPilote(`${d.type === "rechute" ? "Rechute" : "Pas de correction automatique"} : ${constat}. ${majuscule(d.pourquoi)}.`)
@@ -270,6 +308,7 @@ async function executer(ctx, d, maintenant, corriger) {
   }
   if (d.type === "deja") return noterPilote(`En attente : ${constat}. ${majuscule(d.pourquoi)}.`)
   if (d.type === "retabli") {
+    if (d.incident?.decision === "proposer") return noterPilote(`${d.nom} fonctionne de nouveau en ligne depuis 30 min : la proposition de correction reste à décider.`)
     const apres = d.incident?.decision === "corriger"
     noterPilote(`${d.nom} fonctionne de nouveau en ligne depuis 30 min${apres ? ", après la correction automatique" : ""}.`)
     // Le retour d'une application est déjà annoncé par la santé ; on ne parle ici que de la correction.
@@ -287,9 +326,11 @@ function sondeRecente(config, maintenant) {
 // une correction ne serait pas fabriquée. De la lecture de la mémoire à son écriture, rien n'est
 // attendu : un réglage changé dans la console ne peut pas être écrasé, et un redémarrage pendant les
 // envois ne perd aucune correction comptée.
-//   corriger : la seule action possible (demanderCorrections), donnée par demarrerPilote.
+//   proposer : la proposition (propositions.mjs), en mode « proposer » ;
+//   corriger : la demande de corrections (demanderCorrections), en mode « corriger » seulement.
+// Les deux sont données par demarrerPilote.
 let passageEnCours = false
-export async function passagePilote(ctx, { maintenant = Date.now(), corriger = null } = {}) {
+export async function passagePilote(ctx, { maintenant = Date.now(), corriger = null, proposer = null } = {}) {
   if (passageEnCours) return null
   passageEnCours = true
   try {
@@ -303,15 +344,15 @@ export async function passagePilote(ctx, { maintenant = Date.now(), corriger = n
     if (memoire.recomptee) noter(db, { projet: null, type: "pilote", message: `Mémoire des pannes illisible : repartie de zéro, ${memoire.corrections.length} correction(s) automatique(s) recomptée(s) depuis le journal.` })
     const r = deciderPilote({ produits: sonde.produits, usine: dernierEtatUsine()?.composants ?? [], projets, memoire, reglages, maintenant })
     ecrireReglage(db, "pilote_memoire", JSON.stringify(r.memoire))
-    for (const d of r.decisions) await executer(ctx, d, maintenant, corriger).catch((e) => console.error("Pilote :", e.message))
+    for (const d of r.decisions) await executer(ctx, d, maintenant, { corriger, proposer }).catch((e) => console.error("Pilote :", e.message))
     return r
   } finally {
     passageEnCours = false
   }
 }
 
-export function demarrerPilote(ctx, { corriger }) {
-  const passage = () => passagePilote(ctx, { corriger }).catch((e) => console.error("Pilote :", e.message))
+export function demarrerPilote(ctx, { corriger, proposer }) {
+  const passage = () => passagePilote(ctx, { corriger, proposer }).catch((e) => console.error("Pilote :", e.message))
   // Après le premier bilan de santé (20 s) : les composants de l'usine sont connus.
   setTimeout(passage, 2 * MINUTE_MS)
   setInterval(passage, MINUTE_MS)
@@ -323,7 +364,7 @@ export function etatPilote(ctx, maintenant = Date.now()) {
   const r = reglagesPilote(ctx.config, ctx.db)
   const m = lireMemoirePilote(ctx.db, maintenant)
   const suivies = r.mode !== "coupe" && sondeRecente(ctx.config, maintenant) ? Object.values(m.incidents) : []
-  const journal = ctx.db.prepare("SELECT le, message FROM journal WHERE type = 'pilote' ORDER BY id DESC LIMIT 8").all()
+  const journal = ctx.db.prepare("SELECT le, message FROM journal WHERE type IN ('pilote', 'proposition') ORDER BY id DESC LIMIT 8").all()
   return {
     mode: r.mode,
     minutes: r.minutes,
@@ -344,10 +385,11 @@ export function reglerPilote(ctx, mode, par) {
   if (mode === "coupe") m.incidents = {}
   for (const i of Object.values(m.incidents)) if (i.decision === "observer") delete i.decision
   ecrireReglage(ctx.db, "pilote_memoire", JSON.stringify({ incidents: m.incidents, corrections: m.corrections }))
-  noter(ctx.db, { projet: null, type: "reglage", message: `Pannes des applications en ligne : ${LIBELLES_PILOTE[mode]} (par ${par})` })
+  noter(ctx.db, { projet: null, type: "reglage", message: `Pannes et erreurs des applications en ligne : ${LIBELLES_PILOTE[mode]} (par ${par})` })
   const messages = {
     coupe: "L'usine te prévient des pannes, sans rien faire d'autre.",
-    observer: "Pour chaque panne, l'usine te dira ce qu'elle aurait fait.",
+    observer: "Pour chaque panne ou nouvelle erreur, l'usine te dira ce qu'elle aurait fait.",
+    proposer: "Pour chaque panne du code ou nouvelle erreur, l'usine te proposera une correction. Rien ne part sans toi.",
     corriger: "L'usine corrige seule les pannes du code, jusqu'à l'aperçu. La mise en ligne pour de vrai reste à toi.",
   }
   return { ok: true, message: messages[mode] }

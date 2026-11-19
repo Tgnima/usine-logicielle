@@ -4,7 +4,7 @@ Ce que l'usine envoie à Sentry et à PostHog, comment le brancher, comment le l
 vérifier que ça arrive. Écrit d'après le code de `main` du 18 novembre 2026 (après la v1.1.1), mis
 à jour le 19 novembre avec le pilote des pannes (PR #21), puis avec la PR #23 : chaque produit dit
 à l'usine ce qu'il envoie, les plantages sont des erreurs dans les journaux, et un dépôt repris
-envoie ses erreurs et son pouls.
+envoie ses erreurs et son pouls. Puis avec la boucle d'amélioration (PR #25).
 Les chemins des écrans de Sentry et de PostHog sont ceux de cette date : ces services peuvent
 les changer. Tout est facultatif : sans clé, rien ne part.
 
@@ -249,14 +249,24 @@ n'envoie pas ses propres erreurs : il n'a pas le module, ou n'a pas encore reçu
   lignes (120 au plus) des journaux du produit, en aperçu et en production. Il les lit dans la
   copie locale du déployeur, pas dans PostHog.
 - **Sentry** : le connecteur Sentry (**Réglages, Connecteurs**) donne aux IA un accès en lecture
-  aux erreurs, avec un autre jeton que la clé d'envoi : un jeton d'accès Sentry en lecture. Il est
-  proposé pour le rôle « construction » (les agents de l'atelier). L'analyste (rôle « plan ») ne
-  l'a que si on le lui donne, et aucune consigne des IA ne leur dit de consulter Sentry.
-- **PostHog** : il n'existe pas de connecteur. Aucune IA ne lit les événements ni les journaux
-  dans PostHog.
+  aux erreurs, avec un autre jeton que la clé d'envoi : un jeton d'accès Sentry en lecture
+  (`org:read`, `project:read`, `event:read`). Il est conseillé pour les rôles « plan » (l'analyste)
+  et « construction » (les agents de l'atelier). La boucle d'amélioration s'en sert aussi pour lire
+  les erreurs des applications en production toutes les 5 minutes (ci-dessous). Il ne part que
+  vers sentry.io : avec un DSN qui pointe ailleurs, la boucle ne lit rien.
+- **PostHog** : le connecteur PostHog donne aux IA le serveur MCP de PostHog **en lecture seule**
+  (`https://mcp.posthog.com/mcp?readonly=true` : les outils qui écrivent sont retirés). Il demande
+  une clé personnelle `phx_` avec le préréglage « MCP Server », limitée au projet de l'usine. C'est
+  une autre clé que le jeton d'envoi `phc_`. La boucle d'amélioration s'en sert pour les chiffres
+  d'une proposition. Elle ne part que vers PostHog, en Europe ou aux États-Unis, jamais vers un
+  relais d'envoi.
+- **L'analyste qui enquête sur une correction** reçoit les connecteurs du rôle « plan », comme pour
+  un plan. Quand il a Sentry ou PostHog, sa consigne lui dit d'y chercher le produit (son slug,
+  environnement production, dernières 24 h).
 - **Une panne donne une alerte Slack (ou dans la console), un sujet Sentry et une ligne « À
-  réparer »** dans la file d'attention de la console. Ensuite, c'est une personne qui demande la
-  correction, ou le pilote des pannes (ci-dessous).
+  réparer »** dans la file d'attention de la console. Ensuite, selon le mode, c'est une personne qui
+  demande la correction, la boucle d'amélioration qui la propose, ou le pilote qui la demande
+  (ci-dessous).
 
 ## Le pilote des pannes
 
@@ -270,18 +280,53 @@ panne depuis 10 minutes (réglable), il décide par du code :
   (serveur, mémoire, plusieurs applications à la fois), une cause inconnue, un projet qui n'est pas
   « en production », un plafond atteint, ou une rechute (une panne dans les 7 jours qui suivent une
   correction automatique de la même application) ;
-- **demander une correction** pour une panne du code de l'application. Le lot passe par la
-  fabrique, le vérificateur et la recette, puis s'arrête à l'aperçu. La mise en production reste
-  à une personne : le pilote n'a aucun moyen de mettre une application en ligne.
+- **proposer une correction** (mode « proposer ») pour une panne du code de l'application : elle
+  devient une proposition de la boucle d'amélioration (ci-dessous), qu'une personne lance ou
+  écarte ;
+- **demander une correction** (mode « corriger ») pour une panne du code de l'application. Le lot
+  passe par la fabrique, le vérificateur et la recette, puis s'arrête à l'aperçu. La mise en
+  production reste à une personne : le pilote n'a aucun moyen de mettre une application en ligne.
 
-Trois modes, dans la console (**Règles de l'usine**) ou dans la section `pilote` de
-`usine.config.yml` : coupé, **observer** (le mode par défaut : il dit ce qu'il aurait fait, sans
-rien lancer) et corriger. Plafonds : une correction automatique par application sur 7 jours, et
-trois par 24 heures pour toute l'usine.
+Quatre modes, dans la console (**Règles de l'usine**, carte « Pannes et erreurs des applications
+en ligne ») ou dans la section `pilote` de `usine.config.yml` :
+- coupé ;
+- **observer**, le mode par défaut : il dit ce qu'il aurait fait, sans rien lancer ;
+- proposer ;
+- corriger.
+
+Plafonds du mode « corriger » : une correction automatique par application sur 7 jours, et trois
+par 24 heures pour toute l'usine.
 
 Ses messages arrivent comme les autres alertes de l'usine, sur Slack ou dans la console. Chaque
 décision est notée au journal (type `pilote`) : elle part donc vers PostHog comme un événement
 `journal`, sans son texte.
+
+## La boucle d'amélioration
+
+Depuis la PR #25, `orchestrateur/src/propositions.mjs` et `orchestrateur/src/signaux.mjs` font
+d'un incident en production une proposition de correction. Le README la décrit en entier (« La
+boucle d'amélioration »). Côté observabilité :
+
+- **Ce qui est lu.** Toutes les 5 minutes, et sauf en mode coupé, la boucle lit dans Sentry les
+  sujets non résolus de chaque application de production :
+  - les étiquettes `produit` et `service` égales au produit, ce qui exclut les incidents « en
+    panne » du déployeur ;
+  - l'environnement `production` ;
+  - un sujet nouveau, qui revient ou en hausse, vu dans l'heure, devient un signal.
+
+  Pour une nouvelle proposition, deux requêtes HogQL lisent dans PostHog les chiffres du produit :
+  - le dernier pouls et ses erreurs depuis le démarrage, le dernier `etat_produit` et les
+    `deploiement` ratés sur 24 h ;
+  - les lignes `error` des journaux de la dernière heure.
+
+  Les événements et les journaux sont sur deux grappes de PostHog : une seule requête qui
+  joindrait les deux est refusée.
+- **Ce qui n'est jamais fait** : rien n'est écrit dans Sentry ni dans PostHog, aucune
+  redirection n'est suivie, et la clé n'apparaît jamais dans la console. Une erreur Sentry n'est
+  que proposée, même en mode « corriger ».
+- **Vérifier que ça remonte** : la carte « Pannes et erreurs des applications en ligne » dit
+  quand Sentry et PostHog ont été lus pour la dernière fois, ou pourquoi la lecture a échoué
+  (connecteur inactif, DSN hors de sentry.io, clé refusée…).
 
 ## Plafonds d'envoi
 
@@ -317,4 +362,11 @@ décision est notée au journal (type `pilote`) : elle part donc vers PostHog co
   épuiser le quota (voir `docs/SECURITE.md`).
 - **Le pilote des pannes ne voit que ce que voit la sonde**, et il est en mode « observer » par
   défaut. Une erreur qui ne fait pas tomber l'application (une page qui plante, une exception
-  attrapée), visible seulement dans Sentry ou dans les journaux, ne déclenche aucune correction.
+  attrapée) ne fait une proposition que si Sentry la voit : il faut que le produit ait le module
+  d'envoi, et que le connecteur Sentry soit actif, en mode « proposer » ou « corriger ». Visible
+  seulement dans les journaux, elle ne déclenche rien.
+- **Les « lignes d'erreur » d'une proposition** dépendent du niveau lu sur le texte (ci-dessus) :
+  un plantage d'un autre langage que Python ou Node, ou un niveau numérique (pino), n'y est pas
+  compté.
+- **Un Sentry hébergé ailleurs que sur sentry.io, ou un relais PostHog**, ne sont pas lus par la
+  boucle : la clé de lecture ne suit pas une adresse réglée dans la console.

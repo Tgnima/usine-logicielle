@@ -19,6 +19,7 @@ import { brancherAcces } from "./slack-acces.mjs"
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 import { releverBudgetMensuel } from "./budgets.mjs"
 import { choixProduction, demanderCorrections, mettreEnProduction } from "./livraison.mjs"
+import { ecarterProposition, lancerProposition } from "./propositions.mjs"
 import { adresses, estAdminSlack } from "./config.mjs"
 import { envoiDisponible } from "./courriel.mjs"
 import { listerPersonas, trouverPersona } from "./personas.mjs"
@@ -647,6 +648,23 @@ export async function demarrerSlack(ctx) {
     await ack()
     await ouvrirSante(body.trigger_id)
   })
+  // La boucle d'amélioration (propositions.mjs) : une proposition se lance ou s'écarte, par un
+  // administrateur. Un seul clic compte, d'ici ou de la console ; le message garde la trace.
+  for (const [action, faire, fait] of [
+    ["proposition_lancer", lancerProposition, ":rocket: Correction lancée par"],
+    ["proposition_ecarter", ecarterProposition, ":wastebasket: Écartée par"],
+  ]) {
+    app.action(action, async (args) => {
+      if (!(await garde(args))) return
+      const { body } = args
+      try {
+        faire(ctx, Number(body.actions[0].value), body.user.name ?? body.user.id)
+        await retirerBoutons(body, `${fait} <@${body.user.id}>`)
+      } catch (e) {
+        await args.respond({ response_type: "ephemeral", replace_original: false, text: `:information_source: ${e.message}` })
+      }
+    })
+  }
   app.action("usine_mettre_a_jour", async (args) => {
     if (!(await garde(args))) return
     const r = await mettreAJourUsine(ctx, args.body.user.name ?? args.body.user.id).catch((e) => ({ ok: false, message: e.message }))

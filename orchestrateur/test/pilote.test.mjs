@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ouvrirDb } from "../src/db.mjs"
 import { ecrireReglage, lireReglage, ouvrirCouts } from "../src/couts.mjs"
-import { JOUR_MS, PAR_PILOTE, RECHUTE_MS, RETABLI_MS, choisirAction, classerPanne, correctionsDuJournal, deciderPilote, etatPilote, lireMemoirePilote, passagePilote, reglagesPilote, reglerPilote, texteCorrection } from "../src/pilote.mjs"
+import { JOUR_MS, PAR_PILOTE, RECHUTE_MS, RETABLI_MS, choisirAction, classerPanne, correctionsDuJournal, deciderPilote, etatPilote, lireMemoirePilote, passagePilote, reglagesPilote, reglerPilote, signalPanne, texteCorrection } from "../src/pilote.mjs"
 
 const MIN = 60_000
 const T0 = Date.parse("2026-11-18T10:00:00Z")
@@ -168,7 +168,7 @@ test("le pilote n'appelle jamais la mise en ligne pour de vrai", () => {
   const source = readFileSync(new URL("../src/pilote.mjs", import.meta.url), "utf8")
   assert.doesNotMatch(source, /mettreEnProduction|ecrireEtat|production_reglages|ctx\.livraison|from "\.\/livraison\.mjs"/)
   // index.mjs ne lui donne que la demande de corrections.
-  assert.match(readFileSync(new URL("../src/index.mjs", import.meta.url), "utf8"), /demarrerPilote\(ctx, \{ corriger: livraison\.demanderCorrections \}\)/)
+  assert.match(readFileSync(new URL("../src/index.mjs", import.meta.url), "utf8"), /demarrerPilote\(ctx, \{ corriger: livraison\.demanderCorrections, proposer \}\)/)
 })
 
 test("réglages : le mode de la console passe avant le contrat ; des bornes partout", () => {
@@ -195,10 +195,51 @@ function essai({ mode = "corriger" } = {}) {
   const ctx = { config: { dataDir: dossier, etatDir: dossier }, db, notifier: { alerte: async (texte) => messages.push(texte) } }
   const livraison = { reponse: async () => ({ ok: true }) }
   const corriger = async (_ctx, id, texte, par) => (demandes.push({ id, texte, par }), livraison.reponse())
+  // La fausse boucle d'amélioration (mode « proposer ») : garde chaque signal.
+  const signaux = []
+  const boucle = { reponse: async () => ({ action: "creer", id: 1 }) }
+  const proposer = async (_ctx, signal) => (signaux.push(signal), boucle.reponse())
   const sonde = (maintenant, produit) => writeFileSync(join(dossier, "sante.json"), JSON.stringify({ le: new Date(maintenant).toISOString(), applications: { le: new Date(maintenant).toISOString(), produits: { "production/vigie": produit } } }))
-  const passer = (maintenant) => passagePilote(ctx, { maintenant, corriger })
-  return { ctx, db, demandes, messages, sonde, dossier, livraison, passer }
+  const passer = (maintenant) => passagePilote(ctx, { maintenant, corriger, proposer })
+  return { ctx, db, demandes, messages, sonde, dossier, livraison, passer, signaux, boucle }
 }
+
+test("en mode « proposer » : la panne devient une proposition, aucune correction ne part", async () => {
+  const e = essai({ mode: "proposer" })
+  for (let i = 0; i <= 12; i++) {
+    e.sonde(T0 + i * MIN, boucle)
+    await e.passer(T0 + i * MIN)
+  }
+  assert.equal(e.demandes.length, 0, "rien ne part sans une personne")
+  assert.equal(e.signaux.length, 1)
+  assert.deepEqual([e.signaux[0].source, e.signaux[0].cle, e.signaux[0].detail.raison], ["sonde", "panne:vigie", boucle.raison])
+  assert.equal(lireMemoirePilote(e.db).corrections.length, 0, "une proposition n'est pas une correction automatique")
+  const journal = e.db.prepare("SELECT message FROM journal WHERE type = 'pilote'").all()
+  assert.deepEqual(journal.map((l) => l.message), ["Correction proposée : Vigie Copro est en panne en ligne depuis 10 min. L'application s'arrête à chaque démarrage. Elle attend une décision (proposition n° 1)."])
+  assert.equal(e.messages.length, 0, "la proposition s'annonce elle-même")
+  assert.deepEqual(etatPilote(e.ctx, T0 + 12 * MIN).pannes.map((p) => p.decision), ["proposer"])
+})
+
+test("en mode « proposer » : une proposition impossible prévient une personne", async () => {
+  const e = essai({ mode: "proposer" })
+  e.boucle.reponse = async () => {
+    throw new Error("base verrouillée")
+  }
+  for (let i = 0; i <= 10; i++) {
+    e.sonde(T0 + i * MIN, boucle)
+    await e.passer(T0 + i * MIN)
+  }
+  assert.equal(e.messages.length, 1)
+  assert.match(e.messages[0], /n'a pas pu en faire une proposition : base verrouillée/)
+})
+
+test("le signal d'une panne : ce que voit la sonde, une seule clé par application", () => {
+  const s = signalPanne({ produit: "vigie", nom: "Vigie Copro", depuis: T0, panne: boucle, pourquoi: "l'application s'arrête à chaque démarrage" }, T0 + 12 * MIN)
+  assert.deepEqual([s.source, s.produit, s.cle], ["sonde", "vigie", "panne:vigie"])
+  assert.match(s.titre, /en panne depuis 12 min, l'application s'arrête à chaque démarrage/)
+  assert.deepEqual(s.detail, { raison: boucle.raison, version: "a1b2c3d4e5f6", conteneur: "restarting", redemarrages_30_min: 4, code_sortie: 1 })
+  assert.equal(choisirAction({ classe: "code", pourquoi: "x", projet: projets.vigie, produit: "vigie", reglages: { ...reglages, mode: "proposer" }, maintenant: T0 }).type, "proposer")
+})
 
 test("un passage complet : la demande part une fois, avec le pilote pour auteur, et tout est au journal", async () => {
   const e = essai()
@@ -256,7 +297,7 @@ test("en observation, un message ; passer en « corriger » pendant la panne la 
   e.sonde(T0 + 11 * MIN, boucle)
   await e.passer(T0 + 11 * MIN)
   assert.equal(e.demandes.length, 1)
-  assert.match(e.db.prepare("SELECT message FROM journal WHERE type = 'reglage'").get().message, /Pannes des applications en ligne : corriger jusqu'à l'aperçu \(par admin@exemple\.test\)/)
+  assert.match(e.db.prepare("SELECT message FROM journal WHERE type = 'reglage'").get().message, /Pannes et erreurs des applications en ligne : corriger jusqu'à l'aperçu \(par admin@exemple\.test\)/)
 })
 
 test("coupé, ou sans sonde récente : la console ne montre aucune panne figée", async () => {

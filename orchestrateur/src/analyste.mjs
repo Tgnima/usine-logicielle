@@ -274,7 +274,7 @@ ${contexte.pyramide ? `La pyramide de l'expérience, notée sur le produit livr�
 ${retours}
 </retours>
 
-Enquête d'abord : cherche dans les journaux et les réglages la cause réelle de ce qui est signalé. Puis réponds en français, au format JSON exact :
+Enquête d'abord : cherche dans les journaux et les réglages la cause réelle de ce qui est signalé.${enqueteObservabilite(contexte.ctx, projet)} Puis réponds en français, au format JSON exact :
 {
   "diagnostic": "Ce qui s'est passé et pourquoi, en t'appuyant sur ce que tu as lu (cite la ligne de journal utile).",
   "reglage": "Si la cause (ou une partie) est un réglage de production : quoi changer, précisément (sinon chaîne vide).",
@@ -293,8 +293,18 @@ ${regleProteges(config, projet)}`
     if (r.lot === null || r.lot === undefined) return r.reglage?.trim() ? [] : ["ni réglage ni lot : propose l'un ou l'autre"]
     return [...verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity }), ...tachesSurProteges([r.lot], proteges(config, projet))]
   }
-  const { objet } = await interroger(config, texte, valider, contexte.mesurer)
+  // Avec ctx, l'analyste reçoit les connecteurs du rôle « plan » (Sentry, PostHog…), comme pour un plan.
+  const { objet } = await interroger(config, texte, valider, contexte.mesurer, { ctx: contexte.ctx ?? null })
   return { diagnostic: objet.diagnostic.trim(), reglage: String(objet.reglage ?? "").trim(), lot: objet.lot ?? null }
+}
+
+// Quand l'analyste a les connecteurs Sentry ou PostHog (rôle « plan ») : où chercher ce produit. Les
+// erreurs et les journaux de chaque produit y portent son nom (étiquette produit, service.name).
+export function enqueteObservabilite(ctx, projet) {
+  const outils = ctx ? outilsClaude(ctx, "plan") : []
+  const sources = [outils.includes("mcp__sentry") ? "Sentry (les erreurs, étiquette produit)" : null, outils.includes("mcp__posthog") ? "PostHog (les événements pouls, etat_produit et deploiement, et les journaux, service.name)" : null].filter(Boolean)
+  if (!sources.length || !projet?.slug) return ""
+  return ` Tu as aussi, en lecture seule, ${sources.join(" et ")} : cherches-y ce produit (« ${projet.slug} », environnement production), sur les dernières 24 h. Cite ce que tu y as lu.`
 }
 
 // En cours de fabrication, l'humain change de direction (réorientation.mjs). Les lots déjà
