@@ -80,7 +80,14 @@ Ce qui a été fusionné du 18 au 19 novembre 2026.
   le serveur de modèles. L'usine elle-même garde ses modèles : la fabrication et la vérification ne
   changent pas.
 
-**À faire** : rien pour l'usine. À savoir pour les applications :
+- **Correction** : `bash update.sh` s'arrêtait sans rien faire (code 141) quand plus de 25
+  changements séparaient le serveur de la version demandée, ce qui est le cas pour passer à
+  celle-ci. L'attente de la fin d'une tâche ne peut plus non plus se tromper pour la même raison.
+
+**À faire** : rien pour l'usine avec le bouton « Mettre à jour l'usine » (console ou Slack). En
+ligne de commande, l'ancien `update.sh` s'arrête (code 141) : lance plutôt, dans le dossier de
+l'usine, `git fetch -q origin "+main:refs/remotes/origin/main" && git show origin/main:update.sh > .update-neuf.sh && bash .update-neuf.sh v1.2.0; rm -f .update-neuf.sh`.
+À savoir pour les applications :
 
 - Une application fabriquée par une usine d'avant la v1.0.0, ou reprise avant cette version,
   n'envoie pas ses propres erreurs : le module ne lui est pas ajouté de lui-même.
