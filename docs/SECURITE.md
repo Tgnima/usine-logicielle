@@ -85,6 +85,10 @@ les secrets et l'installation. Les corrections sont dans la branche `securite/au
   autre utilisateur, sans accès à ces dossiers, et filtrer les sorties réseau.
 - **Tous les produits reçoivent la clé `AI_GATEWAY_API_KEY`.** Il faut une clé dédiée, avec un
   plafond de dépense.
+- **Tous les produits reçoivent aussi l'adresse et la clé du serveur de modèles** (`LLM_URL`,
+  `LLM_CLE`), quand la console en a un. Leur code et leurs journaux peuvent les voir : la clé doit
+  être propre aux applications, jamais celle d'un autre usage, et le serveur ne doit accepter que
+  le serveur de l'usine. En http, l'adresse n'est permise que sur un réseau privé.
 - **Tous les produits reçoivent le DSN Sentry et le jeton PostHog** de l'usine (`variables()`).
   Ce sont des clés d'envoi seulement : elles ne lisent rien. Mais un produit pourrait envoyer de
   faux événements au nom d'un autre, ou épuiser le quota gratuit. Le remède serait un projet

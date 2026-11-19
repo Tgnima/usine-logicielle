@@ -1620,7 +1620,7 @@ function integrations() {
     { id: "sentry", nom: "Sentry", logo: "Se", couleur: "#362d59", texte: "Facultatif : te prévient quand l'usine plante ou ne donne plus signe de vie.", branche: etatService("sentry"), facultatif: true },
     { id: "posthog", nom: "PostHog", logo: "Ph", couleur: "#1d4aff", texte: "Facultatif : garde le journal de l'usine, pour comprendre après coup ce qui s'est passé.", branche: etatService("posthog"), facultatif: true },
     { id: "smtp", nom: "Envoi d'emails", logo: "@", couleur: "#0b6e4f", texte: "Facultatif : les invitations partent par email, et les applications en ligne peuvent en envoyer.", branche: etatTeste("smtp", serviceDe("smtp")?.complet !== false), facultatif: true },
-    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: etatTeste("passerelle"), facultatif: true },
+    { id: "passerelle", nom: "IA des applications", logo: "IA", couleur: "#111827", texte: "Facultatif : ton serveur de modèles (un GPU), et une clé de passerelle réservée aux applications, avec son plafond de dépense.", branche: etatTeste("passerelle"), facultatif: true },
   ]
 }
 const badgeIntegration = (x) => (x.branche === true ? html`<span class="badge vert">Connecté</span>`
@@ -1695,7 +1695,7 @@ function fenetreIntegration(id) {
   if (id === "sentry" || id === "posthog") return fenetreService(id)
   const enAttente = (titre) => fenetre(titre, html`<div class="chargement">Chargement…</div>`)
   if (id === "smtp") return serviceDe("smtp") ? fenetreSmtp(serviceDe("smtp")) : enAttente("Envoi d'emails")
-  if (id === "passerelle") return serviceDe("passerelle") ? fenetrePasserelle(serviceDe("passerelle")) : enAttente("Passerelle des applications")
+  if (id === "passerelle") return serviceDe("passerelle") ? fenetrePasserelle(serviceDe("passerelle")) : enAttente("IA des applications")
   if (id === "slack" && serviceDe("slack")) return fenetreSlack(serviceDe("slack"))
   if (id === "github") return fenetre("GitHub", html`<p class="aide" style="margin:0">Chaque application a son espace sur GitHub, où l'usine range son code et l'historique de ce qu'elle a fait. Tu peux y jeter un œil, mais tu n'en as pas besoin au quotidien.</p>${carteGithub(r.forge)}`)
   return fenetre("Slack", html`<div class="pile" style="gap:10px">
@@ -1994,11 +1994,25 @@ function fenetreSlack(s) {
 }
 
 function fenetrePasserelle(s) {
-  return fenetre("Passerelle des applications", html`<div class="pile" style="gap:16px">
+  const url = cleService(s, "LLM_URL_APPLIS")
+  return fenetre("IA des applications", html`<div class="pile" style="gap:16px">
     ${messageDansFenetre(s)}
-    <p style="margin:0">Les applications qui se servent de l'IA (résumés, suggestions…) passent par la passerelle Vercel. Donne-leur une clé à elles, avec un plafond de dépense : la clé des agents reste aux agents, et une application qui s'emballe ne vide pas leur crédit.</p>
+    <p style="margin:0">Les applications qui se servent de l'IA (résumés, suggestions…) essaient d'abord ton serveur de modèles s'il est branché, puis la passerelle Vercel. Si aucun ne répond, elles affichent leur texte de secours : elles ne tombent jamais en panne à cause de l'IA. L'usine, elle, garde ses propres modèles.</p>
+    <h3 style="margin:0;font-size:15px">Ton serveur de modèles (facultatif)</h3>
     <ol class="etapes-machine">
-      <li>Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys : crée une clé réservée aux applications et fixe-lui un plafond de dépense si ton compte le permet.</li>
+      <li>Un serveur compatible OpenAI (par exemple llama-server sur un GPU), joignable depuis Internet en https (ou en http par une adresse IP privée : réseau local, ou Tailscale en 100.x), et protégé par une clé.</li>
+      <li>Colle son adresse jusqu'à <span class="mono">/v1</span>, sa clé, et le nom du modèle si le serveur en propose plusieurs, puis lance le test.</li>
+    </ol>
+    ${champsService(s, [
+      ["LLM_URL_APPLIS", "Adresse du serveur de modèles", "texte", "https://modeles.mon-domaine.fr/v1", "Elle reste dans la console : jamais dans le code ni sur GitHub. Pas de nom de conteneur ni de localhost : les applications ne les joindraient pas."],
+    ], { retirer: url?.console ? ["LLM_URL_APPLIS", "Retirer le serveur de modèles (adresse, clé et modèle)"] : null })}
+    ${champsService(s, [
+      ["LLM_NOM_APPLIS", "Modèle (facultatif)", "texte", "qwen3.5-9b", "Sans nom : le modèle par défaut du serveur."],
+    ], { retirer: cleService(s, "LLM_NOM_APPLIS")?.console ? ["LLM_NOM_APPLIS", "Retirer le nom du modèle"] : null })}
+    ${champService(s, "LLM_CLE_APPLIS", "Seulement si le serveur en demande une.", "Clé du serveur de modèles")}
+    <h3 style="margin:0;font-size:15px">La passerelle Vercel (relais)</h3>
+    <ol class="etapes-machine">
+      <li>Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys : crée une clé réservée aux applications et fixe-lui un plafond de dépense si ton compte le permet. La clé des agents reste aux agents : une application qui s'emballe ne vide pas leur crédit.</li>
       <li>Colle-la ici, puis lance le test.</li>
     </ol>
     ${champService(s, "AI_GATEWAY_API_KEY_APPLIS", "Sans clé dédiée, les applications utilisent la clé commune du serveur, s'il y en a une.", "Clé des applications")}

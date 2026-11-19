@@ -66,6 +66,15 @@ Ce qui est sur `main` sans être encore dans une version.
 - **Un dépôt repris envoie ses erreurs et son pouls**, dans sa pile. En Python, c'est un module
   avec `sentry-sdk` (`briques/reprise/observabilite.py`). L'épreuve de l'inventaire exige un
   vrai pouls avant d'aller plus loin.
+- **Les applications peuvent utiliser ton propre serveur de modèles** (par exemple un GPU avec
+  llama-server, API compatible OpenAI) : console, Réglages, Intégrations, « IA des applications ».
+  Elles l'essaient d'abord, avec un délai court (après une panne, il est laissé de côté 5 minutes),
+  puis la passerelle Vercel si elle est branchée, puis leur texte de secours : une application ne
+  tombe jamais en panne à cause de l'IA, même quand la passerelle atteint son plafond. En http,
+  l'adresse n'est permise que sur un réseau privé (réseau local, Tailscale). L'adresse et la
+  clé restent dans la console, jamais dans le code. « Retirer l'IA aux applications » retire aussi
+  le serveur de modèles. L'usine elle-même garde ses modèles : la fabrication et la vérification ne
+  changent pas.
 
 **À faire** : rien pour l'usine. Une application fabriquée par une usine d'avant la v1.0.0, ou
 reprise avant cette version, n'envoie pas ses propres erreurs : le module ne lui est pas ajouté
@@ -73,7 +82,9 @@ de lui-même. Une application dont le module est plus ancien que cette version
 envoie, mais la console la dit « non vérifié » tant que son code n'a pas le module
 à jour et la route `GET /_usine/observabilite` (`docs/OBSERVABILITE.md`). Un test du cliquet devenu faux à cause d'un changement fait hors de l'usine (un
 commit direct, par exemple) bloquera les tâches suivantes jusqu'à ce qu'une personne le mette à jour
-ou le retire de `.usine/e2e/`.
+ou le retire de `.usine/e2e/`. Pour qu'une application déjà livrée utilise le serveur de modèles, elle doit recevoir le
+nouveau `server/llm.js` de la brique (une petite correction par application) ; les nouvelles
+applications l'ont d'office.
 
 ## v1.1.1
 

@@ -108,6 +108,47 @@ export function validerCanal(brut) {
   if (!/^[CG][A-Z0-9]{8,12}$/.test(v)) throw erreur(400, "Canal : son identifiant, qui commence par C (dans Slack : clic droit sur le canal, Copier le lien, la fin de l'adresse).")
   return { valeur: v, horsUE: false }
 }
+// Une adresse privée, où le clair (http) ne traverse pas Internet : réseaux locaux, plage de
+// Tailscale (100.64.0.0/10, chiffrée par WireGuard), IPv6 locales (fc00::/7). Pas les noms en
+// .ts.net : l'usine et les applications passent par des résolveurs publics, qui ne les connaissent pas.
+export function adressePrivee(hote) {
+  const h = String(hote ?? "").replace(/^\[|\]$/g, "").toLowerCase()
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h)
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])]
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)
+  }
+  return /^f[cd][0-9a-f]{0,2}:/.test(h)
+}
+// Le serveur de modèles des applications (API compatible OpenAI, par exemple llama-server sur un
+// GPU) : son adresse jusqu'à /v1, sans identifiant dedans (la clé se colle à part). Une adresse
+// collée jusqu'à /chat/completions est ramenée à sa base. Les applications l'appellent depuis leur
+// propre réseau : une adresse qui ne vaut que sur le serveur (localhost) ou dans le réseau interne de
+// l'usine (un nom de conteneur) ne marcherait pas pour elles. En http, seulement sur un réseau privé :
+// sinon les données des utilisateurs et la clé passeraient en clair sur Internet.
+export function validerUrlModeles(brut) {
+  const v = ligne(brut).replace(/\/+$/, "").replace(/\/chat\/completions$/, "")
+  if (/[\s?#]/.test(v)) throw erreur(400, "Adresse du serveur de modèles : sans espace, ni « ? » ni « # », seulement l'adresse de l'API (par exemple https://modeles.mon-domaine.fr/v1).")
+  let u
+  try {
+    u = new URL(v)
+  } catch {
+    throw erreur(400, "Adresse du serveur de modèles : une adresse complète, par exemple https://modeles.mon-domaine.fr/v1.")
+  }
+  if (!["https:", "http:"].includes(u.protocol)) throw erreur(400, "Adresse du serveur de modèles : elle commence par https:// (ou http:// sur un réseau privé).")
+  if (u.username || u.password) throw erreur(400, "Pas d'identifiant dans l'adresse : colle la clé du serveur de modèles dans son propre champ.")
+  const hote = u.hostname.replace(/^\[|\]$/g, "").toLowerCase()
+  if (hote === "localhost" || hote.endsWith(".localhost") || /^127\./.test(hote) || hote === "::1" || hote === "0.0.0.0" || (!hote.includes(".") && !hote.includes(":"))) {
+    throw erreur(400, "Cette adresse ne vaut que sur le serveur lui-même ou dans le réseau interne de l'usine : les applications ne la joindraient pas. Donne une adresse IP ou un nom de domaine complet.")
+  }
+  if (u.protocol === "http:" && !adressePrivee(hote)) throw erreur(400, "En http, les données des utilisateurs et la clé passeraient en clair sur Internet : utilise une adresse en https://, ou une adresse privée (réseau local, Tailscale).")
+  return { valeur: v, horsUE: false }
+}
+export function validerNomModele(brut) {
+  const v = ligne(brut)
+  if (!/^[\w.:@/-]{1,120}$/.test(v)) throw erreur(400, "Modèle : son nom tel que le serveur le donne (par exemple qwen3.5-9b), sans espace.")
+  return { valeur: v, horsUE: false }
+}
 export function validerAdmins(brut) {
   const ids = ligne(brut).split(/[\s,]+/).filter(Boolean)
   if (ids.includes("*")) throw erreur(400, "« * » donnerait les droits à tout l'espace Slack : nomme plutôt les personnes.")
@@ -136,6 +177,12 @@ export const CLES_SERVICES = {
   // La passerelle IA des applications : une clé à elles, jamais celle des agents. Sans elle, les
   // applications gardent la clé commune du serveur (comme avant).
   AI_GATEWAY_API_KEY_APPLIS: { service: "passerelle", libelle: "Clé de passerelle des applications", f: true, secret: true, serveur: () => "", valider: sansEspace("Clé de passerelle", 20), destinataires: ["applications"] },
+  // Le serveur de modèles des applications (un GPU) : essayé avant la passerelle. Il ne vient que de
+  // la console, jamais du dépôt (public) ni du serveur. « Retirer l'IA aux applications » le retire aussi.
+  LLM_URL_APPLIS: { service: "passerelle", libelle: "Adresse du serveur de modèles", f: true, secret: false, serveur: () => "", valider: validerUrlModeles, destinataires: ["applications"] },
+  // Souvent choisie par une personne (--api-key de llama-server) : la console n'en montre rien.
+  LLM_CLE_APPLIS: { service: "passerelle", libelle: "Clé du serveur de modèles", f: true, secret: true, apercu: false, serveur: () => "", valider: sansEspace("Clé du serveur de modèles", 8), destinataires: ["applications"] },
+  LLM_NOM_APPLIS: { service: "passerelle", libelle: "Modèle du serveur de modèles", secret: false, serveur: () => "", valider: validerNomModele, destinataires: ["applications"] },
   // Slack : pour l'orchestrateur seul, jamais dans la boîte.
   SLACK_BOT_TOKEN: { service: "slack", libelle: "Jeton du bot (xoxb-)", secret: true, serveur: () => secret("slack_bot_token"), valider: validerJetonBot, destinataires: ["orchestrateur"] },
   SLACK_APP_TOKEN: { service: "slack", libelle: "Jeton de l'application (xapp-)", secret: true, serveur: () => secret("slack_app_token"), valider: validerJetonApp, destinataires: ["orchestrateur"] },
@@ -147,7 +194,7 @@ export const SERVICES = {
   sentry: { libelle: "Sentry", principale: "SENTRY_DSN" },
   posthog: { libelle: "PostHog", principale: "POSTHOG_TOKEN" },
   smtp: { libelle: "L'envoi d'emails", principale: "SMTP_HOST" },
-  passerelle: { libelle: "La passerelle des applications", principale: "AI_GATEWAY_API_KEY_APPLIS" },
+  passerelle: { libelle: "L'IA des applications", principale: "AI_GATEWAY_API_KEY_APPLIS" },
   slack: { libelle: "Slack", principale: "SLACK_BOT_TOKEN" },
 }
 
@@ -281,14 +328,26 @@ export function poserService(ctx, nom, valeur, par, { confirme = false } = {}, r
   if (horsUE && confirme !== true) throw erreur(409, `${def.libelle} : les données partiraient hors d'Europe. Crée plutôt un projet en région européenne, ou confirme pour garder ce choix.`, { horsUE: true })
   const quand = { le: new Date().toISOString(), par }
   const avant = clesBoite(ctx)
+  // Un serveur de modèles sur un autre hôte : la clé et le modèle de l'ancien ne le suivent pas (la
+  // clé d'un fournisseur ne part jamais chez un autre).
+  const hoteDe = (u) => {
+    try {
+      return new URL(u).host.toLowerCase()
+    } catch {
+      return ""
+    }
+  }
+  const ancien = nom === "LLM_URL_APPLIS" ? entree(ctx, nom)?.valeur : null
+  const autreHote = Boolean(ancien && hoteDe(ancien) !== hoteDe(v) && (entree(ctx, "LLM_CLE_APPLIS") || entree(ctx, "LLM_NOM_APPLIS")))
+  if (autreHote) for (const n of ["LLM_CLE_APPLIS", "LLM_NOM_APPLIS"]) effacer(ctx, cleReglage(n))
   ecrireReglage(ctx.db, cleReglage(nom), JSON.stringify(def.secret ? { ...chiffrer(ctx, v), ...(def.apercu === false ? {} : { fin: v.slice(-4) }), ...quand } : { valeur: v, ...quand }))
   // Une nouvelle valeur sert aussitôt : la coupure de cette clé tombe.
   effacer(ctx, cleCoupe(nom))
-  noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} posée dans la console par ${par}${horsUE ? " (hors d'Europe, confirmé)" : ""}` })
+  noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} posée dans la console par ${par}${horsUE ? " (hors d'Europe, confirmé)" : ""}${autreHote ? " ; la clé et le modèle de l'ancien serveur sont retirés" : ""}` })
   changerVersionSi(ctx, avant)
   appliquerServices(ctx, regler)
   apresChangement(ctx, nom)
-  return { ok: true, message: messagePose(ctx, nom) }
+  return { ok: true, message: `${messagePose(ctx, nom)}${autreHote ? " C'est un autre serveur : la clé et le modèle de l'ancien sont retirés, colle ceux du nouveau s'il en demande." : ""}` }
 }
 
 const accord = (def, mot) => `${mot}${def.f ? "e" : ""}`
@@ -316,7 +375,8 @@ function messagePose(ctx, nom) {
     const liste = manque.length > 1 ? `${manque.slice(0, -1).join(", ")} et ${manque.at(-1)}` : manque[0]
     return `${enregistre} : l'usine s'en sert dès maintenant, les applications à leur prochaine mise en ligne ou par « Appliquer ».${manque.length ? ` Il manque encore ici ${liste}${perdus.length ? " (ceux du serveur ne servent plus)" : ""}.` : ""}`
   }
-  if (!def.destinataires.includes("orchestrateur")) return `${enregistre} : les applications la recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
+  if (def.service === "passerelle" && valeurService(ctx, SERVICES.passerelle.principale).source === "coupe") return `${enregistre}, mais l'IA est retirée aux applications : ${def.f ? "elle" : "il"} servira quand tu la rebrancheras (« Ne plus couper »).`
+  if (!def.destinataires.includes("orchestrateur")) return `${enregistre} : les applications ${def.f ? "la" : "le"} recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
   return `${enregistre} : l'usine s'en sert dès maintenant, le déployeur dans la minute. Les applications ${def.f ? "la" : "le"} recevront à leur prochaine mise en ligne, ou par « Appliquer ».`
 }
 // Après chaque changement : le dernier test du service ne dit plus rien de la nouvelle valeur ; Slack
@@ -332,14 +392,20 @@ export function retirerService(ctx, nom, par, regler = reglerObservabilite) {
   const def = CLES_SERVICES[nom]
   if (!def) throw erreur(400, "Réglage inconnu.")
   const avant = clesBoite(ctx)
-  effacer(ctx, cleReglage(nom))
-  effacer(ctx, cleCoupe(nom))
-  noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} ${accord(def, "retiré")} de la console par ${par}` })
+  // Le serveur de modèles part en bloc : sa clé et son modèle ne doivent pas suivre une autre adresse
+  // (la clé d'un fournisseur envoyée à un autre).
+  const ensemble = nom === "LLM_URL_APPLIS" ? ["LLM_URL_APPLIS", "LLM_CLE_APPLIS", "LLM_NOM_APPLIS"] : [nom]
+  for (const n of ensemble) {
+    effacer(ctx, cleReglage(n))
+    effacer(ctx, cleCoupe(n))
+  }
+  const libelle = ensemble.length > 1 ? "Serveur de modèles (adresse, clé et modèle)" : def.libelle
+  noter(ctx.db, { projet: null, type: "reglage", message: `${libelle} ${ensemble.length > 1 ? "retiré" : accord(def, "retiré")} de la console par ${par}` })
   changerVersionSi(ctx, avant)
   appliquerServices(ctx, regler)
   apresChangement(ctx, nom)
   const reprend = valeurService(ctx, nom).source === "serveur"
-  return { ok: true, message: `${def.libelle} ${accord(def, "retiré")}${reprend ? " : la valeur du serveur reprend." : "."}` }
+  return { ok: true, message: `${libelle} ${ensemble.length > 1 ? "retiré" : accord(def, "retiré")}${reprend ? " : la valeur du serveur reprend." : "."}` }
 }
 
 // Couper l'envoi : un drapeau qui l'emporte sur toute valeur, celle du serveur comprise. La valeur
@@ -368,6 +434,8 @@ export function reprendreService(ctx, service, par, regler = reglerObservabilite
   appliquerServices(ctx, regler)
   apresChangement(ctx, s.principale)
   const { source } = valeurService(ctx, s.principale)
+  // L'IA des applications peut reprendre par le seul serveur de modèles, sans clé de passerelle.
+  if (service === "passerelle" && source !== "console" && source !== "serveur" && valeurService(ctx, "LLM_URL_APPLIS").valeur) return { ok: true, message: `${s.libelle} : rebranchée, avec ton serveur de modèles${secret("ai_gateway_api_key") ? ", et la clé commune du serveur en relais" : " (sans passerelle en relais)"}.` }
   return { ok: true, message: `${s.libelle} : rebranché${source === "console" ? ", avec la valeur de la console" : source === "serveur" ? ", avec la valeur du serveur" : ". Il n'y a pas encore de valeur : colle-la ici"}.` }
 }
 
@@ -386,6 +454,33 @@ export function traduireEchec(service, detail) {
   if (code === 429) return `${nom} : quota atteint. Les envois reprendront d'eux-mêmes au prochain cycle de facturation.`
   if (code) return `${nom} a répondu par une erreur (HTTP ${code}).`
   return `${nom} est injoignable depuis le serveur (${d.slice(0, 120) || "erreur réseau"}).`
+}
+
+// Le serveur de modèles des applications : la liste de ses modèles (GET /models), sans rien générer.
+// Jamais son adresse dans le message : il finit dans le journal.
+export async function testerServeurModeles(envoyer, url, cle, nom, delaiMs) {
+  let hote = ""
+  try {
+    hote = new URL(url).hostname
+  } catch {}
+  const tailscale = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hote)
+  const clair = /^http:/i.test(url) && !tailscale ? " Attention : l'adresse est en http, les échanges ne sont pas chiffrés sur ce réseau privé." : ""
+  try {
+    const res = await envoyer(`${url.replace(/\/+$/, "")}/models`, { headers: cle ? { authorization: `Bearer ${cle}` } : {}, signal: AbortSignal.timeout(delaiMs) })
+    const j = await res.json().catch(() => null)
+    if (res.status === 401 || res.status === 403) return { ok: false, message: cle ? "Le serveur de modèles refuse cette clé." : "Le serveur de modèles demande une clé : colle-la dans son champ." }
+    if (!res.ok) return { ok: false, message: `Le serveur de modèles a répondu HTTP ${res.status} : vérifie que l'adresse finit par /v1.` }
+    const modeles = (Array.isArray(j?.data) ? j.data : []).map((m) => String(m?.id ?? "")).filter(Boolean)
+    if (!modeles.length) return { ok: false, message: "Le serveur répond, mais ce n'est pas une API compatible OpenAI (pas de liste de modèles) : vérifie que l'adresse finit par /v1." }
+    const liste = modeles.slice(0, 5).map((m) => m.slice(0, 60)).join(", ")
+    if (nom && !modeles.includes(nom)) return { ok: false, message: `Le serveur de modèles répond, mais ne propose pas « ${nom.slice(0, 60)} » (il propose : ${liste}).${clair}` }
+    // Plusieurs modèles sans nom choisi : certains serveurs (Ollama) refusent alors chaque demande.
+    if (!nom && modeles.length > 1) return { ok: false, message: `Le serveur de modèles répond et propose plusieurs modèles (${liste}) : indique lequel utiliser dans « Modèle ».${clair}` }
+    // Le test part du serveur de l'usine ; les applications, de leur propre réseau Docker.
+    return { ok: true, message: `Le serveur de modèles répond depuis le serveur de l'usine (${nom ? `modèle ${nom.slice(0, 60)}` : `modèle ${liste}`}). Les applications l'essaieront d'abord ; s'il ne répond pas pour elles, leur journal le dira.${clair}` }
+  } catch (e) {
+    return { ok: false, message: e?.name === "TimeoutError" ? "Le serveur de modèles ne répond pas depuis le serveur de l'usine (délai dépassé)." : `Le serveur de modèles est injoignable depuis le serveur de l'usine (${String(e?.cause?.code ?? e?.message ?? "erreur réseau").slice(0, 80)}).` }
+  }
 }
 
 const cleTest = (service) => `test_service_${service}`
@@ -463,16 +558,23 @@ export async function testerService(ctx, service, options = {}) {
     }
   } else if (service === "passerelle") {
     const cle = valeurService(ctx, "AI_GATEWAY_API_KEY_APPLIS").valeur
-    if (!cle) r = { ok: false, message: "Aucune clé dédiée : les applications utilisent la clé commune du serveur, s'il y en a une." }
+    const url = valeurService(ctx, "LLM_URL_APPLIS").valeur
+    if (!cle && !url) r = { ok: false, message: "Ni serveur de modèles ni clé dédiée : les applications utilisent la clé commune du serveur, s'il y en a une." }
     else if (process.env.NODE_TEST_CONTEXT && envoyer === globalThis.fetch) r = { ok: false, message: "Hors réseau (tests)." }
     else {
-      try {
-        const res = await envoyer(`${PASSERELLE}/v1/models`, { headers: { authorization: `Bearer ${cle}` }, signal: AbortSignal.timeout(delaiMs) })
-        await res.body?.cancel?.().catch(() => {})
-        r = res.ok ? { ok: true, message: "La passerelle accepte cette clé." } : { ok: false, message: res.status === 401 || res.status === 403 ? "La passerelle refuse cette clé : elle a été supprimée, ou copiée incomplète." : `La passerelle a répondu HTTP ${res.status}.` }
-      } catch (e) {
-        r = { ok: false, message: traduireEchec("passerelle", e?.name === "TimeoutError" ? "pas de réponse" : e?.message) }
+      // Le serveur de modèles d'abord (c'est lui que les applications essaient d'abord), puis la passerelle.
+      const parties = []
+      if (url) parties.push(await testerServeurModeles(envoyer, url, valeurService(ctx, "LLM_CLE_APPLIS").valeur, valeurService(ctx, "LLM_NOM_APPLIS").valeur, delaiMs))
+      if (cle) {
+        try {
+          const res = await envoyer(`${PASSERELLE}/v1/models`, { headers: { authorization: `Bearer ${cle}` }, signal: AbortSignal.timeout(delaiMs) })
+          await res.body?.cancel?.().catch(() => {})
+          parties.push(res.ok ? { ok: true, message: "La passerelle accepte cette clé." } : { ok: false, message: res.status === 401 || res.status === 403 ? "La passerelle refuse cette clé : elle a été supprimée, ou copiée incomplète." : `La passerelle a répondu HTTP ${res.status}.` })
+        } catch (e) {
+          parties.push({ ok: false, message: traduireEchec("passerelle", e?.name === "TimeoutError" ? "pas de réponse" : e?.message) })
+        }
       }
+      r = { ok: parties.every((p) => p.ok), message: parties.map((p) => p.message).join(" ") }
     }
   } else {
     const jeton = valeurService(ctx, "POSTHOG_TOKEN").valeur
@@ -566,7 +668,10 @@ function actifService(ctx, id, instance) {
   if (id === "sentry" || id === "posthog") return Boolean(instance.actif[id])
   if (id === "smtp") return Boolean(valeurService(ctx, "SMTP_HOST").valeur)
   if (id === "slack") return Boolean(valeurService(ctx, "SLACK_BOT_TOKEN").valeur && valeurService(ctx, "SLACK_APP_TOKEN").valeur)
-  return Boolean(valeurService(ctx, "AI_GATEWAY_API_KEY_APPLIS").valeur)
+  // Coupée, la clé de passerelle retire toute l'IA aux applications (deployeur/boite.mjs, variablesIA).
+  const passerelle = valeurService(ctx, "AI_GATEWAY_API_KEY_APPLIS")
+  if (passerelle.source === "coupe") return false
+  return Boolean(passerelle.valeur || valeurService(ctx, "LLM_URL_APPLIS").valeur)
 }
 // L'orchestrateur n'envoie pas de journaux de conteneurs : seul le déployeur le fait.
 const CANAUX = { sentry: ["battement", "erreurs"], posthog: ["evenements"] }
