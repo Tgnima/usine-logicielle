@@ -27,7 +27,7 @@ server/db.js           SQLite + migrations additives (tableau MIGRATIONS)
 server/routes/         une route par fonctionnalité, branchée dans routes/index.js
 server/actions/        la logique métier, sans Express, testée dans test/
 server/horloge.js      maintenant() : l'heure du produit (accélérée en démo)
-server/llm.js          generer() : appeler un modèle (serveur de l'usine, puis passerelle, sinon texte de secours ; ne lève jamais d'erreur)
+server/llm.js          generer() : appeler un modèle (serveur de l'usine, puis passerelle, sinon texte de secours ; ne lève jamais d'erreur : passe toujours `secours`, et `modele === "secours"` signale le repli)
 server/email.js        envoyer() : un email (vers Mailpit en démo)
 server/observabilite.js les erreurs vers Sentry, le pouls vers PostHog (ne pas modifier)
 client/src/            l'interface React

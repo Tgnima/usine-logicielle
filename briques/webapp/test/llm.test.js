@@ -72,6 +72,27 @@ test("après une panne, le serveur de modèles n'est pas réessayé pendant 5 mi
   assert.equal(new URL(appels.at(-2).url).hostname, "modeles.exemple.test", "5 minutes plus tard, on réessaie")
 })
 
+test("une demande refusée pour elle-même (trop longue) ne met pas le serveur en pause ; une réponse vide, si", async () => {
+  let t = 1_000_000
+  const maintenant = () => t
+  const env = { LLM_URL: SERVEUR }
+  const trop = faux([["modeles.exemple.test", reponse("", 400)]])
+  await avertissements(() => generer({ demande: "très long", secours: "S", env, envoyer: trop.envoyer, maintenant }))
+  await avertissements(() => generer({ demande: "court", secours: "S", env, envoyer: trop.envoyer, maintenant }))
+  assert.equal(trop.appels.length, 2, "après un 400, le serveur est réessayé tout de suite")
+  const vide = faux([["modeles.exemple.test", reponse("")]])
+  await avertissements(() => generer({ demande: "1", secours: "S", env, envoyer: vide.envoyer, maintenant }))
+  t += 60_000
+  await avertissements(() => generer({ demande: "2", secours: "S", env, envoyer: vide.envoyer, maintenant }))
+  assert.equal(vide.appels.length, 1, "après une réponse vide, pause de 5 minutes")
+})
+
+test("la passerelle répond vide : le texte de secours", async () => {
+  const { envoyer } = faux([["ai-gateway.vercel.sh", reponse("<think>coupé")]])
+  const { r } = await avertissements(() => generer({ demande: "Résume", secours: "S", env: { AI_GATEWAY_API_KEY: "cle-passerelle" }, envoyer }))
+  assert.deepEqual(r, { texte: "S", modele: "secours" })
+})
+
 test("la passerelle échoue (plafond atteint, quota, panne) : le texte de secours, jamais une erreur", async () => {
   for (const r of [reponse("", 402), reponse("", 429), lent]) {
     const { envoyer } = faux([["ai-gateway.vercel.sh", r]])
@@ -103,9 +124,18 @@ test("serveurLocal: false exige la passerelle, avec le modèle demandé", async 
 
 test("ni serveur ni passerelle, ou dans les tests avec le vrai fetch : le texte de secours, sans réseau", async () => {
   assert.deepEqual(await generer({ demande: "Résume", secours: "S", env: {} }), { texte: "S", modele: "secours" })
-  // Sous node --test, même un env injecté sans NODE_TEST_CONTEXT ne sort pas avec le vrai fetch.
-  assert.ok(process.env.NODE_TEST_CONTEXT, "ce test suppose node --test : sinon il sortirait sur le réseau")
-  assert.deepEqual(await generer({ demande: "Résume", secours: "S", env: { LLM_URL: SERVEUR, AI_GATEWAY_API_KEY: "x" } }), { texte: "S", modele: "secours" })
+  // Sous node --test, même un env injecté sans NODE_TEST_CONTEXT ne sort pas avec le fetch global :
+  // un espion à sa place prouve qu'il n'est jamais appelé.
+  assert.ok(process.env.NODE_TEST_CONTEXT, "ce test suppose node --test")
+  const vrai = globalThis.fetch
+  let sorties = 0
+  globalThis.fetch = async () => { sorties++; throw new Error("réseau interdit dans les tests") }
+  try {
+    assert.deepEqual(await generer({ demande: "Résume", secours: "S", env: { LLM_URL: SERVEUR, AI_GATEWAY_API_KEY: "x" } }), { texte: "S", modele: "secours" })
+  } finally {
+    globalThis.fetch = vrai
+  }
+  assert.equal(sorties, 0)
 })
 
 test("le raisonnement d'un modèle (<think>) n'est jamais montré", () => {

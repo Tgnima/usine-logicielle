@@ -109,10 +109,10 @@ export function validerCanal(brut) {
   return { valeur: v, horsUE: false }
 }
 // Une adresse privée, où le clair (http) ne traverse pas Internet : réseaux locaux, plage de
-// Tailscale (100.64.0.0/10, chiffrée par WireGuard) et ses noms en .ts.net, IPv6 locales (fc00::/7).
+// Tailscale (100.64.0.0/10, chiffrée par WireGuard), IPv6 locales (fc00::/7). Pas les noms en
+// .ts.net : l'usine et les applications passent par des résolveurs publics, qui ne les connaissent pas.
 export function adressePrivee(hote) {
   const h = String(hote ?? "").replace(/^\[|\]$/g, "").toLowerCase()
-  if (h.endsWith(".ts.net")) return true
   const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h)
   if (m) {
     const [a, b] = [Number(m[1]), Number(m[2])]
@@ -328,14 +328,26 @@ export function poserService(ctx, nom, valeur, par, { confirme = false } = {}, r
   if (horsUE && confirme !== true) throw erreur(409, `${def.libelle} : les données partiraient hors d'Europe. Crée plutôt un projet en région européenne, ou confirme pour garder ce choix.`, { horsUE: true })
   const quand = { le: new Date().toISOString(), par }
   const avant = clesBoite(ctx)
+  // Un serveur de modèles sur un autre hôte : la clé et le modèle de l'ancien ne le suivent pas (la
+  // clé d'un fournisseur ne part jamais chez un autre).
+  const hoteDe = (u) => {
+    try {
+      return new URL(u).host.toLowerCase()
+    } catch {
+      return ""
+    }
+  }
+  const ancien = nom === "LLM_URL_APPLIS" ? entree(ctx, nom)?.valeur : null
+  const autreHote = Boolean(ancien && hoteDe(ancien) !== hoteDe(v) && (entree(ctx, "LLM_CLE_APPLIS") || entree(ctx, "LLM_NOM_APPLIS")))
+  if (autreHote) for (const n of ["LLM_CLE_APPLIS", "LLM_NOM_APPLIS"]) effacer(ctx, cleReglage(n))
   ecrireReglage(ctx.db, cleReglage(nom), JSON.stringify(def.secret ? { ...chiffrer(ctx, v), ...(def.apercu === false ? {} : { fin: v.slice(-4) }), ...quand } : { valeur: v, ...quand }))
   // Une nouvelle valeur sert aussitôt : la coupure de cette clé tombe.
   effacer(ctx, cleCoupe(nom))
-  noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} posée dans la console par ${par}${horsUE ? " (hors d'Europe, confirmé)" : ""}` })
+  noter(ctx.db, { projet: null, type: "reglage", message: `${def.libelle} posée dans la console par ${par}${horsUE ? " (hors d'Europe, confirmé)" : ""}${autreHote ? " ; la clé et le modèle de l'ancien serveur sont retirés" : ""}` })
   changerVersionSi(ctx, avant)
   appliquerServices(ctx, regler)
   apresChangement(ctx, nom)
-  return { ok: true, message: messagePose(ctx, nom) }
+  return { ok: true, message: `${messagePose(ctx, nom)}${autreHote ? " C'est un autre serveur : la clé et le modèle de l'ancien sont retirés, colle ceux du nouveau s'il en demande." : ""}` }
 }
 
 const accord = (def, mot) => `${mot}${def.f ? "e" : ""}`
@@ -423,7 +435,7 @@ export function reprendreService(ctx, service, par, regler = reglerObservabilite
   apresChangement(ctx, s.principale)
   const { source } = valeurService(ctx, s.principale)
   // L'IA des applications peut reprendre par le seul serveur de modèles, sans clé de passerelle.
-  if (service === "passerelle" && source !== "console" && source !== "serveur" && valeurService(ctx, "LLM_URL_APPLIS").valeur) return { ok: true, message: `${s.libelle} : rebranchée, avec ton serveur de modèles (sans passerelle en relais).` }
+  if (service === "passerelle" && source !== "console" && source !== "serveur" && valeurService(ctx, "LLM_URL_APPLIS").valeur) return { ok: true, message: `${s.libelle} : rebranchée, avec ton serveur de modèles${secret("ai_gateway_api_key") ? ", et la clé commune du serveur en relais" : " (sans passerelle en relais)"}.` }
   return { ok: true, message: `${s.libelle} : rebranché${source === "console" ? ", avec la valeur de la console" : source === "serveur" ? ", avec la valeur du serveur" : ". Il n'y a pas encore de valeur : colle-la ici"}.` }
 }
 
@@ -451,7 +463,7 @@ export async function testerServeurModeles(envoyer, url, cle, nom, delaiMs) {
   try {
     hote = new URL(url).hostname
   } catch {}
-  const tailscale = /\.ts\.net$/i.test(hote) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hote)
+  const tailscale = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hote)
   const clair = /^http:/i.test(url) && !tailscale ? " Attention : l'adresse est en http, les échanges ne sont pas chiffrés sur ce réseau privé." : ""
   try {
     const res = await envoyer(`${url.replace(/\/+$/, "")}/models`, { headers: cle ? { authorization: `Bearer ${cle}` } : {}, signal: AbortSignal.timeout(delaiMs) })

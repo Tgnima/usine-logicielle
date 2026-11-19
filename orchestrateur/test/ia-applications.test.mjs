@@ -29,7 +29,7 @@ test("formats : adresse du serveur de modèles et nom du modèle", () => {
   assert.equal(validerUrlModeles("https://modeles.exemple.test/v1/chat/completions").valeur, URL_MODELES, "ramenée à sa base")
   assert.equal(validerUrlModeles("http://10.0.0.5:8080/v1").valeur, "http://10.0.0.5:8080/v1", "http permis sur un réseau privé")
   assert.equal(validerUrlModeles("http://100.101.102.103:8080/v1").valeur, "http://100.101.102.103:8080/v1", "http permis par Tailscale")
-  assert.equal(validerUrlModeles("http://gpu.ma-flotte.ts.net/v1").valeur, "http://gpu.ma-flotte.ts.net/v1")
+  assert.throws(() => validerUrlModeles("http://gpu.ma-flotte.ts.net/v1"), /en clair sur Internet/, "les noms Tailscale ne se résolvent pas hors de Tailscale : seulement ses IP")
   assert.throws(() => validerUrlModeles("http://modeles.exemple.test/v1"), /en clair sur Internet/)
   assert.throws(() => validerUrlModeles("HTTP://8.8.8.8/v1"), /en clair sur Internet/)
   assert.throws(() => validerUrlModeles("modeles.exemple.test/v1"), /adresse complète/)
@@ -82,6 +82,14 @@ test("le serveur de modèles va aux applications seulement, et « Retirer l'IA �
     const cleModeles = etat().cles.find((c) => c.nom === "LLM_CLE_APPLIS")
     assert.ok(cleModeles.console, "enregistrée")
     assert.ok(!cleModeles.console.fin, "sans ses derniers caractères")
+    // Une autre adresse sur le même hôte garde clé et modèle ; un autre hôte les retire.
+    poserService(ctx, "LLM_URL_APPLIS", URL_MODELES, "admin@exemple.fr", {}, regler)
+    poserService(ctx, "LLM_NOM_APPLIS", "qwen3.5-9b", "admin@exemple.fr", {}, regler)
+    assert.doesNotMatch(poserService(ctx, "LLM_URL_APPLIS", "https://modeles.exemple.test/api/v1", "admin@exemple.fr", {}, regler).message, /autre serveur/)
+    assert.equal(contenuBoite(ctx).cles.LLM_CLE_APPLIS, "cle-du-serveur-de-modeles")
+    assert.match(poserService(ctx, "LLM_URL_APPLIS", "https://autre-fournisseur.exemple.test/v1", "admin@exemple.fr", {}, regler).message, /autre serveur : la clé et le modèle de l'ancien sont retirés/)
+    const changes = contenuBoite(ctx).cles
+    assert.ok(!("LLM_CLE_APPLIS" in changes) && !("LLM_NOM_APPLIS" in changes), "la clé de l'ancien fournisseur ne part pas chez le nouveau")
     // L'adresse du serveur ne finit jamais dans le journal.
     const journal = ctx.db.prepare("SELECT message FROM journal").all().map((l) => l.message).join("\n")
     assert.ok(!journal.includes("modeles.exemple.test"))

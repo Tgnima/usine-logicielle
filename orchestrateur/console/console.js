@@ -2000,7 +2000,7 @@ function fenetrePasserelle(s) {
     <p style="margin:0">Les applications qui se servent de l'IA (résumés, suggestions…) essaient d'abord ton serveur de modèles s'il est branché, puis la passerelle Vercel. Si aucun ne répond, elles affichent leur texte de secours : elles ne tombent jamais en panne à cause de l'IA. L'usine, elle, garde ses propres modèles.</p>
     <h3 style="margin:0;font-size:15px">Ton serveur de modèles (facultatif)</h3>
     <ol class="etapes-machine">
-      <li>Un serveur compatible OpenAI (par exemple llama-server sur un GPU), joignable depuis Internet en https (ou par un réseau privé, comme Tailscale), et protégé par une clé.</li>
+      <li>Un serveur compatible OpenAI (par exemple llama-server sur un GPU), joignable depuis Internet en https (ou en http par une adresse IP privée : réseau local, ou Tailscale en 100.x), et protégé par une clé.</li>
       <li>Colle son adresse jusqu'à <span class="mono">/v1</span>, sa clé, et le nom du modèle si le serveur en propose plusieurs, puis lance le test.</li>
     </ol>
     ${champsService(s, [

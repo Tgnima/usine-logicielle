@@ -51,16 +51,24 @@ export async function generer({ systeme, demande, modele, secours = "", serveurL
     try {
       const texte = await appeler(envoyer, `${env.LLM_URL.replace(/\/+$/, "")}/chat/completions`, env.LLM_CLE, nom, messages, DELAI_SERVEUR_MS)
       if (texte) return { texte, modele: nom || "serveur de modèles" }
-      console.warn(`Serveur de modèles : réponse vide, ${cle ? "la passerelle prend le relais" : "texte de secours"}.`)
-    } catch (e) {
+      // Une réponse vide (un modèle qui épuise son budget à raisonner) compte comme une panne.
       serveurEnPanneJusqua = maintenant() + PAUSE_APRES_PANNE_MS
-      console.warn(`Serveur de modèles indisponible (${cause(e)}) : ${cle ? "la passerelle prend le relais" : "texte de secours"}, nouvel essai dans 5 minutes.`)
+      console.warn(`Serveur de modèles : réponse vide, ${cle ? "la passerelle prend le relais" : "texte de secours"}, nouvel essai dans 5 minutes.`)
+    } catch (e) {
+      // Une demande refusée pour elle-même (trop longue, mal formée) ne coupe pas le serveur pour
+      // les autres : seulement le délai, le réseau, une panne du serveur, ou un accès refusé.
+      const propreALaDemande = [400, 413, 422].includes(e?.code)
+      if (!propreALaDemande) serveurEnPanneJusqua = maintenant() + PAUSE_APRES_PANNE_MS
+      console.warn(`Serveur de modèles indisponible (${cause(e)}) : ${cle ? "la passerelle prend le relais" : "texte de secours"}${propreALaDemande ? "" : ", nouvel essai dans 5 minutes"}.`)
     }
   }
   if (!cle) return { texte: secours, modele: "secours" }
   const choisi = modele || env.LLM_MODELE || "anthropic/claude-haiku-4.5"
   try {
-    return { texte: await appeler(envoyer, PASSERELLE, cle, choisi, messages, DELAI_PASSERELLE_MS), modele: choisi }
+    const texte = await appeler(envoyer, PASSERELLE, cle, choisi, messages, DELAI_PASSERELLE_MS)
+    if (texte) return { texte, modele: choisi }
+    console.warn("Passerelle IA : réponse vide, texte de secours.")
+    return { texte: secours, modele: "secours" }
   } catch (e) {
     // Plafond de dépense atteint, quota, panne : le produit garde son texte de secours.
     console.warn(`Passerelle IA indisponible (${cause(e)}) : texte de secours.`)
