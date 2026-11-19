@@ -18,9 +18,28 @@ Ce qui est sur `main` sans être encore dans une version.
   puis s'arrête à l'aperçu : la mise en ligne pour de vrai reste à une personne. Une cause hors du
   code (serveur, mémoire, plusieurs applications à la fois), un plafond atteint (trois corrections
   par 24 h pour l'usine) ou une panne qui revient dans la semaine qui suit une correction
-  automatique de la même application : un message, et rien d'autre. Trois modes, dans la console (Règles de l'usine) : coupé, observer
-  (par défaut : il dit ce qu'il aurait fait, sans rien lancer) et corriger. Réglages : section
-  `pilote` de `usine.config.yml`.
+  automatique de la même application : un message, et rien d'autre. Réglages : section `pilote` de
+  `usine.config.yml`.
+- **La boucle d'amélioration** : un nouveau mode, « proposer ». Un incident en production devient
+  une proposition de correction, que l'on lance ou que l'on écarte depuis la console (Ce qui
+  t'attend) ou depuis Slack, et rien ne part sans une personne. Deux sortes d'incidents en font
+  naître une :
+  - une panne due au code, vue par la sonde ;
+  - une erreur Sentry nouvelle, qui revient ou en hausse, dans une application en production.
+
+  Une proposition regroupe les signaux d'un même produit, avec les chiffres de PostHog. Lancée,
+  elle devient une demande de corrections : le lot s'arrête à l'aperçu. Une fois en ligne, l'usine
+  vérifie pendant 7 jours que l'incident ne revient pas (« tenue », ou « rechute » à proposer de
+  nouveau). Quatre modes, dans la console (Règles de l'usine) : coupé, observer (par défaut),
+  proposer et corriger. Même en « corriger », une erreur Sentry n'est que proposée.
+- **L'analyste d'une correction reçoit ses connecteurs** (rôle « plan »), comme pour un plan. Sa
+  consigne dit où chercher le produit dans Sentry et PostHog, quand il les a.
+- **Connecteur PostHog** (lecture seule, serveur MCP de PostHog, clé personnelle « MCP Server »).
+  Les connecteurs Sentry et PostHog sont conseillés aussi pour l'analyste (rôle « plan »).
+  **À faire pour s'en servir** : dans la console, Connecteurs, colle le jeton de lecture de
+  Sentry et la clé de PostHog, puis active-les pour « plan » et « construction ». Sans eux, la
+  boucle marche avec la sonde seule. Le jeton Sentry ne part que vers sentry.io, la clé PostHog
+  que vers PostHog (Europe ou États-Unis).
 - **Documentation de l'observabilité** (`docs/OBSERVABILITE.md`) : brancher Sentry et PostHog,
   ce que l'usine et chaque produit envoient, quels produits envoient leurs propres erreurs (pas
   ceux fabriqués par une usine d'avant la v1.0.0, ni les dépôts repris avant cette version), ce qui n'est pas masqué

@@ -40,6 +40,10 @@ est épuisé.
   ajoutée dans les dépendances (`npm audit`, comparé à `main`), refuse la tâche ; un agent
   relecteur sécurité lit chaque changement avant le vérificateur, avec une grille
   (injections, XSS, redirections, données personnelles…).
+- **Un incident en production ne met jamais rien en ligne.** En mode « proposer », le pilote et
+  la lecture de Sentry ne font que proposer une correction, et seule une personne la lance. En
+  mode « corriger », le pilote corrige seul une panne du code, jusqu'à l'aperçu. Voir **La
+  boucle d'amélioration**.
 
 ## La sécurité
 
@@ -445,6 +449,102 @@ docker compose exec orchestrateur node src/cli.mjs production 1
     leur prochaine mise en ligne ou par « Appliquer ». « Couper l'envoi » l'emporte sur la valeur
     du serveur et garde celle de la console, que « Ne plus couper » rétablit ; « Retirer » efface
     tout et rend la main au serveur.
+
+## La boucle d'amélioration
+
+Un incident en production devient une proposition de correction, avec son contexte, sans
+attendre qu'une personne le remarque. En mode « proposer », rien ne part sans elle : elle lance
+la correction, ou l'écarte. La boucle suit celle que décrit PostHog (« self-improving loop » :
+signaux, regroupement, enquête, revue humaine, mesure), avec les briques de l'usine. Le schéma
+ci-dessous est celui du mode « proposer » ; le mode « corriger » (plus bas) saute la validation
+pour une panne du code.
+
+```
+ un incident en production
+   │  la sonde, chaque minute : une panne due au code, depuis 10 min        (pilote.mjs)
+   │  Sentry, toutes les 5 min : une erreur nouvelle, qui revient, en hausse (signaux.mjs)
+   ▼
+ une proposition de correction : une seule ouverte par produit, les signaux s'y regroupent
+   │  ce que l'usine a relevé, et les chiffres de PostHog (signes de vie, erreurs, journaux,
+   │  mises en ligne)
+   ▼
+ une personne : « Lancer la correction » ou « Écarter »   (console, Ce qui t'attend · Slack)
+   │  lancer = une demande de corrections : l'analyste enquête (journaux, et Sentry et PostHog
+   │  par leurs connecteurs), puis un lot passe par la fabrique, le vérificateur et la recette,
+   │  et s'arrête à l'aperçu
+   ▼
+ la mise en ligne, par une personne, comme toujours
+   ▼
+ la mesure, pendant 7 jours : l'incident revient, c'est une rechute (une nouvelle
+ proposition) ; 48 h sans lui, la correction tient
+```
+
+**Ce qui fait naître une proposition** (des règles codées, jamais un modèle) :
+- **Une panne due au code**, vue par la sonde depuis `minutes_avant_action` (10 min) : l'application
+  redémarre en boucle, `/api/health` répond une erreur ou ne répond plus, ou elle s'arrête sur une
+  erreur. Si la cause est ailleurs (mémoire, disque, plusieurs applications en panne à la fois), si
+  elle est inconnue, ou si le projet n'est pas en production, l'usine envoie un message, sans
+  proposition.
+- **Une erreur Sentry** non résolue, de niveau erreur, dans l'environnement production d'une
+  application, nouvelle, qui revient ou en hausse, et vue dans l'heure. Les incidents « en panne »
+  que le déployeur envoie à Sentry n'y sont pas : la sonde les voit déjà.
+- PostHog ne déclenche rien. Ses chiffres servent de contexte, et l'analyste peut l'interroger.
+
+**Une proposition** regroupe les signaux d'un même produit. Un signal déjà connu ne revient pas.
+Un signal écarté ne revient pas pendant 7 jours. Un signal dont la correction est en route ne
+revient pas non plus. Elle ne cite que des faits mesurés : état, version, redémarrages, titre et
+lieu de l'erreur, nombre d'occurrences. Les textes venus de l'application sont neutralisés : une
+ligne, sans balise ni caractère invisible. Les données personnelles sont masquées dès l'envoi
+(`commun/observabilite.mjs`). Dans la demande faite à l'analyste, la consigne passe avant les
+faits, et elle reste toujours entière. Pendant que le projet est en travail, la proposition
+attend.
+
+**Qui la valide** : un administrateur, depuis la console (Ce qui t'attend, groupe À décider) ou
+depuis Slack (`ADMIN_USER_IDS`). Un seul clic compte, d'un côté ou de l'autre. Dans la boucle,
+seule `lancerProposition()` appelle `demanderCorrections()`, et seules la console et Slack
+l'appellent. La lecture de Sentry ne reçoit que `proposer()`. Les tests le vérifient.
+
+**Le lien avec l'aiguillage** : pour un texte libre (`/usine …`), l'aiguillage
+(`aiguillage.mjs`) décide s'il s'agit d'un nouveau produit ou d'une correction. Une proposition
+connaît déjà son produit : elle va directement à la demande de corrections, la même porte que le
+résultat « correction » de l'aiguillage.
+
+**Brancher Sentry et PostHog** (facultatif, en lecture seule) : dans la console, Connecteurs.
+- **Sentry** : un jeton de lecture (`org:read`, `project:read`, `event:read`). La boucle s'en sert
+  pour lire les erreurs toutes les 5 minutes, et l'analyste pour enquêter : coche le rôle « plan »
+  en plus de « construction ». La région et le projet se déduisent du DSN de l'usine. Le jeton ne
+  part que vers sentry.io : avec un Sentry hébergé ailleurs, la boucle ne lit rien.
+- **PostHog** : une clé personnelle `phx_` avec le préréglage « MCP Server », limitée au projet de
+  l'usine. Les IA passent par le serveur MCP de PostHog en lecture seule (`?readonly=true`). La
+  boucle reconnaît le projet au jeton d'envoi (`POSTHOG_TOKEN`). La clé ne part que vers PostHog,
+  en Europe ou aux États-Unis, jamais vers un relais d'envoi.
+- Sans ces connecteurs, la boucle marche avec la sonde seule.
+- Une clé se colle dans la console, jamais dans un message.
+
+**Régler et vérifier** : dans la console, ouvre Règles de l'usine, puis la carte « Pannes et
+erreurs des applications en ligne ». Elle propose quatre modes :
+- **coupé** ;
+- **observer**, le mode par défaut : l'usine dit ce qu'elle aurait fait, sans rien lancer ;
+- **proposer** : chaque panne du code et chaque nouvelle erreur deviennent une proposition, et rien
+  ne part sans une personne ;
+- **corriger**, le mode du pilote des pannes, gardé tel quel : l'usine corrige seule une panne du
+  code, jusqu'à l'aperçu, dans ses plafonds (une correction par application sur 7 jours, trois par
+  24 h). Une erreur Sentry, elle, reste une proposition. La console demande une confirmation.
+
+La même carte compte les propositions à décider, en cours et suivies. Elle dit aussi quand Sentry
+et PostHog ont été lus pour la dernière fois, ou pourquoi la lecture a échoué. C'est le moyen de
+vérifier que les événements remontent. Chaque décision est notée dans l'Historique (filtres
+« Pannes » et « Propositions »). Le contrat a une section `pilote` (`mode`,
+`minutes_avant_action`, et les plafonds du mode « corriger »).
+
+Limites connues :
+- Une application sans module d'observabilité n'envoie rien à Sentry. Pour elle, seule la sonde
+  compte.
+- La mesure attend que la version en ligne change après le lancement. Une correction lancée et
+  jamais mise en ligne est close au bout de 14 jours.
+- Les « lignes d'erreur » que compte PostHog dépendent du niveau que le déployeur lit sur le texte
+  de chaque ligne de journal. Les plantages Python et Node sont reconnus ; ceux d'autres langages,
+  ou un niveau numérique (pino), comptent comme des lignes d'information.
 
 ## Le proposer à d'autres
 

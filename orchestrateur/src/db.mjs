@@ -99,6 +99,32 @@ export function ouvrirDb(chemin) {
     cree_le TEXT NOT NULL DEFAULT (datetime('now')),
     maj_le TEXT NOT NULL DEFAULT (datetime('now'))
   )`)
+  // Les propositions de correction de la boucle d'amélioration (propositions.mjs) : un incident de
+  // production (panne vue par la sonde, erreur Sentry) devient une proposition, qu'une personne
+  // lance ou écarte. Une seule proposition ouverte par produit : les signaux s'y regroupent.
+  //   statut     ouverte -> lancee -> en_ligne -> tenue | rechute ; ecartee ; sans_suite ;
+  //   signaux    ce que le code a relevé (JSON, jamais de donnée personnelle) ; cles : leurs clés ;
+  //   contexte   les chiffres de PostHog au moment de la proposition (JSON) ;
+  //   version    la version en ligne quand la correction est lancée ; version_corrigee : la suivante.
+  db.exec(`CREATE TABLE IF NOT EXISTS propositions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    projet_id INTEGER NOT NULL,
+    produit TEXT NOT NULL,
+    statut TEXT NOT NULL DEFAULT 'ouverte',
+    signaux TEXT NOT NULL DEFAULT '[]',
+    cles TEXT NOT NULL DEFAULT '[]',
+    contexte TEXT,
+    rechute_de INTEGER,
+    version TEXT,
+    version_corrigee TEXT,
+    decide_par TEXT,
+    decide_le TEXT,
+    en_ligne_le TEXT,
+    ferme_le TEXT,
+    cree_le TEXT NOT NULL DEFAULT (datetime('now')),
+    maj_le TEXT NOT NULL DEFAULT (datetime('now'))
+  )`)
+  db.exec("CREATE INDEX IF NOT EXISTS propositions_produit ON propositions (produit, statut)")
   return db
 }
 

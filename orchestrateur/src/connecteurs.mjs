@@ -64,11 +64,20 @@ export const CATALOGUE = [
     serveur: npx("@stripe/mcp", "--tools=all"), cle: { libelle: "Clé de test Stripe", aide: "Sur dashboard.stripe.com : Développeurs, Clés API, en mode test (sk_test_… ou rk_test_…).", variable: "STRIPE_SECRET_KEY", test: /^(sk|rk)_test_/ },
   },
   {
-    id: "sentry", nom: "Sentry", famille: "verifier", logo: "Se", couleur: "#362d59", roles_conseilles: ["construction"],
-    apport: "Quand une application en ligne plante, les IA lisent l'erreur pour la corriger.",
-    texte: "Lors d'une demande de corrections, les IA lisent les erreurs relevées par Sentry dans l'application en ligne.",
-    peut: ["Lire les erreurs et leur contexte"], limites: ["Donne au jeton des droits de lecture seulement"],
-    serveur: npx("@sentry/mcp-server"), cle: { libelle: "Jeton Sentry", aide: "Sur sentry.io : Settings, Auth Tokens, avec les droits de lecture.", variable: "SENTRY_ACCESS_TOKEN" },
+    id: "sentry", nom: "Sentry", famille: "verifier", logo: "Se", couleur: "#362d59", roles_conseilles: ["plan", "construction"],
+    apport: "Quand une application en ligne plante, l'usine te propose une correction, et les IA lisent l'erreur pour la faire.",
+    texte: "Actif, il sert deux fois. L'usine lit toutes les 5 minutes les nouvelles erreurs de ses applications en production, et te propose une correction (boucle d'amélioration). Lors d'une demande de corrections, les IA lisent ces erreurs et leur contexte.",
+    peut: ["Lire les erreurs et leur contexte"], limites: ["Donne au jeton des droits de lecture seulement : l'usine n'écrit jamais dans Sentry"],
+    serveur: npx("@sentry/mcp-server"), cle: { libelle: "Jeton Sentry", aide: "Sur sentry.io : Settings, Auth Tokens, avec les droits de lecture (org:read, project:read, event:read).", variable: "SENTRY_ACCESS_TOKEN" },
+  },
+  {
+    // Lecture seule : ?readonly=true retire les outils qui créent, modifient ou suppriment. La clé
+    // « MCP Server » de PostHog est limitée à un seul projet.
+    id: "posthog", nom: "PostHog", famille: "verifier", logo: "Ph", couleur: "#1d4aff", roles_conseilles: ["plan", "construction"],
+    apport: "Quand une application en ligne a un problème, les IA lisent ses événements et ses journaux pour en trouver la cause.",
+    texte: "Actif, il sert deux fois. Une proposition de correction donne les chiffres de PostHog : dernier pouls, erreurs, journaux, déploiements. Pendant la correction, les IA interrogent PostHog en lecture seule.",
+    peut: ["Lire les événements, les journaux et les tableaux de bord"], limites: ["Lecture seule : l'usine retire les outils qui écrivent", "Une clé limitée au projet de l'usine (préréglage « MCP Server »)"],
+    serveur: { url: "https://mcp.posthog.com/mcp?readonly=true" }, cle: { libelle: "Clé personnelle PostHog", aide: "Dans PostHog : Settings, Personal API keys, avec le préréglage « MCP Server », limitée au projet de l'usine.", variable: "POSTHOG_API_KEY", prefixe: "phx_" },
   },
 ]
 
@@ -215,6 +224,21 @@ export function envConnecteurs(ctx) {
     }
   }
   return env
+}
+
+// La clé d'un connecteur actif, pour le code de l'usine lui-même (la lecture de Sentry et de PostHog
+// par la boucle d'amélioration, signaux.mjs). null si le connecteur est désactivé, sans clé, ou si
+// sa clé est illisible : la boucle ne lit alors rien, et le dit dans la console.
+export function cleConnecteurActif(ctx, id) {
+  const c = tous(ctx.db).find((x) => x.id === id)
+  if (!c?.cle || !etatDe(ctx.db, id).actif) return null
+  const k = entreeCle(ctx.db, id)
+  if (!k) return null
+  try {
+    return dechiffrer(ctx, k)
+  } catch {
+    return null
+  }
 }
 
 // Claude Code : un fichier --mcp-config. Les clés y sont des références ${CONNECTEUR_…},
