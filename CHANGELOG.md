@@ -12,11 +12,18 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+## v1.3.1
+
+Ce qui a été fusionné le 20 novembre 2026.
+
 - **Correction : les volets de la console ne se referment plus tout seuls.** La console se
   redessine toutes les 5 secondes sur un projet (15 ailleurs). Douze volets repliables se
   refermaient alors pendant la lecture, dont « Ce que l'usine a trouvé » d'un projet repris et
   « Ce qui sera vérifié » d'un plan. Chaque volet reste maintenant ouvert ou fermé comme on l'a
   laissé.
+
+**À faire** : rien. Le bouton « Mettre à jour l'usine » (console ou Slack) ou `bash update.sh`
+suffit.
 
 ## v1.3.0
 
