@@ -148,6 +148,9 @@ export async function creerBranche(config, nom, branche, depuis) {
   return sha
 }
 
+// Supprime une branche (celle d'un audit du vérificateur, audit.mjs). Une branche déjà absente (422) n'est pas une erreur.
+export const supprimerBranche = (config, nom, branche) => gh(config, `${depot(config, nom)}/git/refs/heads/${branche}`, { method: "DELETE", accepter: [422] })
+
 // --- Le dépôt d'état (lu par le déployeur) ------------------------------------
 
 export async function preparerDepotEtat(config) {

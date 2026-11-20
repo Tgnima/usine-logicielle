@@ -28,6 +28,7 @@ import { surveillerSante } from "./sante.mjs"
 import { demarrerPilote } from "./pilote.mjs"
 import { demarrerBoucle, proposer } from "./propositions.mjs"
 import { demarrerDomaines, ouvrirDomaines } from "./domaines.mjs"
+import { lancerAudit } from "./audit.mjs"
 
 // D'abord : une erreur de démarrage (contrat illisible, secret manquant) part aussi vers Sentry.
 demarrerObservabilite()
@@ -104,6 +105,8 @@ const routes = {
   },
   "POST /decider": (c, id) => resoudre(ctx, id, { choix: c.choix, texte: c.texte ?? "", par: c.par ?? "cli" }),
   "POST /production": (c, id) => livraison.mettreEnProduction(ctx, id, c.par ?? "cli", c.choix ?? null),
+  // L'audit du vérificateur dure longtemps : la réponse part au démarrage, le résultat arrive dans Slack et au journal.
+  "POST /audit": (c, id) => lancerAudit(ctx, id, { bugs: c.bugs, tacheCle: c.tache ?? null }),
   "POST /relancer": (c, id) => actions.relancerProjet(ctx, id, c.par ?? "cli"),
   "POST /abandonner": (c, id) => actions.abandonnerPlan(ctx, id, c.par ?? "cli"),
   "POST /reorienter": (c, id) => actions.reorienterProjet(ctx, id, { consigne: c.texte, personaId: Number(c.persona_id) || null, depot: c.depot || null, par: c.par ?? "cli" }),

@@ -56,6 +56,18 @@ const enPauseLimite = (db) => {
 let occupe = false
 let dernierServi = 0
 
+// Un travail hors fabrication (l'audit du vérificateur, audit.mjs) prend l'atelier comme une tâche :
+// jamais pendant l'une d'elles, et aucune tâche ne part tant qu'il tourne.
+export async function avecAtelierReserve(fn) {
+  if (occupe) return { ok: false, message: "L'usine fabrique en ce moment : réessaie quand la tâche en cours sera finie." }
+  occupe = true
+  try {
+    return await fn()
+  } finally {
+    occupe = false
+  }
+}
+
 // Un lot fini mais pas livré (la publication a échoué après la fusion) : on réessaie la livraison, au plus toutes
 // les 5 minutes, sans jamais refaire une tâche déjà fusionnée. Renvoie true si une livraison a été tentée.
 const essaisLivraison = new Map()

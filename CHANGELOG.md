@@ -12,6 +12,14 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **L'audit du vérificateur devient une commande** : `node src/cli.mjs audit <n°> [bugs] [tâche]`.
+  L'usine plante exprès des bugs réalistes dans une copie d'un produit livré, un à la fois : un
+  compteur décalé d'un, une sauvegarde qui ne se fait pas, un email noté « envoyé » mais jamais
+  parti, une erreur avalée. La vraie vérification juge chaque bug avec les critères d'une tâche
+  déjà fusionnée, sans savoir ce qui est cassé. L'usine compte les bugs attrapés et les bugs ratés.
+  Rien n'est fusionné, et la branche d'audit est supprimée. La fabrication attend la fin de
+  l'audit, et le score arrive dans Slack et au journal du projet. C'était fait une fois à la main,
+  le 16 novembre.
 - **Des critères qui peuvent échouer** :
   - l'analyste écrit chaque critère comme ce que l'utilisateur fait, puis le résultat attendu
     (un texte affiché, une valeur, un code HTTP) ;
