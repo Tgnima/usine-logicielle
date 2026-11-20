@@ -11,8 +11,11 @@
 
 import { ecrireReglage, lireReglage } from "./couts.mjs"
 
-// Les budgets de l'interface, page par page : chaque page de la tâche, sur ordinateur (avec le chargement et
-// l'accessibilité) et sur téléphone, dans Chromium puis dans WebKit. Résultat dans /tmp/sorties/verif/budgets.json.
+// Les budgets de l'interface, page par page : chaque page de la tâche sur ordinateur (avec le chargement et
+// l'accessibilité) et sur téléphone, dans Chromium puis dans WebKit. Une page neuve pour chaque adresse : une
+// erreur tardive d'une page n'est jamais comptée sur la suivante. Chaque mesure dit si elle a vraiment eu lieu
+// (console_mesure, a11y_mesure, webkit_mesure) : ce qui n'a pas été mesuré ne compte pas pour zéro.
+// Résultat dans /tmp/sorties/verif/budgets.json.
 export const BUDGETS_JS = String.raw`// Les budgets de l'interface, mesurés par l'usine (pas par le modèle).
 const { chromium, webkit } = require("playwright")
 const fs = require("fs")
@@ -25,47 +28,63 @@ try {
   AXE = ""
 }
 const mesure = { pages: {}, axe: Boolean(AXE), webkit: true }
-const fiche = (chemin) => (mesure.pages[chemin] = mesure.pages[chemin] || { console: [], a11y: [], webkit: [], chargement_ms: null })
+const fiche = (chemin) => (mesure.pages[chemin] = mesure.pages[chemin] || { console: [], console_mesure: false, a11y: [], a11y_mesure: false, webkit: [], webkit_mesure: false, chargement_ms: null })
 const court = (t) => String(t).split(String.fromCharCode(10))[0].slice(0, 200)
+// Un chargement qui ne bloque pas sur une page qui écoute le serveur en continu : « load », puis le réseau
+// calme s'il le devient en 5 s.
+async function ouvrir(page, url) {
+  const reponse = await page.goto(url, { waitUntil: "load", timeout: 20000 })
+  await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {})
+  await page.waitForTimeout(500)
+  return reponse
+}
 async function parcourir(navigateur, nom, largeur, hauteur) {
   const contexte = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, locale: "fr-FR", timezoneId: "Europe/Paris" })
-  const page = await contexte.newPage()
-  let erreurs = []
-  page.on("console", (m) => {
-    // Une ressource d'un autre site (une police, un script externe) que le vérificateur ne joint pas n'est pas
-    // une erreur de l'application : seules comptent celles de l'application elle-même.
-    const origine = (m.location() || {}).url || ""
-    if (m.type() === "error" && (!origine || origine.startsWith(BASE))) erreurs.push(court(m.text()))
-  })
-  page.on("pageerror", (e) => erreurs.push(court(e.message)))
   for (const chemin of PAGES) {
-    erreurs = []
     const f = fiche(chemin)
-    const cible = nom === "webkit" ? f.webkit : f.console
+    const erreurs = []
+    const page = await contexte.newPage()
+    page.on("console", (m) => {
+      // Une ressource d'un autre site (une police, un script externe) que le vérificateur ne joint pas n'est pas
+      // une erreur de l'application : seules comptent celles de l'application elle-même.
+      const origine = (m.location() || {}).url || ""
+      if (m.type() === "error" && (!origine || origine.startsWith(BASE))) erreurs.push(court(m.text()))
+    })
+    page.on("pageerror", (e) => erreurs.push(court(e.message)))
     try {
-      const reponse = await page.goto(BASE + chemin, { waitUntil: "networkidle", timeout: 20000 })
+      const reponse = await ouvrir(page, BASE + chemin)
       // Une page en erreur (un identifiant deviné qui n'existe pas en démo) n'est pas mesurée.
       if (reponse && reponse.status() >= 400) {
         f.ignoree = "HTTP " + reponse.status()
-        continue
-      }
-      await page.waitForTimeout(500)
-      if (nom === "bureau") {
-        f.chargement_ms = await page.evaluate(() => {
-          const n = performance.getEntriesByType("navigation")[0]
-          return n ? Math.round(n.loadEventEnd || n.domContentLoadedEventEnd || n.duration) : null
-        })
-        if (AXE) {
-          await page.evaluate(AXE)
-          f.a11y = await page.evaluate(() => window.axe.run(document, { resultTypes: ["violations"] }).then((r) => r.violations
-            .filter((v) => v.impact === "serious" || v.impact === "critical")
-            .map((v) => ({ regle: v.id, impact: v.impact, elements: v.nodes.length, aide: v.help }))))
+      } else {
+        if (nom === "bureau") {
+          // La page prête (DOMContentLoaded) : le temps de l'application, sans les images ni les polices d'autres sites.
+          f.chargement_ms = await page.evaluate(() => {
+            const n = performance.getEntriesByType("navigation")[0]
+            return n ? Math.round(n.domContentLoadedEventEnd || n.loadEventEnd || n.duration) : null
+          })
+          if (AXE) {
+            try {
+              await page.evaluate(AXE)
+              f.a11y = await page.evaluate(() => window.axe.run(document, { resultTypes: ["violations"] }).then((r) => r.violations
+                .filter((v) => v.impact === "serious" || v.impact === "critical")
+                .map((v) => ({ regle: v.id, impact: v.impact, elements: v.nodes.length, aide: v.help }))))
+              f.a11y_mesure = true
+            } catch (e) {
+              f.a11y_erreur = court(e.message)
+            }
+          }
         }
+        const cible = nom === "webkit" ? f.webkit : f.console
+        for (const e of erreurs) if (!cible.includes(e)) cible.push(e)
+        if (nom === "webkit") f.webkit_mesure = true
+        if (nom === "bureau") f.console_mesure = true
       }
-      for (const e of erreurs) if (!cible.includes(e)) cible.push(e)
     } catch (e) {
-      cible.push("page impossible à charger : " + court(e.message))
+      // Une page qui ne se charge pas : dite, mais rien n'est compté comme mesuré pour ce navigateur.
+      f["injoignable_" + nom] = court(e.message)
     }
+    await page.close().catch(() => {})
   }
   await contexte.close()
 }
@@ -88,10 +107,12 @@ async function parcourir(navigateur, nom, largeur, hauteur) {
 `
 
 // La refonte comparée à l'ancienne version, démarrée à côté (ANCIEN) : chaque page (capture entière, sur
-// ordinateur et sur téléphone, comparée pixel par pixel dans le navigateur lui-même) et chaque route GET
-// (code HTTP et JSON, clés triées). Les différences vont dans /tmp/sorties/verif/refonte.txt, avec les images
-// et les réponses dans /tmp/sorties/verif/refonte/. Chaque différence a un identifiant (page:/chemin:format ou
-// route:/api/...) que le vérificateur reprend pour l'expliquer.
+// ordinateur et sur téléphone, animations coupées, comparée pixel par pixel dans le navigateur lui-même) et
+// chaque route GET (code HTTP et JSON, clés triées). Une page ou une route que l'ANCIENNE version ne donne pas
+// est « impossible à comparer » (REFONTE_IMPOSSIBLES) ; que la NOUVELLE ne donne plus, c'est une différence.
+// Les différences vont dans /tmp/sorties/verif/refonte.txt, avec les images et les réponses dans
+// /tmp/sorties/verif/refonte/. Chaque différence a un identifiant (page:/chemin:format ou route:/api/...) que
+// le vérificateur reprend pour l'expliquer.
 export const REFONTE_JS = String.raw`// Une refonte comparée à l'ancienne version, par l'usine.
 const { chromium } = require("playwright")
 const fs = require("fs")
@@ -128,7 +149,7 @@ const normer = (t) => {
     return t
   }
 }
-// La différence de deux captures, calculée dans une page vide : la proportion de pixels qui changent, et une
+// La différence de deux captures, calculée dans une page vide : le nombre de pixels qui changent, et une
 // image où ils sont en rouge.
 async function difference(calcul, a, b) {
   return calcul.evaluate(async ([x, y]) => {
@@ -182,28 +203,49 @@ async function difference(calcul, a, b) {
   fs.mkdirSync(SORTIE, { recursive: true })
   const lignes = []
   const ids = []
+  const impossibles = []
   let comparees = 0
   const navigateur = await chromium.launch()
   const calcul = await navigateur.newPage()
   for (const [format, largeur, hauteur] of [["bureau", 1440, 900], ["mobile", 390, 844]]) {
     const contexte = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, locale: "fr-FR", timezoneId: "Europe/Paris" })
-    const page = await contexte.newPage()
     for (const [i, chemin] of PAGES.entries()) {
       const id = "page:" + chemin + ":" + format
       const prendre = async (base) => {
-        const r = await page.goto(base + chemin, { waitUntil: "networkidle", timeout: 20000 })
-        await page.waitForTimeout(800)
-        return { statut: r ? r.status() : 0, png: await page.screenshot({ fullPage: true }) }
+        const page = await contexte.newPage()
+        try {
+          const r = await page.goto(base + chemin, { waitUntil: "load", timeout: 20000 })
+          await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {})
+          await page.waitForTimeout(800)
+          return { statut: r ? r.status() : 0, png: await page.screenshot({ fullPage: true, animations: "disabled", caret: "hide" }) }
+        } finally {
+          await page.close().catch(() => {})
+        }
+      }
+      let a
+      try {
+        a = await prendre(ANCIEN)
+      } catch (e) {
+        impossibles.push(id)
+        lignes.push(id + " : comparaison impossible, l'ancienne version ne donne pas cette page (" + court(e.message) + ")")
+        continue
+      }
+      let b
+      try {
+        b = await prendre(NOUVEAU)
+      } catch (e) {
+        comparees++
+        ids.push(id)
+        lignes.push(id + " : la nouvelle version ne donne plus cette page (" + court(e.message) + ")")
+        continue
+      }
+      comparees++
+      if (a.statut !== b.statut) {
+        ids.push(id)
+        lignes.push(id + " : HTTP " + a.statut + " avant, " + b.statut + " après")
+        continue
       }
       try {
-        const a = await prendre(ANCIEN)
-        const b = await prendre(NOUVEAU)
-        comparees++
-        if (a.statut !== b.statut) {
-          ids.push(id)
-          lignes.push(id + " : HTTP " + a.statut + " avant, " + b.statut + " après")
-          continue
-        }
         const d = await difference(calcul, a.png, b.png)
         if (d.pixels > SEUIL) {
           const base = SORTIE + "/" + (i + 1) + "-" + nomDe(chemin) + "-" + format
@@ -214,122 +256,175 @@ async function difference(calcul, a, b) {
           lignes.push(id + " : " + d.pixels + " pixels diffèrent, " + (d.ratio * 100).toFixed(2) + " % de la page (" + d.tailles + ") : " + base + "-difference.png")
         }
       } catch (e) {
-        lignes.push(id + " : comparaison impossible (" + court(e.message) + ")")
+        comparees--
+        impossibles.push(id)
+        lignes.push(id + " : comparaison des images impossible (" + court(e.message) + ")")
       }
     }
     await contexte.close()
   }
   await navigateur.close()
+  // Une route qui répond en continu (un flux) ne bloque pas : 15 s au plus par réponse.
+  const lire = (base, route) => fetch(base + route, { signal: AbortSignal.timeout(15000) }).then(async (r) => ({ statut: r.status, texte: await r.text() }))
   for (const [i, route] of routes().entries()) {
     const id = "route:" + route
+    let a
     try {
-      const [a, b] = await Promise.all([ANCIEN, NOUVEAU].map((base) => fetch(base + route).then(async (r) => ({ statut: r.status, texte: await r.text() }))))
-      comparees++
-      if (a.statut !== b.statut) {
-        ids.push(id)
-        lignes.push(id + " : HTTP " + a.statut + " avant, " + b.statut + " après")
-        continue
-      }
-      if (normer(a.texte) !== normer(b.texte)) {
-        const base = SORTIE + "/route-" + (i + 1)
-        fs.writeFileSync(base + "-avant.json", a.texte.slice(0, 200000))
-        fs.writeFileSync(base + "-apres.json", b.texte.slice(0, 200000))
-        ids.push(id)
-        lignes.push(id + " : la réponse diffère (" + a.texte.length + " octets avant, " + b.texte.length + " après) : " + base + "-avant.json et " + base + "-apres.json")
-      }
+      a = await lire(ANCIEN, route)
     } catch (e) {
-      lignes.push(id + " : comparaison impossible (" + court(e.message) + ")")
+      impossibles.push(id)
+      lignes.push(id + " : comparaison impossible, l'ancienne version ne répond pas (" + court(e.message) + ")")
+      continue
+    }
+    let b
+    try {
+      b = await lire(NOUVEAU, route)
+    } catch (e) {
+      comparees++
+      ids.push(id)
+      lignes.push(id + " : la nouvelle version ne répond plus (" + court(e.message) + ")")
+      continue
+    }
+    comparees++
+    if (a.statut !== b.statut) {
+      ids.push(id)
+      lignes.push(id + " : HTTP " + a.statut + " avant, " + b.statut + " après")
+      continue
+    }
+    if (normer(a.texte) !== normer(b.texte)) {
+      const base = SORTIE + "/route-" + (i + 1)
+      fs.writeFileSync(base + "-avant.json", a.texte.slice(0, 200000))
+      fs.writeFileSync(base + "-apres.json", b.texte.slice(0, 200000))
+      ids.push(id)
+      lignes.push(id + " : la réponse diffère (" + a.texte.length + " octets avant, " + b.texte.length + " après) : " + base + "-avant.json et " + base + "-apres.json")
     }
   }
   fs.writeFileSync("/tmp/sorties/verif/refonte.txt", lignes.length ? lignes.join(String.fromCharCode(10)) : "Aucune différence avec l'ancienne version.")
   console.log("@@ REFONTE_COMPAREES " + comparees)
   console.log("@@ REFONTE_DIFFERENCES " + ids.length)
   console.log("@@ REFONTE_IDS " + ids.join(" "))
+  console.log("@@ REFONTE_IMPOSSIBLES " + impossibles.length)
 })().catch((e) => console.log("refonte : " + court(e.message)))
 `
 
-// --- Les budgets de l'interface : un cliquet par page ---------------------------------------------------
-// Une page ne peut pas faire pire que son meilleur résultat déjà fusionné : erreurs de console, défauts
-// d'accessibilité graves, erreurs dans WebKit. Une page mesurée pour la première fois fixe son plancher. Le
-// temps de chargement a un plafond absolu (autonomie.chargement_max_ms, 5 s par défaut).
+// --- Les budgets de l'interface : un cliquet par page, par problème connu ---------------------------------
+// Une page ne peut pas avoir de NOUVEAU problème : une erreur de console, un défaut d'accessibilité grave ou
+// une erreur dans WebKit qu'elle n'avait pas déjà, ni devenir lente (plus de autonomie.chargement_max_ms, 5 s
+// par défaut). Les problèmes déjà connus d'une page ne refusent rien : une erreur intermittente ne fait pas
+// échouer une tâche au hasard. Une page mesurée pour la première fois fixe ce qui est connu. Les problèmes
+// connus ne s'ajoutent qu'à la fusion d'une tâche, ou quand une personne accepte une PR (escalade.mjs).
 export const chargementMax = (config) => Math.max(500, Math.round(Number(config?.autonomie?.chargement_max_ms) || 5000))
-const cleBudgets = (projetId) => `budgets_${projetId}`
+const cleConnus = (projetId) => `budgets_${projetId}`
+const cleMesure = (tacheId) => `budgets_mesure_${tacheId}`
 const tableau = (v) => (Array.isArray(v) ? v : [])
+// Une erreur, à ses chiffres près (un identifiant, une heure) : la même erreur n'est pas « nouvelle ».
+export const cleProbleme = (t) => String(t ?? "").replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 140)
+const unique = (liste) => [...new Set(liste)]
 
-export function lirePlanchers(db, projetId) {
+export function lireConnus(db, projetId) {
   try {
-    const p = JSON.parse(lireReglage(db, cleBudgets(projetId)) ?? "null")
+    const p = JSON.parse(lireReglage(db, cleConnus(projetId)) ?? "null")
     return p && typeof p.pages === "object" && p.pages ? p : { pages: {} }
   } catch {
     return { pages: {} }
   }
 }
+export const ecrireConnus = (db, projetId, connus) => ecrireReglage(db, cleConnus(projetId), JSON.stringify(connus))
 
-// Les nombres d'une page mesurée (null : la page n'a pas été mesurée, une erreur HTTP par exemple).
-export function comptes(f) {
-  if (!f || f.ignoree) return null
-  return { console: tableau(f.console).length, a11y: tableau(f.a11y).length, webkit: tableau(f.webkit).length }
+// La mesure de la dernière vérification d'une tâche : relue à sa fusion, ou si une personne accepte sa PR.
+export const gardeMesure = (db, tacheId, mesure) => ecrireReglage(db, cleMesure(tacheId), JSON.stringify(mesure))
+export function reprendreMesure(db, tacheId) {
+  try {
+    const m = JSON.parse(lireReglage(db, cleMesure(tacheId)) ?? "null")
+    db.prepare("DELETE FROM reglages WHERE cle = ?").run(cleMesure(tacheId))
+    return m && typeof m.pages === "object" ? m : null
+  } catch {
+    return null
+  }
 }
 
-const extraits = (liste) => tableau(liste).slice(0, 2).map((x) => `« ${String(x).slice(0, 140)} »`).join(" ; ")
+// Ce qu'une page a vraiment mesuré : null pour ce qui ne l'a pas été (axe absent, WebKit en panne, page injoignable).
+export function problemes(f, { max = 5000 } = {}) {
+  if (!f || f.ignoree) return null
+  return {
+    console: f.console_mesure ? unique(tableau(f.console).map(cleProbleme)) : null,
+    a11y: f.a11y_mesure ? unique(tableau(f.a11y).map((v) => String(v?.regle ?? ""))) : null,
+    webkit: f.webkit_mesure ? unique(tableau(f.webkit).map(cleProbleme)) : null,
+    lent: Number.isFinite(f.chargement_ms) ? f.chargement_ms > max : null,
+  }
+}
 
-// Ce qui dépasse le budget, en raisons de refus lisibles par l'agent qui code.
-export function raisonsBudgets(mesure, planchers, { max = 5000 } = {}) {
+const extraits = (liste) => liste.slice(0, 2).map((x) => `« ${String(x).slice(0, 140)} »`).join(" ; ")
+
+// Les nouveaux problèmes, en raisons de refus lisibles par l'agent qui code.
+export function raisonsBudgets(mesure, connus, { max = 5000 } = {}) {
   const raisons = []
   for (const [chemin, f] of Object.entries(mesure?.pages ?? {})) {
-    const n = comptes(f)
-    if (!n) continue
-    const p = planchers?.pages?.[chemin]
-    if (p) {
-      if (n.console > p.console) raisons.push(`budget de l'interface : ${chemin} a ${n.console} erreur(s) dans la console du navigateur (${p.console} avant cette tâche) : ${extraits(f.console)}`)
-      if (n.a11y > p.a11y) raisons.push(`budget de l'interface : ${chemin} a ${n.a11y} défaut(s) d'accessibilité graves (${p.a11y} avant) : ${tableau(f.a11y).slice(0, 3).map((v) => `${v.regle} (${v.aide}, ${v.elements} élément(s))`).join(" ; ")}`)
-      if (n.webkit > p.webkit) raisons.push(`budget de l'interface : sur téléphone, dans WebKit (le moteur de Safari), ${chemin} a ${n.webkit} erreur(s) (${p.webkit} avant) : ${extraits(f.webkit)}`)
+    const p = problemes(f, { max })
+    const k = connus?.pages?.[chemin]
+    if (!p || !k) continue
+    if (p.console && Array.isArray(k.console)) {
+      const neuves = tableau(f.console).filter((m) => !k.console.includes(cleProbleme(m)))
+      if (neuves.length) raisons.push(`budget de l'interface : ${chemin} a ${neuves.length} nouvelle(s) erreur(s) dans la console du navigateur : ${extraits(neuves)}`)
     }
-    if (Number.isFinite(f.chargement_ms) && f.chargement_ms > max) raisons.push(`budget de l'interface : ${chemin} se charge en ${(f.chargement_ms / 1000).toFixed(1)} s (au plus ${(max / 1000).toFixed(1)} s)`)
+    if (p.a11y && Array.isArray(k.a11y)) {
+      const neufs = tableau(f.a11y).filter((v) => !k.a11y.includes(String(v?.regle ?? "")))
+      if (neufs.length) raisons.push(`budget de l'interface : ${chemin} a ${neufs.length} nouveau(x) défaut(s) d'accessibilité graves : ${neufs.slice(0, 3).map((v) => `${v.regle} (${v.aide}, ${v.elements} élément(s))`).join(" ; ")}`)
+    }
+    if (p.webkit && Array.isArray(k.webkit)) {
+      const neuves = tableau(f.webkit).filter((m) => !k.webkit.includes(cleProbleme(m)))
+      if (neuves.length) raisons.push(`budget de l'interface : sur téléphone, dans WebKit (le moteur de Safari), ${chemin} a ${neuves.length} nouvelle(s) erreur(s) : ${extraits(neuves)}`)
+    }
+    if (p.lent === true && k.lent === false) raisons.push(`budget de l'interface : ${chemin} se charge maintenant en ${(f.chargement_ms / 1000).toFixed(1)} s (au plus ${(max / 1000).toFixed(1)} s)`)
   }
   return raisons
 }
 
-// Après une tâche validée : chaque page garde son meilleur résultat.
-export function nouveauxPlanchers(mesure, planchers) {
-  const pages = { ...(planchers?.pages ?? {}) }
+// À la fusion (ou à l'acceptation d'une personne) : ce que la tâche a mesuré rejoint ce qui est connu. Une
+// mesure qui n'a pas eu lieu ne change rien.
+export function connusApres(mesure, connus, { max = 5000 } = {}) {
+  const pages = { ...(connus?.pages ?? {}) }
   for (const [chemin, f] of Object.entries(mesure?.pages ?? {})) {
-    const n = comptes(f)
-    if (!n) continue
-    const p = pages[chemin]
-    pages[chemin] = p ? { console: Math.min(p.console, n.console), a11y: Math.min(p.a11y, n.a11y), webkit: Math.min(p.webkit, n.webkit) } : n
+    const p = problemes(f, { max })
+    if (!p) continue
+    const k = pages[chemin] ?? {}
+    const fusion = (cle) => (p[cle] === null ? k[cle] : unique([...tableau(k[cle]), ...p[cle]]))
+    const lent = p.lent === null ? k.lent : Boolean(k.lent) || p.lent
+    pages[chemin] = Object.fromEntries(Object.entries({ console: fusion("console"), a11y: fusion("a11y"), webkit: fusion("webkit"), lent }).filter(([, v]) => v !== undefined))
   }
   return { pages }
 }
 
-export const ecrirePlanchers = (db, projetId, planchers) => ecrireReglage(db, cleBudgets(projetId), JSON.stringify(planchers))
-
-// Un résumé d'une ligne pour la PR et le journal.
+// Un résumé d'une ligne pour la PR.
 export function resumeBudgets(mesure) {
-  const pages = Object.entries(mesure?.pages ?? {}).filter(([, f]) => comptes(f))
+  const pages = Object.entries(mesure?.pages ?? {}).filter(([, f]) => !f.ignoree)
   if (!pages.length) return ""
-  const total = (k) => pages.reduce((s, [, f]) => s + comptes(f)[k], 0)
+  const total = (cle, drapeau) => pages.filter(([, f]) => f[drapeau]).reduce((s, [, f]) => s + tableau(f[cle]).length, 0)
   const lent = Math.max(0, ...pages.map(([, f]) => Number(f.chargement_ms) || 0))
-  return `${pages.length} page(s) mesurée(s) : ${total("console")} erreur(s) de console, ${total("a11y")} défaut(s) d'accessibilité graves${mesure.axe ? "" : " (axe-core absent : non mesurés)"}, ${mesure.webkit ? `${total("webkit")} erreur(s) dans WebKit` : "WebKit indisponible"}, chargement le plus lent ${(lent / 1000).toFixed(1)} s`
+  return `${pages.length} page(s) mesurée(s) : ${total("console", "console_mesure")} erreur(s) de console, ${mesure.axe ? `${total("a11y", "a11y_mesure")} défaut(s) d'accessibilité graves` : "accessibilité non mesurée (axe-core absent)"}, ${mesure.webkit ? `${total("webkit", "webkit_mesure")} erreur(s) dans WebKit` : "WebKit indisponible"}, chargement le plus lent ${(lent / 1000).toFixed(1)} s`
 }
 
-// --- La refonte et l'incident : ce que la porte en conclut -----------------------------------------------
+// --- La refonte et l'incident : ce que l'usine en conclut ------------------------------------------------
 export const idsRefonte = (m) => String(m?.REFONTE_IDS ?? "").split(/\s+/).filter((x) => /^(page|route):\/\S*$/.test(x))
+// L'identifiant cité par le vérificateur, où qu'il soit dans son texte (entre « », entre accents graves…).
+const idsCites = (texte) => [...String(texte ?? "").matchAll(/(?:page|route):\/[^\s«»"'`,;)]*/g)].map((m) => m[0].replace(/\.+$/, ""))
 
-// Une différence avec l'ancienne version doit être expliquée par le vérificateur (une heure, une donnée de
-// démo tirée au sort…). Sinon, la refonte a changé le produit : refus.
-export function raisonsRefonte({ marqueurs: m = {}, verdict = null }) {
-  if (!("BASE_STARTED" in m) || !("REFONTE_COMPAREES" in m)) return []
-  const expliquees = new Set(tableau(verdict?.differences_refonte).filter((d) => String(d?.explication ?? "").trim()).map((d) => String(d?.difference ?? "").trim().split(/\s/)[0]))
-  return idsRefonte(m).filter((id) => !expliquees.has(id)).map((id) => `refonte : ${id} diffère de l'ancienne version, sans explication. Une refonte ne change rien à l'écran ni aux réponses de l'API : rétablis le comportement d'avant (les images et les réponses sont dans /tmp/sorties/verif/refonte du vérificateur).`)
+// Les différences avec l'ancienne version que le vérificateur n'a pas expliquées (une heure, une donnée de
+// démo tirée au sort…). Une vraie différence, il la met dans ses problèmes : refus. Une différence ni expliquée
+// ni signalée : une personne regarde les images.
+export function differencesNonExpliquees({ marqueurs: m = {}, verdict = null }) {
+  if (!("REFONTE_COMPAREES" in m)) return []
+  const expliquees = new Set(tableau(verdict?.differences_refonte).filter((d) => String(d?.explication ?? "").trim()).flatMap((d) => idsCites(d?.difference)))
+  return idsRefonte(m).filter((id) => !expliquees.has(id))
 }
 
-// Un incident corrigé : au moins un des tests écrits par le vérificateur échoue sur l'ancienne version.
+// Un incident est-il prouvé ? Les tests d'incident du vérificateur (T<n>-incident*.cjs) sont relancés sur
+// l'ancienne version : au moins un doit y échouer. Renvoie null s'il est prouvé, sinon pourquoi.
 export const nomsTests = (v) => String(v ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.cjs$/.test(f))
-export function raisonsIncident({ marqueurs: m = {} }) {
-  if (!("BASE_STARTED" in m) || !("INCIDENT_TESTES" in m)) return []
+export function incidentNonProuve({ marqueurs: m = {} }) {
+  if (!("INCIDENT_TESTES" in m)) return null
   const testes = nomsTests(m.INCIDENT_TESTES)
-  if (!testes.length) return ["incident : aucun test n'a été écrit pour reproduire l'incident. La correction d'un incident de production doit être prouvée par un test qui échoue sur l'ancienne version et passe sur la nouvelle."]
-  if (!nomsTests(m.INCIDENT_REPRODUIT).length) return [`incident : aucun des tests écrits (${testes.join(" ")}) n'échoue sur l'ancienne version. Rien ne prouve que l'incident est reproduit, donc corrigé : rends la correction observable par un test.`]
-  return []
+  if (!testes.length) return "le vérificateur n'a écrit aucun test qui reproduit l'incident"
+  if (!nomsTests(m.INCIDENT_REPRODUIT).length) return `aucun des tests d'incident (${testes.join(" ")}) n'échoue sur l'ancienne version : l'incident n'est pas reproduit, peut-être parce qu'il ne se produit pas en démonstration`
+  return null
 }

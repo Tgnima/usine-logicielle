@@ -16,7 +16,7 @@ import { COMPTER_TESTS, NEUTRALISER, VERROUS, brancheDeBase, libererPort, lirePr
 import { extraireJson } from "./analyste.mjs"
 import { ecrireReglage, enregistrer, lireReglage, usagesClaude, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
-import { BUDGETS_JS, REFONTE_JS, chargementMax, ecrirePlanchers, lirePlanchers, nouveauxPlanchers, raisonsBudgets, raisonsIncident, raisonsRefonte, resumeBudgets } from "./mesures.mjs"
+import { BUDGETS_JS, REFONTE_JS, chargementMax, differencesNonExpliquees, gardeMesure, incidentNonProuve, lireConnus, raisonsBudgets, resumeBudgets } from "./mesures.mjs"
 
 // La consommation du juge qui a servi (Codex : son journal --json ; Claude : sa réponse json).
 export async function enregistrerJuge(ctx, { serveur, jeton, projet, tache = null, role, moteur, journal, sortieClaude, modeleCodex = null, duree_s = 0 }) {
@@ -60,11 +60,12 @@ export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glo
 // (la branche de base) à côté, sur le port 4101 : une refonte lui est comparée avant le jugement (écart 5), et
 // les tests d'un incident y sont rejoués après (écart 4).
 export function consigneNature(tache) {
+  const aCote = "- Une autre version de l'application tourne à côté, sur le port 4101 : pour relancer l'application, arrête-la par son port (`fuser -k -n tcp 4100`), jamais par son nom (pkill, killall), qui arrêterait les deux.\n"
   if (tache.nature === "refonte") {
-    return `- Cette tâche est une REFONTE : rien ne doit changer à l'écran ni dans les réponses de l'API. L'usine a démarré l'ancienne version (la branche de base) sur http://localhost:4101 et l'a comparée à la nouvelle, page par page et route par route. Les différences sont dans /tmp/sorties/verif/refonte.txt, avec les images (avant, après, différence en rouge) et les réponses dans /tmp/sorties/verif/refonte/. Regarde chacune. Un changement du produit est un problème bloquant. Ce qui n'est que du bruit (une heure, un identifiant, une donnée de démo tirée au sort) va dans "differences_refonte", avec son identifiant copié de refonte.txt (« page:/contacts:bureau », « route:/api/contacts ») et l'explication. Une différence ni expliquée ni signalée refuse la tâche. Ne modifie rien sur le port 4101.\n`
+    return aCote + `- Cette tâche est une REFONTE : rien ne doit changer à l'écran ni dans les réponses de l'API. L'usine a démarré l'ancienne version (la branche de base) sur http://localhost:4101 et l'a comparée à la nouvelle, page par page et route par route. Les différences sont dans /tmp/sorties/verif/refonte.txt, avec les images (avant, après, différence en rouge) et les réponses dans /tmp/sorties/verif/refonte/. Regarde chacune. Un changement du produit est un problème bloquant. Ce qui n'est que du bruit (une heure, un identifiant, une donnée de démo tirée au sort) va dans "differences_refonte", avec son identifiant copié de refonte.txt (« page:/contacts:bureau », « route:/api/contacts ») et l'explication. Une différence ni expliquée ni signalée part à une personne, qui regardera les images. Ne modifie rien sur le port 4101.\n`
   }
   if (tache.nature === "incident") {
-    return `- Cette tâche corrige un INCIDENT de production. Écris au moins un test qui le reproduit, /tmp/sorties/verif/e2e/${tache.cle}-incident.cjs (ou ${tache.cle}-incident-<n>.cjs) : il échoue tant que l'incident existe, et passe une fois corrigé. Après ton verdict, l'usine relance tes tests sur l'ancienne version, sans la correction (port 4101) : au moins un doit y échouer, sinon rien ne prouve que l'incident est corrigé et la tâche est refusée.\n`
+    return aCote + `- Cette tâche corrige un INCIDENT de production. Écris au moins un test qui le reproduit, /tmp/sorties/verif/e2e/${tache.cle}-incident.cjs (ou ${tache.cle}-incident-<n>.cjs) : il échoue tant que l'incident existe, et passe une fois corrigé. Il lit l'adresse dans process.env.BASE, crée ses propres données, et ne dépend ni des emails déjà présents dans Mailpit, ni de données créées ailleurs. Après ton verdict, l'usine relance ces tests (et seulement eux) sur l'ancienne version, sans la correction : au moins un doit y échouer. Sinon, une personne décide, avec ce que tu as observé.\n`
   }
   return ""
 }
@@ -346,19 +347,34 @@ const LIBERER_PORT = libererPort(4100)
 // un arbre de travail du même clone, ses dépendances, son build et ses propres données. Elle reçoit le même
 // environnement que la nouvelle (DEMO, horloge, Mailpit), sauf le port, le dossier de données et l'adresse.
 export const ANCIENNE = "http://localhost:4101"
-const LIBERER_ANCIENNE = libererPort(4101)
-export function demarrerAncienne(B, profil) {
+// Son port se libère PAR SON NUMÉRO seulement : libererPort() tue aussi par nom (« node server/index.js »,
+// « npm start »), ce qui arrêterait la nouvelle version qui tourne à côté.
+export const LIBERER_ANCIENNE = `fuser -k -n tcp 4101 >/dev/null 2>&1; for i in 1 2 3 4 5 6; do curl -s -o /dev/null ${ANCIENNE}/ || break; fuser -k -n tcp 4101 >/dev/null 2>&1; sleep 1; done`
+// 1. Avant que la nouvelle version démarre : l'ancienne est extraite, installée et construite. Les deux
+// démarrent ensuite l'une après l'autre, avec des données de démonstration aussi fraîches.
+export function preparerAncienne(B, profil) {
   return [
     LIBERER_ANCIENNE,
     "rm -rf /tmp/verif-data-base; git worktree remove --force /travail/verif/base > /dev/null 2>&1; rm -rf /travail/verif/base",
     `git worktree add -q -f --detach /travail/verif/base ${B} > /tmp/sorties/verif/base.log 2>&1 && echo '@@ BASE_EXTRAITE'`,
     `if [ -d /travail/verif/base ]; then (cd /travail/verif/base && bash -c ${q(profil.installer)} >> /tmp/sorties/verif/base.log 2>&1 && bash -c ${q(profil.construire)} >> /tmp/sorties/verif/base.log 2>&1 && echo '@@ BASE_CONSTRUITE'); fi`,
-    `if [ -d /travail/verif/base ]; then (cd /travail/verif/base && PORT=4101 DATA_DIR=/tmp/verif-data-base PUBLIC_URL=${ANCIENNE} setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/verif/base-app.log 2>&1 &); fi`,
+  ]
+}
+// 2. Juste après la nouvelle, l'ancienne démarre sur 4101 ; elle est relancée de même avant le rejeu d'un
+// incident si elle s'est arrêtée entre-temps. Un port 4101 qui reste pris est dit (BASE_PORT_OCCUPE) : l'usine
+// ne compare jamais à un serveur inconnu.
+export function demarrerAncienne(profil) {
+  return [
+    `if ! curl -sf ${ANCIENNE}/api/health > /dev/null && [ -d /travail/verif/base ]; then`,
+    LIBERER_ANCIENNE,
+    `if curl -s -o /dev/null ${ANCIENNE}/; then echo '@@ BASE_PORT_OCCUPE'; else (cd /travail/verif/base && PORT=4101 DATA_DIR=/tmp/verif-data-base PUBLIC_URL=${ANCIENNE} setsid bash -c ${q(profil.demarrer)} >> /tmp/sorties/verif/base-app.log 2>&1 &); fi`,
+    "fi",
     `for i in $(seq 1 40); do if curl -sf ${ANCIENNE}/api/health > /dev/null; then echo '@@ BASE_STARTED'; break; fi; sleep 2; done`,
   ]
 }
 
-// Une refonte : l'ancienne version et la nouvelle, comparées avant le jugement (REFONTE_JS, mesures.mjs).
+// Une refonte : l'ancienne version et la nouvelle, comparées dès leur démarrage, avant le cliquet (qui crée
+// ses propres données) et avant le jugement (REFONTE_JS, mesures.mjs).
 export function comparerRefonte(tache) {
   let criteres = []
   try {
@@ -371,17 +387,28 @@ export function comparerRefonte(tache) {
   ]
 }
 
-// Un incident : les tests écrits par le vérificateur (et qui passent sur la nouvelle version) sont relancés sur
-// l'ancienne. Un test qui y échoue deux fois reproduit l'incident.
-export const rejouerSurAncienne = (sorties = "/tmp/sorties/verif") => `if curl -sf ${ANCIENNE}/api/health > /dev/null; then INC_R=""; for n in $E2E_NEUFS; do f=${sorties}/e2e/$n; [ -f "$f" ] || continue; if ! BASE=${ANCIENNE} timeout 90 node "$f" > /tmp/e2e-ancienne.out 2>&1 && ! BASE=${ANCIENNE} timeout 90 node "$f" > /tmp/e2e-ancienne.out 2>&1; then INC_R="$INC_R $n"; fi; done; echo "@@ INCIDENT_TESTES $E2E_NEUFS"; echo "@@ INCIDENT_REPRODUIT $INC_R"; fi`
+// 3. Un incident : les tests d'incident écrits par le vérificateur (T<n>-incident*.cjs), qui passent sur la
+// nouvelle version, sont relancés sur l'ancienne. Un test qui y échoue deux fois reproduit l'incident. Les autres
+// tests de la tâche ne comptent pas : un critère nouveau échoue toujours sur l'ancienne version.
+export function rejouerSurAncienne(cle, sorties = "/tmp/sorties/verif") {
+  const c = String(cle ?? "").replace(/[^\w-]/g, "")
+  return `if curl -sf ${ANCIENNE}/api/health > /dev/null; then INC_T=""; INC_R=""; for n in $E2E_NEUFS; do case "$n" in ${c}-incident*.cjs) ;; *) continue ;; esac; f=${sorties}/e2e/$n; [ -f "$f" ] || continue; INC_T="$INC_T $n"; if ! BASE=${ANCIENNE} timeout 90 node "$f" > /tmp/e2e-ancienne.out 2>&1 && ! BASE=${ANCIENNE} timeout 90 node "$f" > /tmp/e2e-ancienne.out 2>&1; then INC_R="$INC_R $n"; fi; done; echo "@@ INCIDENT_TESTES $INC_T"; echo "@@ INCIDENT_REPRODUIT $INC_R"; fi`
+}
 
-export async function verifier(ctx, projet, tache, sha) {
+// La durée maximale d'une vérification : l'ancienne version (installation, build, démarrage, comparaison) en
+// demande plus.
+export const minutesVerification = (tache) => (tache?.nature ? 60 : 45)
+
+// journal : false pour l'audit du vérificateur (audit.mjs) : rien n'est noté au journal ni gardé pour la tâche.
+export async function verifier(ctx, projet, tache, sha, { journal = true } = {}) {
   const { config } = ctx
   const serveur = config.verificateur.url
   const jeton = config.secrets.worker
   const protege = pathspec(proteges(config, projet))
   const profil = lireProfil(projet)
   const B = q(`origin/${brancheDeBase(projet)}`)
+  const nature = tache.nature === "refonte" || tache.nature === "incident" ? tache.nature : null
+  const minutes = minutesVerification({ nature })
   // Les tests du cliquet sautés aux vérifications précédentes (plafond de temps) : rejoués d'abord, et, s'ils
   // échouent, un critère d'une tâche fusionnée pendant qu'ils étaient sautés peut justifier leur réécriture.
   const cleSautes = `cliquet_sautes_${projet.id}`
@@ -413,7 +440,7 @@ export async function verifier(ctx, projet, tache, sha) {
   const r = await executer(serveur, jeton, [
     "set -o pipefail",
     "cd /travail/verif/depot",
-    ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, tache, profil, autres)),
+    ecrireFichier("/tmp/sorties/verif/consigne.md", consigneVerificateur(projet, { ...tache, nature }, profil, autres)),
     // Les journaux suivis en direct par la console repartent de zéro.
     "rm -f /tmp/sorties/verif/design.log; : > /tmp/sorties/verif/codex.log",
     `bash -c ${q(profil.installer)} > /tmp/sorties/verif/npm.log 2>&1 && echo '@@ INSTALL_OK'`,
@@ -432,12 +459,18 @@ export async function verifier(ctx, projet, tache, sha) {
     // Un serveur resté d'une vérification précédente (Codex peut relancer l'application hors du
     // groupe de processus) garderait le port : l'usine jugerait l'ancien code, d'un autre projet.
     LIBERER_PORT,
+    // Une refonte ou un incident : l'ancienne version est préparée d'abord (écarts 4 et 5).
+    ...(nature ? preparerAncienne(B, profil) : []),
     "if curl -s -o /dev/null http://localhost:4100/; then echo '@@ PORT_OCCUPE'; fi",
     "touch /tmp/sorties/verif/avant-demarrage; sleep 1",
     `(setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/verif/app.log 2>&1 &)`,
     "for i in $(seq 1 40); do if curl -sf http://localhost:4100/api/health > /dev/null; then echo '@@ APP_STARTED'; break; fi; sleep 2; done",
     // En ligne, le code est en lecture seule : l'application n'écrit que dans DATA_DIR.
     "sleep 2; echo \"@@ ECRIT_DANS_CODE $(find . -newer /tmp/sorties/verif/avant-demarrage -type f -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' -not -path '*/__pycache__/*' 2>/dev/null | head -5 | tr '\\n' ' ')\"",
+    // L'ancienne version démarre à son tour ; une refonte lui est comparée tout de suite, données fraîches.
+    "rm -f /tmp/sorties/verif/budgets.json /tmp/sorties/verif/refonte.txt; rm -rf /tmp/sorties/verif/refonte",
+    ...(nature ? demarrerAncienne(profil) : []),
+    ...(nature === "refonte" ? comparerRefonte(tache) : []),
     // Le cliquet : les tests des critères déjà validés (.usine/e2e, protégé) sont rejoués, dans un temps plafonné.
     ...rejouerCliquet({ minutes: plafond, prioritaires: Object.keys(sautesAvant) }),
     // Les captures, prises par l'usine (le modèle ne les prenait pas) : pour le relecteur design, Slack, la console et la vidéo.
@@ -445,12 +478,8 @@ export async function verifier(ctx, projet, tache, sha) {
     ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
     `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 180 node /tmp/sorties/verif/captures.cjs; fi`,
     // Les budgets de l'interface (écart 6), mesurés par l'usine : console, accessibilité, chargement, WebKit.
-    "rm -f /tmp/sorties/verif/budgets.json /tmp/sorties/verif/refonte.txt; rm -rf /tmp/sorties/verif/refonte",
     ecrireFichier("/tmp/sorties/verif/budgets.cjs", BUDGETS_JS),
-    `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 300 node /tmp/sorties/verif/budgets.cjs; fi`,
-    // Une refonte ou un incident : l'ancienne version, à côté (écarts 4 et 5) ; une refonte lui est comparée.
-    ...(tache.nature ? demarrerAncienne(B, profil) : []),
-    ...(tache.nature === "refonte" ? comparerRefonte(tache) : []),
+    `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 240 node /tmp/sorties/verif/budgets.cjs; fi`,
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
     // Le relais du vérificateur : Codex, sinon le moteur suivant (réglable dans la console).
     "rm -f /tmp/sorties/verif/verdict.txt /tmp/sorties/verif/claude.json",
@@ -461,7 +490,8 @@ export async function verifier(ctx, projet, tache, sha) {
     "echo \"@@ CAPTURES $(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | wc -l)\"",
     "echo \"@@ CAPTURES_FICHIERS $(cd /tmp/sorties/verif/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
     trierTestsEcrits({ ref: B }),
-    ...(tache.nature === "incident" ? [rejouerSurAncienne()] : []),
+    // Un incident : ses tests relancés sur l'ancienne version (relancée d'abord si le juge l'a arrêtée).
+    ...(nature === "incident" ? [...demarrerAncienne(profil), rejouerSurAncienne(tache.cle)] : []),
     ecrireFichier("/tmp/sorties/verif/consigne-design.md", consigneDesign(projet, tache)),
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
@@ -473,17 +503,20 @@ export async function verifier(ctx, projet, tache, sha) {
     scriptJuge(ctx, "design", { texte: "/tmp/sorties/verif/design.txt", entree: "/tmp/sorties/verif/consigne-design.md", journal: "/tmp/sorties/verif/design.log", sortieClaude: "/tmp/sorties/verif/claude-design.json", images: "$IMAGES", marqueur: "DESIGN_CODE" }),
     "fi",
     LIBERER_PORT,
-    ...(tache.nature ? [LIBERER_ANCIENNE, "git worktree remove --force /travail/verif/base > /dev/null 2>&1 || true"] : []),
-  ].join("\n"), { minutes: 40 })
+    ...(nature ? [LIBERER_ANCIENNE, "git worktree remove --force /travail/verif/base > /dev/null 2>&1 || true"] : []),
+  ].join("\n"), { minutes })
 
   const m = r.marqueurs
-  if ("PORT_OCCUPE" in m) return { ok: false, infra: true, raisons: ["le port 4100 du vérificateur est occupé par un ancien serveur impossible à arrêter"], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
+  const vide = { verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
+  if ("PORT_OCCUPE" in m) return { ok: false, infra: true, raisons: ["le port 4100 du vérificateur est occupé par un ancien serveur impossible à arrêter"], ...vide }
   const juge = await bilanJuge(ctx, "verification", m, "CODEX_CODE")
-  if (juge.epuise) return { ok: false, infra: true, limite: true, reprise: juge.reprise, raisons: [`${relais(ctx, "verification").map(nomMoteur).join(" et ")} à leur limite d'usage (toutes les façons essayées)`], verdict: null, design: null, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests: [], captures: [] }
+  if (juge.epuise) return { ok: false, infra: true, limite: true, reprise: juge.reprise, raisons: [`${relais(ctx, "verification").map(nomMoteur).join(" et ")} à leur limite d'usage (toutes les façons essayées)`], ...vide }
   // Le relais a servi : on le dit (le juge habituel était indisponible).
-  if (juge.moteur && juge.moteur !== relais(ctx, "verification")[0]) noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${nomMoteur(relais(ctx, "verification")[0])} indisponible, ${nomMoteur(juge.moteur)} a vérifié à sa place.` })
+  if (journal && juge.moteur && juge.moteur !== relais(ctx, "verification")[0]) noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${nomMoteur(relais(ctx, "verification")[0])} indisponible, ${nomMoteur(juge.moteur)} a vérifié à sa place.` })
   // La consommation du juge, même quand il refuse ou échoue.
   if ("CODEX_CODE" in m) await enregistrerJuge(ctx, { serveur, jeton, projet, tache, role: "verificateur", moteur: juge.moteur, journal: "/tmp/sorties/verif/codex.log", sortieClaude: "/tmp/sorties/verif/claude.json", modeleCodex: m.CODEX_MODELE, duree_s: r.duree_s ?? 0 })
+  // Une vérification coupée par son délai n'a pas tout jugé (le rejeu d'un incident, le design…) : elle ne conclut pas.
+  if ("DELAI_DEPASSE" in m) return { ok: false, infra: true, raisons: [`la vérification a dépassé ${minutes} min avant la fin : elle ne peut pas conclure`], ...vide }
   let verdict = null
   if ("APP_STARTED" in m) {
     const texte = await lireFichier(serveur, jeton, "/tmp/sorties/verif/verdict.txt")
@@ -504,8 +537,11 @@ export async function verifier(ctx, projet, tache, sha) {
     }
   }
   const criteres = JSON.parse(tache.criteres || "[]")
-  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal, criteres, autres, nature: tache.nature ?? null })
-  // Les budgets de l'interface (écart 6) : chaque page mesurée ne fait pas pire que son meilleur résultat fusionné.
+  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal, criteres, autres })
+  const dire = journal ? (message) => noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${message}` }) : () => {}
+  // Les budgets de l'interface (écart 6) : aucune page n'a de nouveau problème. La mesure est gardée pour la
+  // tâche : ce qu'elle a vu rejoint les problèmes connus à sa fusion (fabrique.mjs), ou si une personne
+  // accepte sa PR (escalade.mjs). Jamais avant.
   let budgets = null
   if ("BUDGETS_OK" in m) {
     try {
@@ -514,20 +550,23 @@ export async function verifier(ctx, projet, tache, sha) {
       budgets = null
     }
   }
-  const planchers = lirePlanchers(ctx.db, projet.id)
-  if (budgets && "APP_STARTED" in m && verdict) raisons.push(...raisonsBudgets(budgets, planchers, { max: chargementMax(config) }))
-  // Sans l'ancienne version, une refonte ou un incident n'a pas de corrigé : ce n'est pas la faute de l'agent, une personne tranche.
-  const sansAncienne = Boolean(tache.nature) && "APP_STARTED" in m && !("BASE_STARTED" in m)
-  const codexEnPanne = ("APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0") || sansAncienne
-  if (sansAncienne) raisons.push(`l'ancienne version (${brancheDeBase(projet)}) n'a pas démarré à côté de la nouvelle : ${tache.nature === "refonte" ? "la refonte n'a pas pu lui être comparée" : "les tests de l'incident n'ont pas pu y être rejoués"} (base.log et base-app.log du vérificateur)`)
+  if (budgets && "APP_STARTED" in m && verdict) raisons.push(...raisonsBudgets(budgets, lireConnus(ctx.db, projet.id), { max: chargementMax(config) }))
+  if (budgets && journal && tache.id) gardeMesure(ctx.db, tache.id, budgets)
+  if ("APP_STARTED" in m && verdict && !budgets) dire("budgets de l'interface : non mesurés cette fois (script arrêté ou en panne).")
+  // L'ancienne version (écarts 4 et 5) : sans elle, ou sans sa mesure, une refonte ou un incident n'a pas de
+  // corrigé. Ce n'est pas la faute de l'agent qui code : la vérification ne conclut pas, une personne tranche.
+  const ancienneAbsente = Boolean(nature) && "APP_STARTED" in m && (!("BASE_STARTED" in m) || "BASE_PORT_OCCUPE" in m)
+  const mesureAbsente = Boolean(verdict) && !ancienneAbsente && ((nature === "refonte" && !(Number(m.REFONTE_COMPAREES) > 0)) || (nature === "incident" && !("INCIDENT_TESTES" in m)))
+  const codexEnPanne = ("APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0") || ancienneAbsente || mesureAbsente
+  if (ancienneAbsente) raisons.push(`l'ancienne version (${brancheDeBase(projet)}) n'a pas démarré à côté de la nouvelle${"BASE_PORT_OCCUPE" in m ? " : le port 4101 du vérificateur reste pris par un autre serveur" : ""} : ${nature === "refonte" ? "la refonte n'a pas pu lui être comparée" : "les tests de l'incident n'ont pas pu y être rejoués"} (base.log et base-app.log du vérificateur)`)
+  if (mesureAbsente) raisons.push(`${nature === "refonte" ? "la comparaison avec l'ancienne version" : "le rejeu des tests d'incident sur l'ancienne version"} n'a pas eu lieu (délai ou panne du script) : la vérification ne peut pas conclure`)
   const nouveauxTests = nomsDeTests(m.E2E_NOUVEAUX)
   const { remplaces, ecartes: nePasVerser } = reecrituresAVerser({ verdict, marqueurs: m, criteres, autres })
   const ratés = nomsDeTests(m.E2E_ECRITS_KO)
   // Les tests sautés cette fois-ci, avec la tâche vérifiée pendant qu'ils l'étaient (seulement si le rejeu a tourné).
-  if ("E2E_TOTAL" in m) ecrireSautes(ctx.db, cleSautes, sautesAvant, nomsDeTests(m.E2E_SAUTES_NOMS), tache.id)
+  if (journal && "E2E_TOTAL" in m) ecrireSautes(ctx.db, cleSautes, sautesAvant, nomsDeTests(m.E2E_SAUTES_NOMS), tache.id)
   // Rien ne se tait : plafond atteint, tests écrits qui échouent eux-mêmes, réécritures écartées, noms illisibles.
   const sautes = Number(m.E2E_SAUTES ?? 0)
-  const dire = (message) => noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${message}` })
   if (sautes > 0) dire(`${sautes} test(s) du cliquet non rejoué(s) faute de temps (plafond de ${plafond} min, ${Number(m.E2E_TOTAL ?? 0)} rejoué(s)) : ${nomsDeTests(m.E2E_SAUTES_NOMS).join(" ")}. Ils passeront en premier à la vérification suivante.`)
   if (ratés.length) dire(`${ratés.length} test(s) écrit(s) par le vérificateur échouent eux-mêmes sur l'application : ils ne rejoignent pas le cliquet (${ratés.join(" ")}).`)
   if (nePasVerser.length) dire(`réécriture(s) écartée(s) de test(s) du cliquet qui n'échouaient pas : ${nePasVerser.join(" ")}. Un test qui passe ne se réécrit pas.`)
@@ -538,18 +577,25 @@ export async function verifier(ctx, projet, tache, sha) {
   if (nonProuves.length) dire(`${nonProuves.length} critère(s) validé(s) sans test, donc non prouvé(s) : ${nonProuves.map((x) => `« ${x.critere.slice(0, 100)} »${x.raison ? ` (${x.raison.slice(0, 120)})` : " (sans raison donnée)"}`).join(" ; ")}`)
   if (budgets && !budgets.webkit) dire(`budgets de l'interface : WebKit indisponible dans le vérificateur (${String(budgets.webkit_erreur ?? "").slice(0, 120)}) : les pages n'ont pas été essayées dans le moteur de Safari.`)
   if (budgets && !budgets.axe) dire("budgets de l'interface : axe-core absent du vérificateur : l'accessibilité n'a pas été mesurée.")
-  if (tache.nature === "refonte" && "REFONTE_COMPAREES" in m) dire(`refonte comparée à l'ancienne version : ${Number(m.REFONTE_COMPAREES)} page(s) et route(s), ${Number(m.REFONTE_DIFFERENCES ?? 0)} différence(s).`)
-  if (tache.nature === "incident" && "INCIDENT_TESTES" in m) dire(`incident : ${nomsDeTests(m.INCIDENT_REPRODUIT).length} test(s) sur ${nomsDeTests(m.INCIDENT_TESTES).length} échoue(nt) sur l'ancienne version (${nomsDeTests(m.INCIDENT_REPRODUIT).join(" ") || "aucun"}).`)
-  const ok = raisons.length === 0
-  // Une tâche validée fixe le meilleur résultat de chaque page mesurée.
-  if (ok && budgets) ecrirePlanchers(ctx.db, projet.id, nouveauxPlanchers(budgets, planchers))
-  const contestes = [...criteresContestes(verdict), ...contestesCliquet({ verdict, marqueurs: m, criteres, autres })]
-  return { ok, infra: codexEnPanne, contestes, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, remplaces, e2eSautes: sautes, nonProuves, budgets: budgets ? resumeBudgets(budgets) : "", captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
+  if (nature === "refonte" && "REFONTE_COMPAREES" in m) dire(`refonte comparée à l'ancienne version : ${Number(m.REFONTE_COMPAREES)} page(s) et route(s), ${Number(m.REFONTE_DIFFERENCES ?? 0)} différence(s)${Number(m.REFONTE_IMPOSSIBLES ?? 0) ? `, ${Number(m.REFONTE_IMPOSSIBLES)} impossible(s) à comparer (l'ancienne version ne les donnait pas)` : ""}.`)
+  if (nature === "incident" && "INCIDENT_TESTES" in m) dire(`incident : ${nomsDeTests(m.INCIDENT_REPRODUIT).length} test(s) d'incident sur ${nomsDeTests(m.INCIDENT_TESTES).length} échoue(nt) sur l'ancienne version (${nomsDeTests(m.INCIDENT_REPRODUIT).join(" ") || "aucun"}).`)
+  // Une refonte ou un incident dont tout le reste passe : une différence ni expliquée ni signalée, ou un incident
+  // non reproduit, n'est pas une faute de l'agent qui code. Une personne regarde et tranche (contestation).
+  const contestesNature = []
+  if (raisons.length === 0 && verdict && nature === "refonte") {
+    for (const id of differencesNonExpliquees({ marqueurs: m, verdict })) contestesNature.push({ critere: `Refonte : ${id} diffère de l'ancienne version`, raison: "le vérificateur ne l'a ni expliquée ni signalée comme un problème. Regarde les images avant, après et la différence (refonte.txt du vérificateur), puis décide." })
+  }
+  if (raisons.length === 0 && verdict && nature === "incident") {
+    const pourquoi = incidentNonProuve({ marqueurs: m })
+    if (pourquoi) contestesNature.push({ critere: "Incident : un test doit échouer sur l'ancienne version et passer sur la nouvelle", raison: pourquoi })
+  }
+  const contestes = [...criteresContestes(verdict), ...contestesCliquet({ verdict, marqueurs: m, criteres, autres }), ...contestesNature]
+  return { ok: raisons.length === 0, infra: codexEnPanne, contestes, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, remplaces, e2eSautes: sautes, nonProuves, mesureBudgets: budgets, budgets: budgets ? resumeBudgets(budgets) : "", captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
 }
 
 // La porte de fusion : des faits vérifiables, pas un avis. Chaque raison
 // renvoyée est un motif de refus. Aucune raison = la tâche peut être fusionnée.
-export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "", criteres = [], autres = {}, nature = null }) {
+export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "", criteres = [], autres = {} }) {
   const raisons = []
   if (!("INSTALL_OK" in m)) return ["l'installation des dépendances échoue"]
   // La sécurité d'abord : un secret dans le code, ou une faille grave ajoutée.
@@ -591,9 +637,6 @@ export function porte({ marqueurs: m, verdict, design = null, plancher = 0, jour
   }
   const nonNommes = Number(m.E2E_ECHECS ?? 0) - echecsCliquet.length
   if (nonNommes > 0) raisons.push(`${nonNommes} test(s) du cliquet échouent sans que l'usine sache lesquels : la vérification ne peut pas conclure.`)
-  // Une refonte : chaque différence avec l'ancienne version est expliquée (écart 5). Un incident : un test le reproduit (écart 4).
-  if (nature === "refonte") raisons.push(...raisonsRefonte({ marqueurs: m, verdict }))
-  if (nature === "incident") raisons.push(...raisonsIncident({ marqueurs: m }))
   for (const d of tableau(design?.graves)) raisons.push(`design : ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}${d.correction ? ` → ${d.correction}` : ""}`)
   if (verdict.decision !== "approuve" && raisons.length === 0) raisons.push(`le vérificateur refuse : ${verdict.resume ?? "sans motif"}`)
   if (!tableau(verdict.criteres).length) raisons.push("le vérificateur n'a jugé aucun critère")

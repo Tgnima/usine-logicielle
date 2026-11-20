@@ -14,8 +14,8 @@ import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { brancheDeBase, lireProfil, proteges } from "./profil.mjs"
 import { pathspec, verifier } from "./verification.mjs"
 import { arretGeneral, avecAtelierReserve } from "./fabrique.mjs"
-import { supprimerBranche } from "./github.mjs"
-import { ecrireReglage, enregistrer, lireReglage, usagesClaude } from "./couts.mjs"
+import { shaPrincipal, supprimerBranche } from "./github.mjs"
+import { bilanMois, budgetMensuel, ecrireReglage, enregistrer, lireReglage, mois, reglagesCouts, usagesClaude } from "./couts.mjs"
 import { noterLimites, scriptClaude, signalerFacturation } from "./moteurs.mjs"
 
 // Les quatre sortes de bugs, plantées chacune à son tour.
@@ -43,8 +43,18 @@ const DEPS = {
   supprimerBranche,
   avecAtelierReserve,
   arretGeneral,
+  shaBase: shaPrincipal,
+  budgetEpuise: budgetMensuelEpuise,
   maintenant: () => new Date(),
   attendre: (ms) => new Promise((r) => setTimeout(r, ms)),
+}
+
+// Le budget mensuel de l'usine est-il épuisé ? (La fabrique le vérifie avant chaque tâche, budgets.mjs.)
+export function budgetMensuelEpuise(ctx) {
+  const config = reglagesCouts(ctx.db, ctx.config)
+  const m = mois()
+  const budget = budgetMensuel(ctx.db, config, m)
+  return budget > 0 && bilanMois(ctx.db, config, m).api >= budget
 }
 
 // Le nombre de bugs demandé : 4 par défaut, de 1 à BUGS_MAX. Sinon null.
@@ -71,6 +81,11 @@ export function choisirTache(db, projetId, tacheCle = null) {
   if (!projet) return { ok: false, message: `Projet n°${projetId} introuvable.` }
   if (!["livre", "en_production"].includes(projet.statut)) return { ok: false, message: `${projet.nom} est « ${projet.statut} » : l'audit se fait sur un produit livré ou en production.` }
   if (!projet.depot) return { ok: false, message: `${projet.nom} n'a pas de dépôt GitHub : rien à auditer.` }
+  let origine = null
+  try {
+    origine = JSON.parse(projet.origine ?? "null")
+  } catch {}
+  if (origine?.mode === "direct") return { ok: false, message: `${projet.nom} travaille directement dans le dépôt d'origine (${origine.depot ?? "?"}) : l'usine n'y pousse pas de branches avec des bugs plantés.` }
   if (tacheCle) {
     const t = db.prepare("SELECT * FROM taches WHERE projet_id = ? AND UPPER(cle) = UPPER(?) ORDER BY statut = 'fusionnee' DESC, id DESC LIMIT 1").get(projet.id, String(tacheCle).trim())
     if (!t) return { ok: false, message: `La tâche ${tacheCle} n'existe pas dans ${projet.nom}.` }
@@ -225,7 +240,8 @@ export const reglagesDeVerification = (projetId) => [`cliquet_sautes_${projetId}
 async function verifierSansTrace(ctx, projet, tache, sha, d) {
   const avant = reglagesDeVerification(projet.id).map((cle) => [cle, lireReglage(ctx.db, cle, null)])
   try {
-    return await d.verifier(ctx, obtenir(ctx.db, "projets", projet.id), { ...tache, id: null, retours: null }, sha)
+    // Sans sa nature : l'audit juge les critères, pas la preuve d'un incident ou la comparaison d'une refonte.
+    return await d.verifier(ctx, obtenir(ctx.db, "projets", projet.id), { ...tache, id: null, retours: null, nature: null }, sha, { journal: false })
   } finally {
     for (const [cle, valeur] of avant) {
       if (valeur === null) ctx.db.prepare("DELETE FROM reglages WHERE cle = ?").run(cle)
@@ -293,6 +309,10 @@ async function auditerUnBug(ctx, { projet, tache, criteres, sorte, branche }, d)
     const v = await verifierSansTrace(ctx, projet, tache, bug.sha, d)
     bug.raisons = (v.raisons ?? []).slice(0, 8).map((r) => String(r).slice(0, 500))
     if (v.limite || v.infra) return { bug, arret: v.limite ? "le vérificateur est à sa limite d'usage" : null }
+    if (v.contestes?.length) {
+      bug.raisons.unshift(`le vérificateur conteste un critère : ${String(v.contestes[0]?.critere ?? "").slice(0, 200)}`)
+      return { bug }
+    }
     bug.issue = v.ok ? "rate" : "attrape"
     return { bug }
   } catch (error) {
@@ -335,10 +355,29 @@ async function annoncer(ctx, texte) {
 
 async function deroulerAudit(ctx, { projet, tache, criteres }, n, d) {
   const { db } = ctx
-  noter(db, { projet: projet.id, type: "audit", message: `Audit du vérificateur commencé : ${n} bug(s) à planter, critères de ${tache.cle}. La fabrication attend la fin.` })
-  await annoncer(ctx, `:mag: *Audit du vérificateur* sur ${projet.nom} : ${n} bug(s) à planter, un à la fois (critères de ${tache.cle}). La fabrication attend la fin, une dizaine de minutes par bug.`)
+  noter(db, { projet: projet.id, type: "audit", message: `Audit du vérificateur commencé : la version actuelle d'abord (témoin), puis ${n} bug(s) à planter, critères de ${tache.cle}. La fabrication attend la fin.` })
+  await annoncer(ctx, `:mag: *Audit du vérificateur* sur ${projet.nom} : la version actuelle d'abord (le témoin), puis ${n} bug(s) à planter, un à la fois (critères de ${tache.cle}). La fabrication attend la fin, une dizaine de minutes par vérification.`)
   // D'abord les branches d'un audit précédent que GitHub n'avait pas laissé supprimer.
   for (const reste of lireRestes(db)) await supprimerBrancheAudit(ctx, projet.id, reste, d)
+
+  // Le témoin : la version actuelle, sans bug, doit passer la même vérification. Si elle est déjà refusée (un
+  // test instable, un défaut de design, un budget), un bug compté « attrapé » ne prouverait rien.
+  let temoin
+  try {
+    temoin = await verifierSansTrace(ctx, projet, tache, await d.shaBase(ctx.config, projet.depot, brancheDeBase(projet)), d)
+  } catch (error) {
+    temoin = { ok: false, infra: true, raisons: [String(error.message).slice(0, 300)] }
+  }
+  if (!temoin.ok || temoin.contestes?.length) {
+    const motifs = [...(temoin.raisons ?? []), ...(temoin.contestes ?? []).map((c) => `critère contesté : ${c.critere}`)].slice(0, 3).map((x) => String(x).split("\n")[0].slice(0, 200)).join(" ; ")
+    const message = temoin.infra || temoin.limite
+      ? `Audit du vérificateur sur ${projet.nom} arrêté : la vérification de la version actuelle n'a pas pu se faire (${motifs || "sans motif"}).`
+      : `Audit du vérificateur sur ${projet.nom} arrêté : la version actuelle, sans aucun bug planté, ne passe déjà pas la vérification (${motifs || "sans motif"}). Un bug compté « attrapé » ne prouverait rien : règle d'abord ces refus.`
+    noter(db, { projet: projet.id, type: "audit", message })
+    ecrireReglage(db, `audit_${projet.id}`, JSON.stringify({ le: d.maintenant().toISOString(), tache: tache.cle, temoin: "refuse", motifs }))
+    await annoncer(ctx, `:mag: ${message}`)
+    return { ok: false, message }
+  }
 
   const horodatage = horodater(d.maintenant())
   const bugs = []
@@ -380,6 +419,7 @@ export async function auditer(ctx, projetId, { bugs = 4, tacheCle = null, surDem
   try {
     return await d.avecAtelierReserve(async () => {
       if (d.arretGeneral(ctx.config)) return { ok: false, message: "L'usine est arrêtée : reprends-la avant de lancer un audit." }
+      if (d.budgetEpuise(ctx)) return { ok: false, message: "Le budget mensuel de l'usine est épuisé : l'audit attendra qu'il soit relevé." }
       const t = ctx.db.prepare("SELECT t.cle, p.nom FROM taches t JOIN projets p ON p.id = t.projet_id WHERE t.statut IN ('en_cours', 'verification') LIMIT 1").get()
       if (t) return { ok: false, message: `Une tâche est en cours (${t.cle} de ${t.nom}) : lance l'audit quand elle sera finie.` }
       surDemarrage?.({ projet: choix.projet, tache: choix.tache, bugs: n })

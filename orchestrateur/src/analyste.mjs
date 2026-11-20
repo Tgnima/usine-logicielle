@@ -150,8 +150,14 @@ export const REGLE_NATURE = `Une tâche qui ne doit rien changer à ce que voit 
 // Un critère trop vague pour échouer : un mot flou, sans rien de mesurable (chiffre, texte cité, adresse, verbe
 // HTTP). Un conseil, pas un refus : au dernier essai de l'analyste, il ne bloque pas le plan.
 export const CONSEIL = "(conseil) "
-const FLOU = /(?<!\p{L})(correctement|convenablement|fonctionnel(le)?|fonctionne(nt)?|intuiti(f|ve)|agréable|ergonomique|fluide(ment)?|propre(ment)?|clair(e|ement)?|joli(e)?|soigné(e)?|bien (affiché|présenté|organisé|rangé)e?s?)(?!\p{L})/iu
+const FLOU = /(?<!\p{L})(correctement|convenablement|fonctionnel(le)?|fonctionne(nt)?|intuiti(f|ve)|agréable|ergonomique|fluide(ment)?|proprement|clairement|joli(e)?|soigné(e)?|bien (affiché|présenté|organisé|rangé)e?s?)(?!\p{L})/iu
 const MESURABLE = /\d|«|»|"|\/[a-z]|(?<!\p{L})(GET|POST|PUT|PATCH|DELETE)(?!\p{L})/u
+// L'analyste ne donne que « refonte » : « incident » se pose par l'usine (livraison.mjs). Contrôlé sur les
+// nouveaux lots seulement : les lots déjà en base peuvent porter « incident ».
+export function naturesDonnees(lots) {
+  return (lots ?? []).flatMap((l) => l?.taches ?? []).filter((t) => t.nature !== undefined && t.nature !== null && t.nature !== "refonte").map((t) => `${t.cle} : nature « ${t.nature} » : seule « refonte » se donne (rien ne change à l'écran ni à l'API) ; enlève-la sinon`)
+}
+
 export function criteresVagues(lots) {
   const p = []
   for (const t of (lots ?? []).flatMap((l) => l?.taches ?? [])) {
@@ -212,6 +218,7 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
   const autorises = [...(pieces.length ? ["Read"] : []), ...mcp]
   const outils = `--tools ${pieces.length ? "Read" : '""'}${autorises.length ? ` --allowedTools ${autorises.join(",")}` : ""} --max-turns ${(pieces.length ? pieces.length + 3 : 2) + (mcp.length ? 10 : 0)}`
   let problemes = []
+  let repli = null // un essai qui n'avait que des conseils : gardé si le suivant échoue
   let attentes = 0 // au plus 3 attentes de fin de limite
   for (let essai = 1; essai <= 2; essai++) {
     const texte = texteBase + lirePieces + (problemes.length ? `\n\nTon essai précédent avait ces défauts, corrige-les :\n- ${problemes.join("\n- ")}` : "")
@@ -248,16 +255,19 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
     try {
       const objet = extraireJson(String(sortie.result ?? ""))
       problemes = valider(objet)
-      if (problemes.length === 0 || (essai === 2 && problemes.every((x) => String(x).startsWith(CONSEIL)))) return { objet, tokens: (sortie.usage?.input_tokens ?? 0) + (sortie.usage?.output_tokens ?? 0) }
+      const tokens = (sortie.usage?.input_tokens ?? 0) + (sortie.usage?.output_tokens ?? 0)
+      if (problemes.length === 0 || (essai === 2 && problemes.every((x) => String(x).startsWith(CONSEIL)))) return { objet, tokens }
+      if (problemes.every((x) => String(x).startsWith(CONSEIL))) repli = { objet, tokens }
     } catch (error) {
       problemes = [`JSON invalide : ${error.message}`]
     }
   }
+  if (repli) return repli
   throw new Error(`Réponse de l'analyste invalide après deux essais : ${problemes.join(" ; ")}`)
 }
 
 export async function analyser(config, projet, options = {}) {
-  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => [...verifierPlan(r, { protege: proteges(config, projet), repris: Boolean(projet.origine) }), ...(r?.lots?.length ? verifierSens(r.sens, { exige: true }) : []), ...criteresVagues(r?.lots)], options.mesurer, { projetId: projet.id, ctx: options.ctx ?? null })
+  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => [...verifierPlan(r, { protege: proteges(config, projet), repris: Boolean(projet.origine) }), ...(r?.lots?.length ? verifierSens(r.sens, { exige: true }) : []), ...criteresVagues(r?.lots), ...naturesDonnees(r?.lots)], options.mesurer, { projetId: projet.id, ctx: options.ctx ?? null })
   return { plan: objet, tokens }
 }
 
@@ -310,12 +320,12 @@ Règles : "lot" vaut null si aucun code n'est à changer (un simple réglage suf
 dans l'ordre ; "depend_de" ne cite que des tâches de ce lot. ${REGLE_CRITERES} ${REGLE_NATURE}
 ne casse rien de ce qui marche ; reste dans la brique ; ne refais pas un autre produit : on corrige celui-ci.
 Chaque correction est aussi l'occasion de faire monter le produit dans la pyramide de l'expérience : sur les écrans que le lot touche,
-ajoute au moins un critère de l'étage suivant non tenu${contexte.pyramide ? " (voir <pyramide>)" : " (Pratique ou Agréable)"}, sans sortir du sujet signalé. ${REGLE_PYRAMIDE}
+ajoute au moins un critère de l'étage suivant non tenu${contexte.pyramide ? " (voir <pyramide>)" : " (Pratique ou Agréable)"}, sans sortir du sujet signalé. ${REGLE_PYRAMIDE}${contexte.incident ? "\nCette demande vient d'un INCIDENT de production : la PREMIÈRE tâche du lot corrige l'incident lui-même, et rien d'autre (son critère dit comment l'incident se produit, et ce qu'on observe une fois corrigé). Le critère de la pyramide va dans une tâche suivante. L'usine exigera un test qui échoue sur l'ancienne version et passe sur la nouvelle." : ""}
 ${regleProteges(config, projet)}`
   const valider = (r) => {
     if (!r || typeof r.diagnostic !== "string" || !r.diagnostic.trim()) return ["« diagnostic » manquant"]
     if (r.lot === null || r.lot === undefined) return r.reglage?.trim() ? [] : ["ni réglage ni lot : propose l'un ou l'autre"]
-    return [...verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity }), ...tachesSurProteges([r.lot], proteges(config, projet)), ...criteresVagues([r.lot])]
+    return [...verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity }), ...tachesSurProteges([r.lot], proteges(config, projet)), ...criteresVagues([r.lot]), ...naturesDonnees([r.lot])]
   }
   // Avec ctx, l'analyste reçoit les connecteurs du rôle « plan » (Sentry, PostHog…), comme pour un plan.
   const { objet } = await interroger(config, texte, valider, contexte.mesurer, { ctx: contexte.ctx ?? null })
@@ -393,7 +403,7 @@ ${regleProteges(config, projet)}`
     if (!r || !Array.isArray(r.lots) || r.lots.length < 1 || r.lots.length > 5) return ["il faut de 1 à 5 nouveaux lots"]
     const p = verifierPlan({ ...plan, ...r, nom: plan.nom, slug: plan.slug, lots: [...gardes, ...r.lots], design: r.design ?? plan.design }, { lotsMax: Infinity, repris: Boolean(projet.origine) })
     for (const t of r.lots.flatMap((l) => l.taches ?? [])) if (cles.has(t.cle) || Number(String(t.cle).slice(1)) <= derniere) p.push(`${t.cle} est déjà employée : les nouvelles clés commencent à T${derniere + 1}`)
-    return [...p, ...verifierSens(r.sens, { exige: true }), ...tachesSurProteges(r.lots, proteges(config, projet)), ...criteresVagues(r.lots)]
+    return [...p, ...verifierSens(r.sens, { exige: true }), ...tachesSurProteges(r.lots, proteges(config, projet)), ...criteresVagues(r.lots), ...naturesDonnees(r.lots)]
   }
   const { objet } = await interroger(config, texte, valider, mesurer, { projetId: projet.id, ctx })
   return objet

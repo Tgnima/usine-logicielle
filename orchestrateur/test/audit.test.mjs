@@ -60,16 +60,25 @@ function atelier({ fichiers = () => ["server/messages.js"], protegesTouches = ()
   return { executer, lireFichier, scripts }
 }
 
-// La vérification, les suppressions de branches et l'attente, en doubles.
+// La vérification, les suppressions de branches et l'attente, en doubles. La version actuelle (le témoin,
+// sha-base) est vérifiée d'abord : elle passe, sauf si opts.temoin dit autre chose.
 function doubles(resultats, opts = {}) {
   const a = atelier(opts)
   const verifications = []
+  const temoins = []
   const supprimees = []
   const deps = {
     executer: a.executer,
     lireFichier: a.lireFichier,
-    verifier: async (ctx, projet, tache, sha) => {
-      verifications.push({ projet, tache, sha })
+    shaBase: async () => "sha-base",
+    budgetEpuise: opts.budgetEpuise ?? (() => false),
+    verifier: async (ctx, projet, tache, sha, options) => {
+      if (sha === "sha-base") {
+        temoins.push({ tache, options })
+        const t = opts.temoin ?? { ok: true, raisons: [] }
+        return typeof t === "function" ? t(ctx) : t
+      }
+      verifications.push({ projet, tache, sha, options })
       const r = resultats[verifications.length - 1]
       return typeof r === "function" ? r(ctx) : r
     },
@@ -77,7 +86,7 @@ function doubles(resultats, opts = {}) {
     attendre: async () => {},
     maintenant: () => new Date("2026-11-20T14:30:05Z"),
   }
-  return { deps, verifications, supprimees, scripts: a.scripts }
+  return { deps, verifications, temoins, supprimees, scripts: a.scripts }
 }
 
 const ATTRAPE = { ok: false, raisons: ["critère non validé : Le compteur des messages non lus est juste (observé : 4 au lieu de 3)"] }
@@ -335,6 +344,45 @@ test("le jeton GitHub ne sert qu'au clone et au push ; ni la consigne ni le comm
   assert.match(consigne, /fichiers protégés : Dockerfile, server\/email\.js, \.usine\/\*\*, MISSION\.md, ICP\.md/)
   assert.match(consigne, /\/tmp\/sorties\/audit\/bug\.txt, jamais dans le dépôt/)
   assert.doesNotMatch(consigne, new RegExp(JETON_GITHUB))
+})
+
+test("le témoin : la version actuelle d'abord ; déjà refusée ou injugeable, l'audit s'arrête sans planter de bug", async () => {
+  // La version actuelle passe : les bugs suivent, et le témoin est jugé comme eux, sans nature ni journal.
+  const { ctx, db } = contexte()
+  const d = doubles([ATTRAPE])
+  const r = await auditer(ctx, 1, { bugs: 1 }, d.deps)
+  assert.equal(r.score.attrapes, 1)
+  assert.equal(d.temoins.length, 1)
+  assert.deepEqual([d.temoins[0].tache.nature, d.temoins[0].options], [null, { journal: false }])
+  assert.deepEqual([d.verifications[0].tache.nature, d.verifications[0].options], [null, { journal: false }])
+  // Déjà refusée : rien n'est planté ni poussé, et l'audit le dit.
+  const refus = doubles([ATTRAPE], { temoin: { ok: false, raisons: ["design : la page /contacts déborde sur mobile"] } })
+  const r2 = await auditer(ctx, 1, { bugs: 2 }, refus.deps)
+  assert.equal(r2.ok, false)
+  assert.match(r2.message, /la version actuelle, sans aucun bug planté, ne passe déjà pas la vérification \(design : la page \/contacts déborde sur mobile\)/)
+  assert.deepEqual([refus.verifications.length, refus.scripts.length, refus.supprimees.length], [0, 0, 0])
+  assert.match(JSON.parse(lireReglage(db, "audit_1")).temoin, /refuse/)
+  // Injugeable (le vérificateur en panne) ou contesté : arrêt de même.
+  const panne = doubles([ATTRAPE], { temoin: PANNE })
+  assert.match((await auditer(ctx, 1, { bugs: 1 }, panne.deps)).message, /n'a pas pu se faire \(clone impossible : coupure\)/)
+  const conteste = doubles([ATTRAPE], { temoin: { ok: true, raisons: [], contestes: [{ critere: "Le compteur est juste", raison: "impossible" }] } })
+  assert.match((await auditer(ctx, 1, { bugs: 1 }, conteste.deps)).message, /critère contesté : Le compteur est juste/)
+})
+
+test("un bug dont la vérification conteste un critère n'est pas jugé ; le budget épuisé et un dépôt d'origine refusent l'audit", async () => {
+  const { ctx, db } = contexte()
+  const d = doubles([{ ok: true, raisons: [], contestes: [{ critere: "Le compteur est juste", raison: "impossible" }] }])
+  const r = await auditer(ctx, 1, { bugs: 1 }, d.deps)
+  assert.deepEqual([r.score.non_juges, r.score.rates], [1, 0])
+  assert.match(r.bugs[0].raisons[0], /le vérificateur conteste un critère : Le compteur est juste/)
+  assert.equal(d.supprimees.length, 1, "la branche est supprimée")
+  // Le budget mensuel épuisé.
+  const budget = doubles([ATTRAPE], { budgetEpuise: () => true })
+  assert.match((await auditer(ctx, 1, {}, budget.deps)).message, /Le budget mensuel de l'usine est épuisé/)
+  assert.equal(budget.scripts.length, 0)
+  // Une reprise en mode direct : le dépôt est celui de quelqu'un d'autre.
+  db.prepare("UPDATE projets SET origine = ? WHERE id = 1").run(JSON.stringify({ depot: "client/son-depot", mode: "direct" }))
+  assert.match((await auditer(ctx, 1, {}, doubles([ATTRAPE]).deps)).message, /travaille directement dans le dépôt d'origine \(client\/son-depot\)/)
 })
 
 test("la commande audit et la route POST /audit sont branchées", () => {

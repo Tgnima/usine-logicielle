@@ -24,6 +24,7 @@ import { facturationsEnCours, nomMode, noterLimites, scriptClaude, signalerFactu
 import { REGLE_PYRAMIDE } from "./pyramide.mjs"
 import { SCRIPT_CONTROLE_UI, decrireDefautUi, lireDefautsUi } from "./controle-ui.mjs"
 import { noterPassage, scriptResume } from "./sous-agents.mjs"
+import { chargementMax, connusApres, ecrireConnus, lireConnus, reprendreMesure } from "./mesures.mjs"
 
 // Un résumé des sous-agents d'un passage fait moins de 60 Ko (sous-agents.mjs) : au-delà, il est suspect.
 const RESUME_AGENTS_MAX = 200_000
@@ -96,8 +97,18 @@ async function rattraperLivraison(ctx, projet) {
 export const aTourDeRole = (projets, dernier) => [...projets.filter((p) => p.id > dernier), ...projets.filter((p) => p.id <= dernier)]
 
 export function demarrerFabrique(ctx) {
+  // L'atelier est pris dès le début du tour, avant les budgets et les escalades qui attendent Slack : un audit
+  // (avecAtelierReserve) ne peut jamais démarrer entre ces vérifications et le lancement d'une tâche.
   const tick = async () => {
     if (occupe || arretGeneral(ctx.config) || enPauseLimite(ctx.db)) return
+    occupe = true
+    try {
+      await tour()
+    } finally {
+      occupe = false
+    }
+  }
+  const tour = async () => {
     // Les budgets d'abord : alertes, escalades, et arrêt si le budget mensuel est épuisé.
     if (await verifierBudgets(ctx).catch((e) => (console.error("Budgets :", e), false))) return
     const projets = ctx.db.prepare("SELECT * FROM projets WHERE statut = 'fabrication' ORDER BY id").all()
@@ -114,15 +125,12 @@ export function demarrerFabrique(ctx) {
         if (await rattraperLivraison(ctx, projet)) return
         continue
       }
-      occupe = true
       dernierServi = projet.id
       try {
         await fabriquer(ctx, projet, t)
       } catch (error) {
         noter(ctx.db, { projet: projet.id, tache: t.id, type: "erreur", message: error.stack ?? error.message })
         await escalader(ctx, { projetId: projet.id, tacheId: t.id, raison: "infrastructure", details: error.message }).catch((e) => console.error(e))
-      } finally {
-        occupe = false
       }
       return
     }
@@ -391,6 +399,10 @@ async function fabriquer(ctx, projet, tache) {
   }
   const p = obtenir(db, "projets", projet.id)
   maj(db, "projets", projet.id, { plancher_tests: Math.max(p.plancher_tests, v.tests) })
+  // Les budgets de l'interface : ce que la tâche a mesuré rejoint les problèmes connus de chaque page, à la fusion
+  // seulement (mesures.mjs). La mesure gardée pour une acceptation humaine ne sert plus.
+  if (v.mesureBudgets) ecrireConnus(db, projet.id, connusApres(v.mesureBudgets, lireConnus(db, projet.id), { max: chargementMax(config) }))
+  reprendreMesure(db, tache.id)
   maj(db, "taches", tache.id, { statut: "fusionnee" })
   // Le cliquet : les tests écrits par le vérificateur rejoignent .usine/e2e/ (protégé), rejoués à chaque tâche.
   // Un test réécrit ne remplace l'ancien que si un critère de la tâche l'explique (vérifié par la porte) ; il est

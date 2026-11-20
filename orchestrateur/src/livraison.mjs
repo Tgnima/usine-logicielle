@@ -297,6 +297,8 @@ export async function demanderCorrections(ctx, projetId, retours, par, { inciden
     const contexte = {
       // L'analyste reçoit les connecteurs du rôle « plan » (Sentry, PostHog) pour enquêter.
       ctx,
+      // Une correction d'incident : la première tâche corrige l'incident lui-même (analyserCorrections).
+      incident,
       reglages: projet.production ? JSON.parse(projet.production) : null,
       journaux: { production: lireJournal(config, `production-${projet.slug}`), apercu: lireJournal(config, `apercu-${projet.slug}`) },
       mesurer: (usages, duree_s) => enregistrer(db, { projet: projetId, role: "analyste", moteur: "claude-code", usages, duree_s }),
@@ -342,7 +344,8 @@ Le moment où on le ressent : ${plan.sens.moment}. Les prochaines évolutions s'
       await ctx.notifier.etape(projet, `${diag}\nAucun code à modifier. _Tu peux répondre directement dans ce fil._`, [...(projet.production ? boutonReglages : []), boutonRepondre])
       return { ok: true, message: r.diagnostic }
     }
-    if (incident && r.lot.taches?.length) r.lot.taches[0] = { ...r.lot.taches[0], nature: "incident" }
+    // La première tâche corrige l'incident (consigne de l'analyste) ; une refonte garde sa propre preuve.
+    if (incident && r.lot.taches?.length && !r.lot.taches[0].nature) r.lot.taches[0] = { ...r.lot.taches[0], nature: "incident" }
     const numero = await ajouterLot(ctx, projetId, r.lot)
     await ctx.notifier.etape(obtenir(db, "projets", projetId), `${diag}\n:hammer_and_wrench: Lot ${numero} « ${r.lot.nom} » : ${r.lot.taches.map((t) => `${t.cle} ${t.titre}`).join(" · ")}. La fabrication reprend ; un nouveau rapport suivra.`, r.reglage && projet.production ? boutonReglages : undefined)
     return { ok: true, message: r.lot.nom }
