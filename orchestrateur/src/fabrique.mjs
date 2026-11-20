@@ -13,7 +13,7 @@ import { decisions, maj, noter, obtenir, plan as lirePlan, taches } from "./db.m
 import { RESEAU, executer, ecrireFichier, lireFichier, q } from "./travaux.mjs"
 import { ajouterEtiquettes, commentairePR, ecrireFichierDepot, fusionnerPR, ouvrirPR, retirerEtiquette } from "./github.mjs"
 import { COMPTER_TESTS, VERROUS, brancheDeBase, brancheDeTache, estRepris, lireProfil, proteges } from "./profil.mjs"
-import { pathspec, verifier } from "./verification.mjs"
+import { pagesDeLaTache, pathspec, verifier } from "./verification.mjs"
 import { escalader } from "./escalade.mjs"
 import { apresFusion } from "./livraison.mjs"
 import { ecrireReglage, enregistrer, lireReglage, usagesClaude } from "./couts.mjs"
@@ -24,7 +24,7 @@ import { facturationsEnCours, nomMode, noterLimites, scriptClaude, signalerFactu
 import { REGLE_PYRAMIDE } from "./pyramide.mjs"
 import { SCRIPT_CONTROLE_UI, decrireDefautUi, lireDefautsUi } from "./controle-ui.mjs"
 import { noterPassage, scriptResume } from "./sous-agents.mjs"
-import { chargementMax, connusApres, ecrireConnus, lireConnus, reprendreMesure } from "./mesures.mjs"
+import { chargementMax, connusApres, ecrireConnus, lireConnus, oublierPages, reprendreMesure } from "./mesures.mjs"
 
 // Un résumé des sous-agents d'un passage fait moins de 60 Ko (sous-agents.mjs) : au-delà, il est suspect.
 const RESUME_AGENTS_MAX = 200_000
@@ -402,6 +402,8 @@ async function fabriquer(ctx, projet, tache) {
   // Les budgets de l'interface : ce que la tâche a mesuré rejoint les problèmes connus de chaque page, à la fusion
   // seulement (mesures.mjs). La mesure gardée pour une acceptation humaine ne sert plus.
   if (v.mesureBudgets) ecrireConnus(db, projet.id, connusApres(v.mesureBudgets, lireConnus(db, projet.id), { max: chargementMax(config) }))
+  // Une fusion sans mesure (budgets non mesurés cette fois) : ses pages sont oubliées, et réapprises à la prochaine.
+  else ecrireConnus(db, projet.id, oublierPages(lireConnus(db, projet.id), pagesDeLaTache(tache)))
   reprendreMesure(db, tache.id)
   maj(db, "taches", tache.id, { statut: "fusionnee" })
   // Le cliquet : les tests écrits par le vérificateur rejoignent .usine/e2e/ (protégé), rejoués à chaque tâche.

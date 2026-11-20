@@ -29,14 +29,20 @@ Ce qui est sur `main` sans être encore dans une version.
 - **Les budgets de l'interface**, mesurés par l'usine sur chaque page de la tâche : erreurs de
   la console du navigateur, défauts d'accessibilité graves (axe-core), temps de chargement (5 s
   au plus), et les mêmes pages sur téléphone dans WebKit, le moteur de Safari. Une page ne peut
-  pas faire pire que son meilleur résultat déjà fusionné ; une première mesure fixe le
-  plancher.
+  pas avoir de problème qu'elle n'avait pas à la dernière fusion ; ses problèmes déjà connus ne
+  refusent rien. Une première mesure, ou ce qui n'a pas pu être mesuré (WebKit en panne), est
+  appris à la fusion suivante.
 - **Une refonte comparée à l'ancienne version** : une tâche marquée « refonte » (rien ne doit
   changer à l'écran ni à l'API) est comparée, page par page au pixel et route par route, à
-  l'ancienne version démarrée à côté. Une différence non expliquée la refuse.
+  l'ancienne version démarrée à côté. Une différence que le vérificateur juge fautive refuse la
+  tâche ; une différence qu'il n'explique pas part à une personne, qui tranche.
 - **Un incident corrigé est prouvé par un test** : la première tâche d'une correction demandée
   par la boucle d'amélioration ou par le pilote doit avoir un test qui échoue sur l'ancienne
-  version et passe sur la nouvelle.
+  version et passe sur la nouvelle. Un incident que le test ne reproduit pas part à une
+  personne.
+- **Sans l'ancienne version, la vérification ne conclut pas** : si elle ne se construit pas, ne
+  démarre pas, ou si sa comparaison n'a eu lieu qu'en partie, une personne tranche. Un vrai refus
+  (tests, critères, budgets) passe toujours avant.
 
 ## v1.3.1
 

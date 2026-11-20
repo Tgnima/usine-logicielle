@@ -16,7 +16,7 @@ import { COMPTER_TESTS, NEUTRALISER, VERROUS, brancheDeBase, libererPort, lirePr
 import { extraireJson } from "./analyste.mjs"
 import { ecrireReglage, enregistrer, lireReglage, usagesClaude, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
-import { BUDGETS_JS, REFONTE_JS, chargementMax, differencesNonExpliquees, gardeMesure, incidentNonProuve, lireConnus, raisonsBudgets, resumeBudgets } from "./mesures.mjs"
+import { BUDGETS_JS, REFONTE_JS, chargementMax, differencesNonExpliquees, gardeMesure, incidentNonProuve, lireConnus, raisonsBudgets, reprendreMesure, resumeBudgets } from "./mesures.mjs"
 
 // La consommation du juge qui a servi (Codex : son journal --json ; Claude : sa réponse json).
 export async function enregistrerJuge(ctx, { serveur, jeton, projet, tache = null, role, moteur, journal, sortieClaude, modeleCodex = null, duree_s = 0 }) {
@@ -357,7 +357,8 @@ export function preparerAncienne(B, profil) {
     LIBERER_ANCIENNE,
     "rm -rf /tmp/verif-data-base; git worktree remove --force /travail/verif/base > /dev/null 2>&1; rm -rf /travail/verif/base",
     `git worktree add -q -f --detach /travail/verif/base ${B} > /tmp/sorties/verif/base.log 2>&1 && echo '@@ BASE_EXTRAITE'`,
-    `if [ -d /travail/verif/base ]; then (cd /travail/verif/base && bash -c ${q(profil.installer)} >> /tmp/sorties/verif/base.log 2>&1 && bash -c ${q(profil.construire)} >> /tmp/sorties/verif/base.log 2>&1 && echo '@@ BASE_CONSTRUITE'); fi`,
+    "rm -f /tmp/sorties/verif/base-construite",
+    `if [ -d /travail/verif/base ]; then (cd /travail/verif/base && export PORT=4101 DATA_DIR=/tmp/verif-data-base PUBLIC_URL=${ANCIENNE} && bash -c ${q(profil.installer)} >> /tmp/sorties/verif/base.log 2>&1 && bash -c ${q(profil.construire)} >> /tmp/sorties/verif/base.log 2>&1 && touch /tmp/sorties/verif/base-construite && echo '@@ BASE_CONSTRUITE'); fi`,
   ]
 }
 // 2. Juste après la nouvelle, l'ancienne démarre sur 4101 ; elle est relancée de même avant le rejeu d'un
@@ -365,7 +366,7 @@ export function preparerAncienne(B, profil) {
 // ne compare jamais à un serveur inconnu.
 export function demarrerAncienne(profil) {
   return [
-    `if ! curl -sf ${ANCIENNE}/api/health > /dev/null && [ -d /travail/verif/base ]; then`,
+    `if ! curl -sf ${ANCIENNE}/api/health > /dev/null && [ -f /tmp/sorties/verif/base-construite ]; then`,
     LIBERER_ANCIENNE,
     `if curl -s -o /dev/null ${ANCIENNE}/; then echo '@@ BASE_PORT_OCCUPE'; else (cd /travail/verif/base && PORT=4101 DATA_DIR=/tmp/verif-data-base PUBLIC_URL=${ANCIENNE} setsid bash -c ${q(profil.demarrer)} >> /tmp/sorties/verif/base-app.log 2>&1 &); fi`,
     "fi",
@@ -409,6 +410,8 @@ export async function verifier(ctx, projet, tache, sha, { journal = true } = {})
   const B = q(`origin/${brancheDeBase(projet)}`)
   const nature = tache.nature === "refonte" || tache.nature === "incident" ? tache.nature : null
   const minutes = minutesVerification({ nature })
+  // La mesure des budgets gardée pour une acceptation humaine : celle de CETTE vérification, jamais une plus ancienne.
+  if (journal && tache.id) reprendreMesure(ctx.db, tache.id)
   // Les tests du cliquet sautés aux vérifications précédentes (plafond de temps) : rejoués d'abord, et, s'ils
   // échouent, un critère d'une tâche fusionnée pendant qu'ils étaient sautés peut justifier leur réécriture.
   const cleSautes = `cliquet_sautes_${projet.id}`
@@ -459,6 +462,8 @@ export async function verifier(ctx, projet, tache, sha, { journal = true } = {})
     // Un serveur resté d'une vérification précédente (Codex peut relancer l'application hors du
     // groupe de processus) garderait le port : l'usine jugerait l'ancien code, d'un autre projet.
     LIBERER_PORT,
+    // Le port de l'ancienne version, libéré par son numéro : un reste d'une vérification coupée par son délai.
+    LIBERER_ANCIENNE,
     // Une refonte ou un incident : l'ancienne version est préparée d'abord (écarts 4 et 5).
     ...(nature ? preparerAncienne(B, profil) : []),
     "if curl -s -o /dev/null http://localhost:4100/; then echo '@@ PORT_OCCUPE'; fi",
@@ -515,8 +520,9 @@ export async function verifier(ctx, projet, tache, sha, { journal = true } = {})
   if (journal && juge.moteur && juge.moteur !== relais(ctx, "verification")[0]) noter(ctx.db, { projet: projet.id, tache: tache.id, type: "remarque", message: `${tache.cle} : ${nomMoteur(relais(ctx, "verification")[0])} indisponible, ${nomMoteur(juge.moteur)} a vérifié à sa place.` })
   // La consommation du juge, même quand il refuse ou échoue.
   if ("CODEX_CODE" in m) await enregistrerJuge(ctx, { serveur, jeton, projet, tache, role: "verificateur", moteur: juge.moteur, journal: "/tmp/sorties/verif/codex.log", sortieClaude: "/tmp/sorties/verif/claude.json", modeleCodex: m.CODEX_MODELE, duree_s: r.duree_s ?? 0 })
-  // Une vérification coupée par son délai n'a pas tout jugé (le rejeu d'un incident, le design…) : elle ne conclut pas.
-  if ("DELAI_DEPASSE" in m) return { ok: false, infra: true, raisons: [`la vérification a dépassé ${minutes} min avant la fin : elle ne peut pas conclure`], ...vide }
+  // Une vérification coupée par son délai n'a pas tout jugé (le rejeu d'un incident, le design…) : sans motif
+  // de refus par ailleurs, elle ne conclut pas (plus bas).
+  const delaiDepasse = "DELAI_DEPASSE" in m
   let verdict = null
   if ("APP_STARTED" in m) {
     const texte = await lireFichier(serveur, jeton, "/tmp/sorties/verif/verdict.txt")
@@ -555,11 +561,15 @@ export async function verifier(ctx, projet, tache, sha, { journal = true } = {})
   if ("APP_STARTED" in m && verdict && !budgets) dire("budgets de l'interface : non mesurés cette fois (script arrêté ou en panne).")
   // L'ancienne version (écarts 4 et 5) : sans elle, ou sans sa mesure, une refonte ou un incident n'a pas de
   // corrigé. Ce n'est pas la faute de l'agent qui code : la vérification ne conclut pas, une personne tranche.
-  const ancienneAbsente = Boolean(nature) && "APP_STARTED" in m && (!("BASE_STARTED" in m) || "BASE_PORT_OCCUPE" in m)
-  const mesureAbsente = Boolean(verdict) && !ancienneAbsente && ((nature === "refonte" && !(Number(m.REFONTE_COMPAREES) > 0)) || (nature === "incident" && !("INCIDENT_TESTES" in m)))
-  const codexEnPanne = ("APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0") || ancienneAbsente || mesureAbsente
-  if (ancienneAbsente) raisons.push(`l'ancienne version (${brancheDeBase(projet)}) n'a pas démarré à côté de la nouvelle${"BASE_PORT_OCCUPE" in m ? " : le port 4101 du vérificateur reste pris par un autre serveur" : ""} : ${nature === "refonte" ? "la refonte n'a pas pu lui être comparée" : "les tests de l'incident n'ont pas pu y être rejoués"} (base.log et base-app.log du vérificateur)`)
-  if (mesureAbsente) raisons.push(`${nature === "refonte" ? "la comparaison avec l'ancienne version" : "le rejeu des tests d'incident sur l'ancienne version"} n'a pas eu lieu (délai ou panne du script) : la vérification ne peut pas conclure`)
+  const ancienneAbsente = Boolean(nature) && "APP_STARTED" in m && (!("BASE_CONSTRUITE" in m) || !("BASE_STARTED" in m) || "BASE_PORT_OCCUPE" in m)
+  const mesureAbsente = Boolean(verdict) && !ancienneAbsente && ((nature === "refonte" && (!(Number(m.REFONTE_COMPAREES) > 0) || Number(m.REFONTE_IMPOSSIBLES ?? 0) > 0)) || (nature === "incident" && !("INCIDENT_TESTES" in m)))
+  // Un vrai refus (tests, critères, budgets…) passe avant : l'agent recommence. Sinon, la vérification ne conclut pas.
+  const inconclusive = raisons.length === 0 && (ancienneAbsente || mesureAbsente || delaiDepasse)
+  const codexEnPanne = ("APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0") || inconclusive
+  // Ces raisons-là ne vont à l'agent que si rien d'autre ne refuse : elles ne sont pas de son fait.
+  if (inconclusive && delaiDepasse) raisons.push(`la vérification a dépassé ${minutes} min avant la fin : elle ne peut pas conclure`)
+  if (inconclusive && ancienneAbsente) raisons.push(`l'ancienne version (${brancheDeBase(projet)}) n'a pas démarré à côté de la nouvelle${"BASE_PORT_OCCUPE" in m ? " : le port 4101 du vérificateur reste pris par un autre serveur" : ""} : ${nature === "refonte" ? "la refonte n'a pas pu lui être comparée" : "les tests de l'incident n'ont pas pu y être rejoués"} (base.log et base-app.log du vérificateur)`)
+  if (inconclusive && mesureAbsente) raisons.push(`${nature === "refonte" ? "la comparaison avec l'ancienne version n'a pas eu lieu, ou en partie seulement (une page ou une route que l'ancienne version n'a pas donnée)" : "le rejeu des tests d'incident sur l'ancienne version n'a pas eu lieu"} (délai ou panne du script) : la vérification ne peut pas conclure`)
   const nouveauxTests = nomsDeTests(m.E2E_NOUVEAUX)
   const { remplaces, ecartes: nePasVerser } = reecrituresAVerser({ verdict, marqueurs: m, criteres, autres })
   const ratés = nomsDeTests(m.E2E_ECRITS_KO)

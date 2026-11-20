@@ -14,7 +14,7 @@ import { ouvrirCouts } from "../src/couts.mjs"
 import { ouvrirDb } from "../src/db.mjs"
 import {
   BUDGETS_JS, REFONTE_JS, chargementMax, cleProbleme, connusApres, differencesNonExpliquees, ecrireConnus, gardeMesure, idsRefonte,
-  incidentNonProuve, lireConnus, raisonsBudgets, reprendreMesure, resumeBudgets,
+  incidentNonProuve, lireConnus, oublierPages, raisonsBudgets, reprendreMesure, resumeBudgets,
 } from "../src/mesures.mjs"
 import {
   ANCIENNE, LIBERER_ANCIENNE, comparerRefonte, consigneNature, criteresNonProuves, demarrerAncienne, minutesVerification, preparerAncienne,
@@ -136,15 +136,43 @@ test("l'ordre du script : l'ancienne version prête avant la nouvelle, la refont
   assert.deepEqual([minutesVerification({ nature: null }), minutesVerification({ nature: "refonte" })], [45, 60])
 })
 
-test("une vérification coupée, une ancienne version absente ou une mesure qui n'a pas eu lieu : la vérification ne conclut pas", () => {
+test("une vérification coupée, une ancienne version absente ou une mesure qui n'a pas eu lieu : la vérification ne conclut pas, sauf un vrai refus", () => {
   const v = source("verification.mjs")
-  assert.match(v, /if \("DELAI_DEPASSE" in m\) return \{ ok: false, infra: true,/)
-  assert.match(v, /const ancienneAbsente = Boolean\(nature\) && "APP_STARTED" in m && \(!\("BASE_STARTED" in m\) \|\| "BASE_PORT_OCCUPE" in m\)/)
-  assert.match(v, /nature === "refonte" && !\(Number\(m\.REFONTE_COMPAREES\) > 0\)\) \|\| \(nature === "incident" && !\("INCIDENT_TESTES" in m\)\)/)
-  assert.match(v, /const codexEnPanne = \("APP_STARTED" in m && !verdict && m\.CODEX_CODE !== "0"\) \|\| ancienneAbsente \|\| mesureAbsente/)
+  // Le délai dépassé ne court-circuite plus rien : un vrai refus (tests, critères, budgets) passe avant.
+  assert.doesNotMatch(v, /if \("DELAI_DEPASSE" in m\) return/)
+  assert.match(v, /const delaiDepasse = "DELAI_DEPASSE" in m/)
+  // Sans build réussi de l'ancienne version, elle est absente (elle ne démarre même pas).
+  assert.match(v, /const ancienneAbsente = Boolean\(nature\) && "APP_STARTED" in m && \(!\("BASE_CONSTRUITE" in m\) \|\| !\("BASE_STARTED" in m\) \|\| "BASE_PORT_OCCUPE" in m\)/)
+  // Une refonte comparée en partie seulement (une page « impossible ») ne conclut pas non plus.
+  assert.match(v, /nature === "refonte" && \(!\(Number\(m\.REFONTE_COMPAREES\) > 0\) \|\| Number\(m\.REFONTE_IMPOSSIBLES \?\? 0\) > 0\)\) \|\| \(nature === "incident" && !\("INCIDENT_TESTES" in m\)\)/)
+  assert.match(v, /const inconclusive = raisons\.length === 0 && \(ancienneAbsente \|\| mesureAbsente \|\| delaiDepasse\)/)
+  assert.match(v, /const codexEnPanne = \("APP_STARTED" in m && !verdict && m\.CODEX_CODE !== "0"\) \|\| inconclusive/)
+  // Ces raisons-là ne vont à l'agent que si rien d'autre ne refuse.
+  for (const x of ["delaiDepasse", "ancienneAbsente", "mesureAbsente"]) assert.match(v, new RegExp(`if \\(inconclusive && ${x}\\) raisons\\.push\\(`))
   // Refonte non expliquée et incident non reproduit : une personne tranche, seulement quand tout le reste passe.
   assert.match(v, /if \(raisons\.length === 0 && verdict && nature === "refonte"\)/)
   assert.match(v, /if \(raisons\.length === 0 && verdict && nature === "incident"\)/)
+})
+
+test("l'ancienne version se construit avec ses propres réglages, et ne démarre que si son build a réussi", () => {
+  const prep = preparerAncienne("'origin/main'", { installer: "npm ci", construire: "npm run build", demarrer: "npm start" }).join("\n")
+  assert.match(prep, /rm -f \/tmp\/sorties\/verif\/base-construite/)
+  assert.match(prep, /export PORT=4101 DATA_DIR=\/tmp\/verif-data-base PUBLIC_URL=http:\/\/localhost:4101 && bash -c 'npm ci'/)
+  assert.match(prep, /bash -c 'npm run build' >> \/tmp\/sorties\/verif\/base\.log 2>&1 && touch \/tmp\/sorties\/verif\/base-construite && echo '@@ BASE_CONSTRUITE'/)
+  assert.ok(prep.indexOf("rm -f /tmp/sorties/verif/base-construite") < prep.indexOf("touch /tmp/sorties/verif/base-construite"))
+  const dem = demarrerAncienne({ demarrer: "npm start" })
+  assert.equal(dem[0], "if ! curl -sf http://localhost:4101/api/health > /dev/null && [ -f /tmp/sorties/verif/base-construite ]; then")
+})
+
+test("chaque vérification libère d'abord le port de l'ancienne version, et garde sa propre mesure des budgets", () => {
+  const v = source("verification.mjs")
+  const debut = v.indexOf("export async function verifier(")
+  assert.ok(v.indexOf("    LIBERER_PORT,\n", debut) > 0)
+  assert.ok(v.indexOf("    LIBERER_ANCIENNE,\n", debut) > v.indexOf("    LIBERER_PORT,\n", debut), "LIBERER_ANCIENNE juste après LIBERER_PORT")
+  assert.ok(v.indexOf("    LIBERER_ANCIENNE,\n", debut) < v.indexOf("...(nature ? preparerAncienne(B, profil) : [])", debut))
+  // Une mesure plus ancienne n'est jamais reprise par une acceptation humaine.
+  assert.ok(v.indexOf("if (journal && tache.id) reprendreMesure(ctx.db, tache.id)", debut) > 0)
+  assert.ok(v.indexOf("if (journal && tache.id) reprendreMesure(ctx.db, tache.id)", debut) < v.indexOf("if (budgets && journal && tache.id) gardeMesure(", debut))
 })
 
 // --- Écart 4 : un incident reproduit par un test -------------------------------------------------------
@@ -182,6 +210,12 @@ test("refonte : une différence que le vérificateur n'explique pas, où qu'il c
     { difference: "page:/:mobile", explication: "  " },
   ] }
   assert.deepEqual(differencesNonExpliquees({ marqueurs: m, verdict }), ["page:/:mobile"], "une explication vide n'explique rien")
+  // Un identifiant suivi d'un deux-points ou d'un point est reconnu.
+  const ponctues = { differences_refonte: [
+    { difference: "page:/contacts:bureau: l'heure", explication: "l'heure affichée" },
+    { difference: "Voir route:/api/contacts.", explication: "l'identifiant de démo" },
+  ] }
+  assert.deepEqual(differencesNonExpliquees({ marqueurs: m, verdict: ponctues }), ["page:/:mobile"])
   assert.deepEqual(differencesNonExpliquees({ marqueurs: { REFONTE_IDS: "page:/x:bureau" }, verdict: null }), [], "sans comparaison, rien n'est conclu ici")
   assert.deepEqual(idsRefonte({ REFONTE_IDS: "page:/a:bureau  route:/api/b pasunid page:x" }), ["page:/a:bureau", "route:/api/b"])
 })
@@ -197,6 +231,9 @@ test("refonte : la comparaison passe la tâche et le texte ; la consigne demande
   assert.match(REFONTE_JS, /animations: "disabled", caret: "hide"/)
   assert.match(REFONTE_JS, /AbortSignal\.timeout\(15000\)/)
   assert.match(REFONTE_JS, /@@ REFONTE_IMPOSSIBLES/)
+  // Un contexte par version : l'une ne lit jamais les cookies de l'autre (ils ne séparent pas les ports).
+  assert.match(REFONTE_JS, /const contextes = new Map\(\[\[ANCIEN, await navigateur\.newContext\(options\)\], \[NOUVEAU, await navigateur\.newContext\(options\)\]\]\)/)
+  assert.match(REFONTE_JS, /await contextes\.get\(base\)\.newPage\(\)/)
 })
 
 // --- Écart 6 : les budgets de l'interface --------------------------------------------------------------
@@ -221,12 +258,33 @@ test("budgets : une page ne peut pas avoir de nouveau problème ; ses problèmes
 
 test("budgets : ce qui n'a pas été mesuré ne compte ni pour zéro ni pour un refus", () => {
   const connus = { pages: { "/": { console: [], a11y: ["region"], webkit: ["a"], lent: false } } }
-  // WebKit en panne, axe absent : leurs listes vides ne refusent rien et ne changent pas ce qui est connu.
+  // WebKit en panne, axe absent : leurs listes vides ne refusent rien. À la fusion, ce qui n'a pas été mesuré
+  // est oublié : la tâche a pu y ajouter un problème, que la prochaine mesure apprendra sans le reprocher à la suivante.
   const sans = mesure({ "/": { ...page({ console: [] }), a11y_mesure: false, webkit_mesure: false } }, { axe: false, webkit: false })
   assert.deepEqual(raisonsBudgets(sans, connus), [])
-  assert.deepEqual(connusApres(sans, connus).pages["/"], { console: [], a11y: ["region"], webkit: ["a"], lent: false })
-  // Une métrique jamais mesurée jusqu'ici ne refuse pas sa première mesure.
-  assert.deepEqual(raisonsBudgets(mesure({ "/": page({ a11y: ["image-alt"] }) }), { pages: { "/": { console: [] } } }), [])
+  assert.deepEqual(connusApres(sans, connus).pages["/"], { console: [], lent: false })
+  // Une métrique jamais mesurée jusqu'ici (ou oubliée) ne refuse pas sa première mesure.
+  assert.deepEqual(raisonsBudgets(mesure({ "/": page({ a11y: ["image-alt"], webkit: ["w"] }) }), { pages: { "/": { console: [], lent: false } } }), [])
+})
+
+test("budgets : une erreur est reconnue à ses identifiants près, pas seulement à ses chiffres", () => {
+  const a = cleProbleme("Échec de /api/membres/3f2a9c1e-77b0-4d1a-9e55-0c1b2d3e4f5a : 404")
+  const b = cleProbleme("Échec de /api/membres/a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d : 404")
+  assert.equal(a, b)
+  assert.match(a, /#id/)
+  assert.equal(cleProbleme("jeton deadbeefcafe0123 refusé"), cleProbleme("jeton 0123456789abcdef refusé"))
+  // Un mot ordinaire n'est pas un identifiant.
+  assert.match(cleProbleme("le décodage a échoué"), /décodage/)
+})
+
+test("budgets : une page connue qui ne se charge plus est un problème ; une fusion sans mesure oublie ses pages", () => {
+  const connus = { pages: { "/": { console: [], a11y: [], webkit: [], lent: false }, "/jamais": { webkit: [] } } }
+  const panne = { console: [], console_mesure: false, a11y: [], a11y_mesure: false, webkit: [], webkit_mesure: false, injoignable_bureau: "Timeout 20000ms exceeded" }
+  const r = raisonsBudgets(mesure({ "/": panne, "/jamais": { ...panne } }), connus)
+  assert.deepEqual(r, ["budget de l'interface : / ne se charge plus en 20 s (Timeout 20000ms exceeded)"], "une page qui ne s'est jamais chargée ne refuse rien")
+  assert.deepEqual(oublierPages({ pages: { "/": { console: ["a"] }, "/b": { console: [] } } }, ["/", "/absente"]), { pages: { "/b": { console: [] } } })
+  assert.match(source("fabrique.mjs"), /else ecrireConnus\(db, projet\.id, oublierPages\(lireConnus\(db, projet\.id\), pagesDeLaTache\(tache\)\)\)/)
+  assert.match(source("fabrique.mjs"), /import \{ pagesDeLaTache, pathspec, verifier \} from "\.\/verification\.mjs"/)
 })
 
 test("budgets : le chargement lent est un problème comme un autre ; le plafond se règle", () => {

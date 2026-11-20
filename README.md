@@ -53,18 +53,25 @@ est épuisé.
   - temps de chargement, 5 s au plus (`autonomie.chargement_max_ms`) ;
   - erreurs sur téléphone dans WebKit, le moteur de Safari.
 
-  Une page ne peut pas faire pire que son meilleur résultat déjà fusionné. Une page mesurée
-  pour la première fois fixe son plancher.
+  C'est un cliquet par problème : une page ne peut pas avoir de problème qu'elle n'avait pas à
+  la dernière fusion. Ses problèmes déjà connus ne refusent rien (une erreur est reconnue à ses
+  chiffres et identifiants près). Une page mesurée pour la première fois, ou ce qui n'a pas pu
+  être mesuré (WebKit en panne, axe-core absent), est appris à la fusion suivante.
 - **Une refonte est comparée à l'ancienne version.** L'analyste marque `"nature": "refonte"`
   une tâche qui ne doit rien changer à l'écran ni à l'API. L'usine démarre alors l'ancienne
   version à côté (port 4101) et compare chaque page (au pixel) et chaque route GET de
-  `docs/API.md`. Une différence que le vérificateur n'explique pas (une heure, une donnée de
-  démo tirée au sort) refuse la tâche.
+  `docs/API.md`. Le vérificateur reçoit les différences :
+  - une différence fautive, il la signale, et la tâche est refusée ;
+  - une différence attendue (une heure, une donnée de démo tirée au sort), il l'explique ;
+  - une différence ni expliquée ni signalée part à une personne, qui tranche.
 - **Un incident corrigé est prouvé par un test.** La première tâche d'une correction demandée
   par la boucle d'amélioration ou par le pilote porte la nature « incident ». Le vérificateur
-  écrit un test qui reproduit l'incident. L'usine le relance sur l'ancienne version : il doit y
-  échouer, sinon la tâche est refusée. Si l'ancienne version ne démarre pas, une personne
+  écrit un test qui reproduit l'incident. L'usine le relance sur l'ancienne version, où il doit
+  échouer. S'il n'y échoue pas (l'incident ne se produit pas en démonstration), une personne
   tranche.
+- **Sans l'ancienne version, la vérification ne conclut pas.** Si elle ne se construit pas, ne
+  démarre pas, ou si sa comparaison n'a eu lieu qu'en partie, une personne tranche. Un vrai
+  refus (tests, critères, budgets) passe toujours avant : l'agent recommence.
 - **Un incident en production ne met jamais rien en ligne.** En mode « proposer », le pilote et
   la lecture de Sentry ne font que proposer une correction, et seule une personne la lance. En
   mode « corriger », le pilote corrige seul une panne du code, jusqu'à l'aperçu. Voir **La

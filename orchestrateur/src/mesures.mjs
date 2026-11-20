@@ -208,11 +208,13 @@ async function difference(calcul, a, b) {
   const navigateur = await chromium.launch()
   const calcul = await navigateur.newPage()
   for (const [format, largeur, hauteur] of [["bureau", 1440, 900], ["mobile", 390, 844]]) {
-    const contexte = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, locale: "fr-FR", timezoneId: "Europe/Paris" })
+    // Un contexte par version : les cookies ne séparent pas les ports, une version ne doit pas lire ceux de l'autre.
+    const options = { viewport: { width: largeur, height: hauteur }, locale: "fr-FR", timezoneId: "Europe/Paris" }
+    const contextes = new Map([[ANCIEN, await navigateur.newContext(options)], [NOUVEAU, await navigateur.newContext(options)]])
     for (const [i, chemin] of PAGES.entries()) {
       const id = "page:" + chemin + ":" + format
       const prendre = async (base) => {
-        const page = await contexte.newPage()
+        const page = await contextes.get(base).newPage()
         try {
           const r = await page.goto(base + chemin, { waitUntil: "load", timeout: 20000 })
           await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {})
@@ -261,7 +263,7 @@ async function difference(calcul, a, b) {
         lignes.push(id + " : comparaison des images impossible (" + court(e.message) + ")")
       }
     }
-    await contexte.close()
+    for (const c of contextes.values()) await c.close()
   }
   await navigateur.close()
   // Une route qui répond en continu (un flux) ne bloque pas : 15 s au plus par réponse.
@@ -318,7 +320,10 @@ const cleConnus = (projetId) => `budgets_${projetId}`
 const cleMesure = (tacheId) => `budgets_mesure_${tacheId}`
 const tableau = (v) => (Array.isArray(v) ? v : [])
 // Une erreur, à ses chiffres près (un identifiant, une heure) : la même erreur n'est pas « nouvelle ».
-export const cleProbleme = (t) => String(t ?? "").replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 140)
+export const cleProbleme = (t) => String(t ?? "")
+  .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "#id")
+  .replace(/\b[0-9a-f]{12,}\b/gi, "#id")
+  .replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 140)
 const unique = (liste) => [...new Set(liste)]
 
 export function lireConnus(db, projetId) {
@@ -375,23 +380,33 @@ export function raisonsBudgets(mesure, connus, { max = 5000 } = {}) {
       const neuves = tableau(f.webkit).filter((m) => !k.webkit.includes(cleProbleme(m)))
       if (neuves.length) raisons.push(`budget de l'interface : sur téléphone, dans WebKit (le moteur de Safari), ${chemin} a ${neuves.length} nouvelle(s) erreur(s) : ${extraits(neuves)}`)
     }
+    // Une page connue, qui se chargeait (sa console a été mesurée), et qui ne se charge plus.
+    if (f.injoignable_bureau && Array.isArray(k.console)) raisons.push(`budget de l'interface : ${chemin} ne se charge plus en 20 s (${String(f.injoignable_bureau).slice(0, 140)})`)
     if (p.lent === true && k.lent === false) raisons.push(`budget de l'interface : ${chemin} se charge maintenant en ${(f.chargement_ms / 1000).toFixed(1)} s (au plus ${(max / 1000).toFixed(1)} s)`)
   }
   return raisons
 }
 
-// À la fusion (ou à l'acceptation d'une personne) : ce que la tâche a mesuré rejoint ce qui est connu. Une
-// mesure qui n'a pas eu lieu ne change rien.
+// À la fusion (ou à l'acceptation d'une personne) : ce que la tâche a mesuré rejoint ce qui est connu. Ce
+// qu'elle n'a pas mesuré (WebKit en panne, axe absent) est oublié : la tâche a pu y ajouter un problème, que
+// la prochaine mesure apprendra au lieu de le reprocher à la tâche suivante.
 export function connusApres(mesure, connus, { max = 5000 } = {}) {
   const pages = { ...(connus?.pages ?? {}) }
   for (const [chemin, f] of Object.entries(mesure?.pages ?? {})) {
     const p = problemes(f, { max })
     if (!p) continue
     const k = pages[chemin] ?? {}
-    const fusion = (cle) => (p[cle] === null ? k[cle] : unique([...tableau(k[cle]), ...p[cle]]))
-    const lent = p.lent === null ? k.lent : Boolean(k.lent) || p.lent
+    const fusion = (cle) => (p[cle] === null ? undefined : unique([...tableau(k[cle]), ...p[cle]]))
+    const lent = p.lent === null ? undefined : Boolean(k.lent) || p.lent
     pages[chemin] = Object.fromEntries(Object.entries({ console: fusion("console"), a11y: fusion("a11y"), webkit: fusion("webkit"), lent }).filter(([, v]) => v !== undefined))
   }
+  return { pages }
+}
+
+// Les pages qu'une fusion n'a pas mesurées : oubliées, pour être réapprises à la prochaine mesure.
+export function oublierPages(connus, chemins) {
+  const pages = { ...(connus?.pages ?? {}) }
+  for (const c of chemins ?? []) delete pages[c]
   return { pages }
 }
 
@@ -407,7 +422,7 @@ export function resumeBudgets(mesure) {
 // --- La refonte et l'incident : ce que l'usine en conclut ------------------------------------------------
 export const idsRefonte = (m) => String(m?.REFONTE_IDS ?? "").split(/\s+/).filter((x) => /^(page|route):\/\S*$/.test(x))
 // L'identifiant cité par le vérificateur, où qu'il soit dans son texte (entre « », entre accents graves…).
-const idsCites = (texte) => [...String(texte ?? "").matchAll(/(?:page|route):\/[^\s«»"'`,;)]*/g)].map((m) => m[0].replace(/\.+$/, ""))
+const idsCites = (texte) => [...String(texte ?? "").matchAll(/(?:page|route):\/[^\s«»"'`,;)]*/g)].map((m) => m[0].replace(/[.:]+$/, ""))
 
 // Les différences avec l'ancienne version que le vérificateur n'a pas expliquées (une heure, une donnée de
 // démo tirée au sort…). Une vraie différence, il la met dans ses problèmes : refus. Une différence ni expliquée
