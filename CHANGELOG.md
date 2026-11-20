@@ -12,6 +12,10 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+## v1.4.0
+
+Ce qui a été fusionné le 20 novembre 2026.
+
 - **L'audit du vérificateur devient une commande** : `node src/cli.mjs audit <n°> [bugs] [tâche]`.
   L'usine plante exprès des bugs réalistes dans une copie d'un produit livré, un à la fois : un
   compteur décalé d'un, une sauvegarde qui ne se fait pas, un email noté « envoyé » mais jamais
@@ -43,6 +47,10 @@ Ce qui est sur `main` sans être encore dans une version.
 - **Sans l'ancienne version, la vérification ne conclut pas** : si elle ne se construit pas, ne
   démarre pas, ou si sa comparaison n'a eu lieu qu'en partie, une personne tranche. Un vrai refus
   (tests, critères, budgets) passe toujours avant.
+
+**À faire** : rien. Le bouton « Mettre à jour l'usine » (console ou Slack) ou `bash update.sh`
+suffit. La mise à jour reconstruit le vérificateur, qui reçoit WebKit et axe-core. Le plafond de
+chargement des pages se règle, si besoin, avec `autonomie.chargement_max_ms` (5000 par défaut).
 
 ## v1.3.1
 
