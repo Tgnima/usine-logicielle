@@ -11,6 +11,10 @@ const valeur = (v) => (v === null || v === undefined || v === false ? "" : Array
 function html(chaines, ...valeurs) {
   return brut(chaines.reduce((s, c, i) => s + c + (i < valeurs.length ? valeur(valeurs[i]) : ""), ""))
 }
+// Un volet repliable (<details>) qui reste tel que la personne l'a laissé : la console se redessine
+// toutes les 5 s sur un projet (15 s ailleurs), et un volet sans mémoire se refermait sous ses yeux.
+// <details ${ouvert("cle", defaut)}> : le choix de la personne (etat.ouverts) l'emporte sur defaut.
+const ouvert = (cle, defaut = false) => brut(`data-garde="${echapper(cle)}"${(etat.ouverts.has(cle) ? etat.ouverts.get(cle) : defaut) ? " open" : ""}`)
 const $ = (sel, racine = document) => racine.querySelector(sel)
 // Les messages de l'usine sont écrits pour Slack : on retire les codes d'émojis et les accents graves.
 const nettoyer = (t) => String(t ?? "").replace(/:[a-z0-9_+-]+:\s*/g, "").replace(/`/g, "").replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, "$2").replace(/\*([^*\n]+)\*/g, "$1")
@@ -123,6 +127,7 @@ const etat = {
   jetonCree: null, // le jeton qui vient d'être créé, montré une seule fois
   envoyes: new Map(), // la file d'attention : les actions déjà envoyées (clé → { le, texte, projet }), tant qu'elles y restent
   faitsOuverts: new Set(), // les propositions dont « Ce que l'usine a relevé » est ouvert
+  ouverts: new Map(), // les autres volets repliables, ouverts ou refermés à la main (ouvert())
   consignesOuvertes: new Set(), // les décisions dont la saisie « Autre consigne » est ouverte (Visibilité)
   brouillons: new Map(), // la consigne tapée pour chaque décision (id → texte) : elle survit à chaque nouveau rendu
 }
@@ -421,7 +426,7 @@ function saisieAccueil({ titre = true } = {}) {
           <button type="submit" class="btn btn-p btn-petit">${depot ? "Lancer l'examen" : "Lancer"}</button>
         </div>
       </div>
-      ${depot ? html`<details class="saisie-plus"><summary class="aide">Où l'usine travaille : automatique (conseillé)</summary>
+      ${depot ? html`<details class="saisie-plus" ${ouvert("ou-travaille")}><summary class="aide">Où l'usine travaille : automatique (conseillé)</summary>
           <fieldset class="pile" style="margin-top:10px;gap:6px"><legend class="cache">Où l'usine travaille</legend>
           ${[["auto", "Automatique (conseillé)", "L'usine choisit selon les droits qu'on lui a donnés."], ["direct", "Dans l'application d'origine", "Elle propose ses changements au propriétaire, qui les accepte lui-même à la fin."], ["copie", "Dans une copie", "L'original ne bouge pas."]].map(([id, t, x]) => html`<label class="choix"><input type="radio" name="mode" value="${id}" ${id === "auto" ? "checked" : ""}><span><strong>${t}</strong><br><span class="aide">${x}</span></span></label>`)}
           </fieldset><p class="aide">Si l'application est privée, son propriétaire doit d'abord inviter le compte GitHub de l'usine.</p></details>`
@@ -705,12 +710,12 @@ function blocReprise(p) {
   return html`<section class="carte carte-p pile" aria-labelledby="reprise"><h2 id="reprise">Application reprise</h2>
     <div class="aide">Elle vient de <a href="${o.url}" target="_blank" rel="noopener">${o.depot}</a>. ${o.mode === "direct" ? "L'usine travaille à côté de l'original : à la fin, elle propose ses changements, que le propriétaire accepte lui-même." : "L'usine travaille sur une copie : l'original ne bouge pas."}</div>
     ${p.pr_livraison ? html`<div class="message ok"><span style="flex:1">Les changements sont prêts à être acceptés dans l'application d'origine.</span><a class="btn btn-s btn-petit" href="${p.pr_livraison}" target="_blank" rel="noopener">Les voir sur GitHub</a></div>` : ""}
-    ${inv ? html`<details ${p.statut === "plan_a_valider" ? "open" : ""}><summary style="cursor:pointer;font-weight:600">Ce que l'usine a trouvé · ${inv.fonctionnalites.filter((f) => f.etat === "marche").length} fonction(s) sur ${inv.fonctionnalites.length} qui marchent</summary>
+    ${inv ? html`<details ${ouvert(`inventaire-${p.id}`, p.statut === "plan_a_valider")}><summary style="cursor:pointer;font-weight:600">Ce que l'usine a trouvé · ${inv.fonctionnalites.filter((f) => f.etat === "marche").length} fonction(s) sur ${inv.fonctionnalites.length} qui marchent</summary>
       <div class="pile" style="margin-top:10px">
         <p style="margin:0">${inv.resume}</p>
         ${inv.fonctionnalites.length ? html`<ul style="margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:6px">${inv.fonctionnalites.map((f) => html`<li class="rangee" style="flex-wrap:nowrap;align-items:flex-start"><span class="badge ${(ETAT[f.etat] ?? ["", ""])[1]}">${(ETAT[f.etat] ?? [f.etat])[0]}</span><span><strong>${f.nom}</strong>${f.detail ? html`<span class="aide"> · ${f.detail}</span>` : ""}</span></li>`)}</ul>` : ""}
         ${inv.manques.length ? html`<div><strong>Ce qui manque</strong><ul style="margin:4px 0 0;padding-left:18px">${inv.manques.map((x) => html`<li>${x}</li>`)}</ul></div>` : ""}
-        <details><summary class="aide" style="cursor:pointer">Pour les techniciens</summary>
+        <details ${ouvert(`inventaire-technique-${p.id}`)}><summary class="aide" style="cursor:pointer">Pour les techniciens</summary>
           <div class="pile" style="margin-top:8px">
             <div class="aide">Branche ${o.branche_source}${o.mode === "direct" ? `, intégration sur ${p.branche}` : ""}${p.profil ? ` · ${p.profil.pile}` : ""} · ${inv.tests} test(s)</div>
             ${inv.changements.length ? html`<div><strong>Mise au contrat d'hébergement</strong><ul style="margin:4px 0 0;padding-left:18px">${inv.changements.map((x) => html`<li>${x}</li>`)}</ul></div>` : ""}
@@ -854,7 +859,7 @@ function blocPlanLecture(p) {
           <div class="mono aide">LOT ${i + 1} · ${lot.taches.length} fonction${lot.taches.length > 1 ? "s" : ""}</div>
           ${lot.objectif ? html`<div><div class="aide">À la fin de ce lot</div><h2 style="font-size:17px">${lot.objectif}</h2></div>` : html`<h2 style="font-size:17px">${lot.nom}</h2>`}
           <ul class="fonctions">${lot.taches.map((t) => html`<li>${t.titre}</li>`)}</ul>
-          <details><summary class="aide" style="cursor:pointer">Ce qui sera vérifié · ${lot.taches.reduce((n, t) => n + t.criteres.length, 0)} critère(s)</summary>
+          <details ${ouvert(`criteres-${p.id}-${i}`)}><summary class="aide" style="cursor:pointer">Ce qui sera vérifié · ${lot.taches.reduce((n, t) => n + t.criteres.length, 0)} critère(s)</summary>
             <ul class="criteres-lecture">${lot.taches.map((t) => t.criteres.map((c) => html`<li><span class="aide">${t.titre} :</span> ${c}</li>`))}</ul></details>
         </section>`)}
         ${plan.hors_perimetre?.length ? html`<div class="aide"><strong>Pas dans ce plan :</strong> ${plan.hors_perimetre.join(" · ")}</div>` : ""}
@@ -1369,7 +1374,7 @@ function fenetreBudget() {
       <div class="pile" style="gap:6px"><label class="titre-champ" for="b-mensuel">Par mois, pour toute l'usine (${c.devise})</label><input id="b-mensuel" name="budget_mensuel" class="champ" inputmode="decimal" value="${c.budget_mensuel}"></div>
       <div class="pile" style="gap:6px"><label class="titre-champ" for="b-projet">Par projet (${c.devise})</label><input id="b-projet" name="budget_par_projet" class="champ" inputmode="decimal" value="${c.budget_par_projet}"></div>
     </div>
-    <details><summary class="aide" style="cursor:pointer">Ce que tu paies chaque mois (pour calculer le coût réel)</summary>
+    <details ${ouvert("budget-abonnements")}><summary class="aide" style="cursor:pointer">Ce que tu paies chaque mois (pour calculer le coût réel)</summary>
       <div class="grille" style="margin-top:10px">
         <div class="pile" style="gap:6px"><label class="aide" for="b-serveur">Le serveur (${c.devise})</label><input id="b-serveur" name="serveur_mensuel" class="champ" inputmode="decimal" value="${c.serveur_mensuel}"></div>
         ${c.abonnements.map((a, i) => html`<div class="pile" style="gap:6px"><label class="aide" for="b-ab-${i}">${a.nom} (${c.devise})</label><input id="b-ab-${i}" name="abonnement" class="champ" inputmode="decimal" value="${a.mensuel}"></div>`)}
@@ -1412,7 +1417,7 @@ function vueAPropos() {
     </section>
     ${mj.erreur ? html`<div class="message erreur"><span>La vérification des mises à jour échoue depuis ${momentParis(mj.erreur.depuis)} : ${mj.erreur.message}</span></div>` : ""}
     ${n > 0 && !mj.en_cours ? html`<section class="carte carte-p barre" style="gap:12px;flex-wrap:wrap;border-color:var(--accent)"><span><strong>Une nouvelle version est disponible${VERSION_PUBLIEE.test(mj.cible ?? "") ? ` : ${mj.cible}` : ""}</strong><br><span class="aide">L'usine finit ce qu'elle fait, se met à jour et redémarre (quelques minutes).</span></span><button type="button" class="btn btn-p" data-action="usine" data-quoi="mettre-a-jour">Mettre à jour l'usine</button></section>
-      ${mj.commits?.length ? html`<details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Ce qui arrive</summary>
+      ${mj.commits?.length ? html`<details class="carte carte-p" ${ouvert("apropos-commits")}><summary style="cursor:pointer;font-weight:600">Ce qui arrive</summary>
         <ul class="pile" style="gap:4px;margin:8px 0 0;padding-left:18px;font-size:14px">${mj.commits.map((c) => { const [h, ...m] = String(c).split(" "); return html`<li><span class="mono aide">${h}</span> ${m.join(" ")}</li>` })}</ul>
         ${n > mj.commits.length ? html`<div class="aide">et ${n - mj.commits.length} autre${n - mj.commits.length > 1 ? "s" : ""}.</div>` : ""}</details>` : ""}` : ""}`
 }
@@ -1495,7 +1500,7 @@ function vueEquipe() {
         </li>`
       })}</ul>
     </section>
-    <details class="carte carte-p" ${etat.cleCreee || a.cles.length ? "open" : ""}>
+    <details class="carte carte-p" ${ouvert("cles-developpeurs", Boolean(etat.cleCreee || a.cles.length))}>
       <summary style="cursor:pointer;font-weight:600">Pour les développeurs : clés d'accès pour d'autres logiciels</summary>
       <div class="pile" style="margin-top:12px;gap:14px">
         <div class="aide">Quand un autre logiciel doit appeler une de tes applications (une intégration, un script), il présente une clé au lieu d'un mot de passe : en-tête <span class="mono">Authorization: Bearer &lt;clé&gt;</span>. L'usine ne garde que son empreinte.</div>
@@ -1562,15 +1567,15 @@ function carteMoteur(f, m) {
     <div class="barre"><div><strong style="font-size:16px">${nom}</strong><div class="aide">${role}</div></div>${f.tests.le ? (marche ? html`<span class="badge vert">branché</span>` : html`<span class="badge rouge">ne répond pas</span>`) : html`<span class="badge">pas encore testé</span>`}</div>
     ${m.id === "claude-code" ? html`
       ${champIdentifiant(f, "CLAUDE_CODE_OAUTH_TOKEN", brut(`Le plus simple si tu as un abonnement Claude Pro ou Max. Un technicien lance <span class="mono">claude setup-token</span> sur son ordinateur et te donne le code obtenu (il commence par <span class="mono">sk-ant-oat</span>, valable un an).`), "Avec ton abonnement Claude")}
-      <details><summary class="aide" style="cursor:pointer">Ou avec une clé payée à l'usage</summary><div style="margin-top:10px">${champIdentifiant(f, "ANTHROPIC_API_KEY", brut(`Sur <span class="mono">console.anthropic.com</span>, rubrique « API Keys ». Tu paies ce que l'usine consomme.`), "Clé Anthropic")}</div></details>` : html`
+      <details ${ouvert(`cle-payante-${m.id}`)}><summary class="aide" style="cursor:pointer">Ou avec une clé payée à l'usage</summary><div style="margin-top:10px">${champIdentifiant(f, "ANTHROPIC_API_KEY", brut(`Sur <span class="mono">console.anthropic.com</span>, rubrique « API Keys ». Tu paies ce que l'usine consomme.`), "Clé Anthropic")}</div></details>` : html`
       <div class="pile" style="gap:6px">
         <div class="barre" style="flex-wrap:wrap;gap:6px"><strong style="font-size:14px">Avec ton abonnement ChatGPT</strong>${badgeTest(tests.abonnement)}</div>
         ${chat?.etat === "code" ? html`<div class="carte carte-p pile" style="gap:6px;border-color:var(--accent)"><div>1. Ouvre <a href="${chat.url}" target="_blank" rel="noopener noreferrer">${chat.url}</a> et connecte-toi à ton compte ChatGPT.</div><div>2. Saisis ce code :</div><div class="mono" style="font-size:22px;letter-spacing:2px"><strong>${chat.code}</strong></div><div class="aide">Valable 15 minutes. Cette page se met à jour toute seule quand c'est fait.</div></div>`
           : chat?.etat === "attente" ? html`<div class="aide">Préparation du lien de connexion…</div>`
           : html`<div><button type="button" class="btn btn-s" data-action="connecter-chatgpt">${tests.abonnement?.etat === "ok" ? "Reconnecter un compte ChatGPT" : "Connecter mon compte ChatGPT"}</button></div><div class="aide">Un lien et un code à saisir sur le site d'OpenAI : rien à copier.</div>`}
       </div>
-      <details><summary class="aide" style="cursor:pointer">Ou avec une clé payée à l'usage</summary><div style="margin-top:10px">${champIdentifiant(f, "OPENAI_API_KEY", brut(`Sur <span class="mono">platform.openai.com</span>, rubrique « API keys ». Tu paies ce que l'usine consomme.`), "Clé OpenAI")}</div></details>`}
-    <details><summary class="aide" style="cursor:pointer">Réglage avancé : l'ordre de secours</summary>
+      <details ${ouvert(`cle-payante-${m.id}`)}><summary class="aide" style="cursor:pointer">Ou avec une clé payée à l'usage</summary><div style="margin-top:10px">${champIdentifiant(f, "OPENAI_API_KEY", brut(`Sur <span class="mono">platform.openai.com</span>, rubrique « API keys ». Tu paies ce que l'usine consomme.`), "Clé OpenAI")}</div></details>`}
+    <details ${ouvert(`ordre-secours-${m.id}`)}><summary class="aide" style="cursor:pointer">Réglage avancé : l'ordre de secours</summary>
       <div class="pile" style="margin-top:10px;gap:8px">
         <div class="aide">Quand une façon de se connecter atteint sa limite ou n'a plus de crédit, l'usine passe à la suivante, sans perdre le travail en cours.</div>
         <div class="tableau"><table><tbody>${tous.map((mode) => {
@@ -1687,7 +1692,7 @@ function vueIntegrations() {
     </div>`
     })}</div>
     ${carteRelais(f)}
-    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Réglages avancés : passerelle de secours et modèles</summary>
+    <details class="carte carte-p" ${ouvert("integrations-avance")}><summary style="cursor:pointer;font-weight:600">Réglages avancés : passerelle de secours et modèles</summary>
       <div class="pile" style="gap:16px;margin-top:12px">
         <div class="pile" style="gap:10px">
           <div class="aide">La passerelle Vercel AI Gateway donne accès aux deux IA avec une seule clé : elle sert de secours commun. Sur <span class="mono">vercel.com</span>, AI Gateway, API Keys.</div>
@@ -2105,7 +2110,7 @@ function vueRegles() {
       <div><div class="aide">Aperçus</div>retirés après <strong>${k.apercus_jours} jours</strong> sans activité (tu es prévenu la veille)</div>
       <div><div class="aide">Mode démonstration</div><strong>${k.demo ? "actif" : "inactif"}</strong> : données fictives, emails retenus${k.finition ? ", lot de finition" : ""}</div>
     </section>
-    <details class="carte carte-p"><summary style="cursor:pointer;font-weight:600">Pour les techniciens</summary>
+    <details class="carte carte-p" ${ouvert("regles-techniciens")}><summary style="cursor:pointer;font-weight:600">Pour les techniciens</summary>
       <div class="pile" style="gap:8px;margin-top:8px">
         <div class="tableau"><table><tbody>${k.modeles.map((m) => html`<tr><td>${ROLES[m.role] ?? m.role}</td><td class="mono">${m.modele}</td><td class="aide">${m.moteur}</td></tr>`)}</tbody></table></div>
         <div class="aide">Fichier : <span class="mono">usine.config.yml</span> · fichiers protégés des produits : <span class="mono">${k.perimetre_protege.join(" · ")}</span></div>
@@ -4020,6 +4025,7 @@ document.addEventListener("toggle", (e) => {
   if (e.target.id === "menu-projet") etat.menuProjet = e.target.open
   if (e.target.id === "pilote-journal") etat.piloteOuvert = e.target.open
   if (e.target.dataset?.faits) etat.faitsOuverts[e.target.open ? "add" : "delete"](Number(e.target.dataset.faits))
+  if (e.target.dataset?.garde) etat.ouverts.set(e.target.dataset.garde, e.target.open)
 }, true)
 
 // --- Palette de commandes (Ctrl K) ----------------------------------------------------------
