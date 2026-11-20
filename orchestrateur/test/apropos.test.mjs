@@ -17,12 +17,12 @@ const ligne = (debut) => {
 }
 // vueAPropos telle qu'elle est dans console.js, avec ses outils, et un état d'essai.
 const page = new Function("etat", [
-  ligne("const BRUT = "), ligne("const brut = "), ligne("const echapper = "), ligne("const valeur = "), extraire("function html("),
+  ligne("const BRUT = "), ligne("const brut = "), ligne("const echapper = "), ligne("const valeur = "), extraire("function html("), ligne("const ouvert = "),
   extraire("const aParis = "), ligne("const momentParis = "),
   ligne("const CANAUX = "), ligne("const VERSION_PUBLIEE = "), ligne("const lienDepot = "), extraire("function vueAPropos("),
   "return valeur(vueAPropos())",
 ].join("\n"))
-const rendre = (mise_a_jour) => page({ resume: { usine: { mise_a_jour } } })
+const rendre = (mise_a_jour) => page({ resume: { usine: { mise_a_jour } }, ouverts: new Map() })
 // Le texte que l'on lit à l'écran : sans balises, entités décodées.
 const texte = (h) => h.replace(/<[^>]+>/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ")
 
