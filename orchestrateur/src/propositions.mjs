@@ -262,7 +262,7 @@ export function lancerProposition(ctx, id, par, { corriger = demanderCorrections
   const lots = lirePlan(projet)?.lots?.length ?? 0
   // Pas attendue : l'analyste prend des minutes.
   Promise.resolve()
-    .then(() => corriger(ctx, projet.id, texte, par))
+    .then(() => corriger(ctx, projet.id, texte, par, { incident: true }))
     .then((res) => apresDemande(ctx, p.id, projet.id, lots, res))
     .catch((e) => apresDemande(ctx, p.id, projet.id, lots, { ok: false, message: e.message }))
   return { ok: true, message: "C'est lancé : l'analyste enquête, puis un lot de corrections passe par la fabrique jusqu'à l'aperçu. La mise en ligne pour de vrai reste à toi." }

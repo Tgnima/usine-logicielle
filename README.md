@@ -40,6 +40,31 @@ est épuisé.
   ajoutée dans les dépendances (`npm audit`, comparé à `main`), refuse la tâche ; un agent
   relecteur sécurité lit chaque changement avant le vérificateur, avec une grille
   (injections, XSS, redirections, données personnelles…).
+- **Des critères qui peuvent échouer.** L'analyste écrit chaque critère comme ce que
+  l'utilisateur fait, puis le résultat attendu : un texte affiché, une valeur, un code HTTP.
+  Un critère flou (« fonctionne correctement », « est intuitif ») lui est renvoyé une fois.
+  Chaque critère validé doit avoir son test dans le cliquet (`T3-2.cjs` pour le deuxième
+  critère de T3). Sinon il est **non prouvé**, et la PR comme le journal le disent, avec la
+  raison donnée par le vérificateur.
+- **Les budgets de l'interface** (`orchestrateur/src/mesures.mjs`), mesurés par l'usine
+  sur chaque page de la tâche :
+  - erreurs de la console du navigateur (celles de l'application, pas d'un autre site) ;
+  - défauts d'accessibilité graves (axe-core) ;
+  - temps de chargement, 5 s au plus (`autonomie.chargement_max_ms`) ;
+  - erreurs sur téléphone dans WebKit, le moteur de Safari.
+
+  Une page ne peut pas faire pire que son meilleur résultat déjà fusionné. Une page mesurée
+  pour la première fois fixe son plancher.
+- **Une refonte est comparée à l'ancienne version.** L'analyste marque `"nature": "refonte"`
+  une tâche qui ne doit rien changer à l'écran ni à l'API. L'usine démarre alors l'ancienne
+  version à côté (port 4101) et compare chaque page (au pixel) et chaque route GET de
+  `docs/API.md`. Une différence que le vérificateur n'explique pas (une heure, une donnée de
+  démo tirée au sort) refuse la tâche.
+- **Un incident corrigé est prouvé par un test.** La première tâche d'une correction demandée
+  par la boucle d'amélioration ou par le pilote porte la nature « incident ». Le vérificateur
+  écrit un test qui reproduit l'incident. L'usine le relance sur l'ancienne version : il doit y
+  échouer, sinon la tâche est refusée. Si l'ancienne version ne démarre pas, une personne
+  tranche.
 - **Un incident en production ne met jamais rien en ligne.** En mode « proposer », le pilote et
   la lecture de Sentry ne font que proposer une correction, et seule une personne la lance. En
   mode « corriger », le pilote corrige seul une panne du code, jusqu'à l'aperçu. Voir **La

@@ -16,6 +16,7 @@ import { COMPTER_TESTS, NEUTRALISER, VERROUS, brancheDeBase, libererPort, lirePr
 import { extraireJson } from "./analyste.mjs"
 import { ecrireReglage, enregistrer, lireReglage, usagesClaude, usagesCodex } from "./couts.mjs"
 import { grilleEnTexte } from "./design.mjs"
+import { BUDGETS_JS, REFONTE_JS, chargementMax, ecrirePlanchers, lirePlanchers, nouveauxPlanchers, raisonsBudgets, raisonsIncident, raisonsRefonte, resumeBudgets } from "./mesures.mjs"
 
 // La consommation du juge qui a servi (Codex : son journal --json ; Claude : sa réponse json).
 export async function enregistrerJuge(ctx, { serveur, jeton, projet, tache = null, role, moteur, journal, sortieClaude, modeleCodex = null, duree_s = 0 }) {
@@ -55,6 +56,36 @@ Vérifie d'abord, sur les captures, s'ils sont corrigés : un défaut corrigé n
 // Les motifs du périmètre protégé, en pathspec git.
 export const pathspec = (motifs) => motifs.map((m) => (m.includes("*") ? `':(glob)${m}'` : q(m))).join(" ")
 
+// Ce que la nature d'une tâche ajoute à la consigne du vérificateur. L'usine démarre alors l'ancienne version
+// (la branche de base) à côté, sur le port 4101 : une refonte lui est comparée avant le jugement (écart 5), et
+// les tests d'un incident y sont rejoués après (écart 4).
+export function consigneNature(tache) {
+  if (tache.nature === "refonte") {
+    return `- Cette tâche est une REFONTE : rien ne doit changer à l'écran ni dans les réponses de l'API. L'usine a démarré l'ancienne version (la branche de base) sur http://localhost:4101 et l'a comparée à la nouvelle, page par page et route par route. Les différences sont dans /tmp/sorties/verif/refonte.txt, avec les images (avant, après, différence en rouge) et les réponses dans /tmp/sorties/verif/refonte/. Regarde chacune. Un changement du produit est un problème bloquant. Ce qui n'est que du bruit (une heure, un identifiant, une donnée de démo tirée au sort) va dans "differences_refonte", avec son identifiant copié de refonte.txt (« page:/contacts:bureau », « route:/api/contacts ») et l'explication. Une différence ni expliquée ni signalée refuse la tâche. Ne modifie rien sur le port 4101.\n`
+  }
+  if (tache.nature === "incident") {
+    return `- Cette tâche corrige un INCIDENT de production. Écris au moins un test qui le reproduit, /tmp/sorties/verif/e2e/${tache.cle}-incident.cjs (ou ${tache.cle}-incident-<n>.cjs) : il échoue tant que l'incident existe, et passe une fois corrigé. Après ton verdict, l'usine relance tes tests sur l'ancienne version, sans la correction (port 4101) : au moins un doit y échouer, sinon rien ne prouve que l'incident est corrigé et la tâche est refusée.\n`
+  }
+  return ""
+}
+
+// Un critère validé a son corrigé : un test qui passe et rejoint le cliquet (écart 3). Le test d'un critère
+// porte son numéro dans la liste (T3-2.cjs, ou T3-2-xxx.cjs). Sans test, il est « non prouvé » : dit dans la PR et
+// au journal, avec la raison donnée par le vérificateur (sans_test), ou sans raison.
+export function criteresNonProuves({ verdict, criteres = [], cle, tests = [] }) {
+  const parTexte = new Map(tableau(verdict?.criteres).map((c) => [norme(c?.critere), c]))
+  const noms = new Set(nomsDeTests(tableau(tests).join(" ")))
+  const nonProuves = []
+  for (const [i, texte] of tableau(criteres).entries()) {
+    const v = parTexte.get(norme(texte)) ?? tableau(verdict?.criteres)[i]
+    if (v?.ok !== true) continue
+    const motif = new RegExp(`^${String(cle).replace(/[^\w-]/g, "")}-${i + 1}(-[\\w.-]+)?\\.cjs$`)
+    if ([...noms].some((n) => motif.test(n))) continue
+    nonProuves.push({ critere: String(texte).slice(0, 300), raison: String(v?.sans_test ?? "").trim().slice(0, 300) })
+  }
+  return nonProuves
+}
+
 function consigneVerificateur(projet, tache, profil, autres = {}) {
   const criteres = JSON.parse(tache.criteres)
   const sautes = Object.entries(autres).filter(([, cs]) => cs.length)
@@ -90,13 +121,14 @@ Non-régression :
   - ce qui marchait est cassé → c'est une régression : mets-le dans "regressions" ;
   - un critère de CETTE tâche change exprès ce comportement → réécris ce test sous le même nom dans /tmp/sorties/verif/e2e/ ET déclare-le dans "tests_remplaces", avec le texte EXACT de ce critère, copié de la liste ci-dessus, et la raison. L'usine vérifie que ce critère existe : sans lui, une personne tranchera. Ton test réécrit doit passer sur l'application telle qu'elle est.
 ${aideSautes}- Ne réécris jamais un test qui passe, et ne relâche jamais une vérification pour qu'elle passe.
-- Pour chaque critère que tu valides et qui s'observe par HTTP ou dans le navigateur, écris un test autonome /tmp/sorties/verif/e2e/${tache.cle}-<n>.cjs : un script Node CommonJS qui lit process.env.BASE (ex. http://localhost:4100), utilise fetch ou require('playwright') (Chromium), vérifie le critère et termine par process.exit(1) s'il n'est plus tenu (process.exit(0) sinon). Il doit être robuste : données de démo seulement en lecture, ou ses propres données avec un nom unique ; pas de dépendance à l'heure exacte ; 60 secondes au plus.
-
+- Pour chaque critère que tu valides et qui s'observe par HTTP ou dans le navigateur, écris un test autonome /tmp/sorties/verif/e2e/${tache.cle}-<n>.cjs, où <n> est le numéro du critère dans la liste ci-dessus : un script Node CommonJS qui lit process.env.BASE (ex. http://localhost:4100), utilise fetch ou require('playwright') (Chromium), vérifie le critère et termine par process.exit(1) s'il n'est plus tenu (process.exit(0) sinon). Il doit être robuste : données de démo seulement en lecture, ou ses propres données avec un nom unique ; pas de dépendance à l'heure exacte ; 60 secondes au plus. Ce test est le corrigé du critère : il doit échouer sur une version du produit qui ne tient pas le critère.
+- Un critère validé sans test est « non prouvé » : l'usine le dit dans la PR et au journal. S'il ne peut vraiment pas devenir un test (un jugement visuel, par exemple), écris pourquoi dans "sans_test" de ce critère.
+${consigneNature(tache)}
 Captures d'écran (pour le relecteur design) :
 - Si le produit a une interface web, enregistre de 2 à 6 captures PNG des écrans touchés par la tâche, en largeur 1440 (ordinateur) ET 390 (mobile), page entière, dans /tmp/sorties/verif/captures/ (noms parlants : contacts-bureau.png, contacts-mobile.png…). Les étapes d'un même parcours (la saisie, puis son résultat) viennent du MÊME essai, et le nom dit le scénario (appel-rattacher-saisie-bureau.png, appel-rattacher-resultat-bureau.png, appel-nouvelle-resultat-bureau.png) : sinon le relecteur design comparerait deux essais différents. Une API sans interface : pas de capture, mais vérifie que chaque route de la tâche est décrite dans docs/API.md.
 
 Réponds UNIQUEMENT par ce JSON, sans rien autour :
-{"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé"}], "regressions": ["test : ce qui est cassé"], "tests_remplaces": [{"test": "T3-2.cjs", "critere": "texte exact du critère de cette tâche", "raison": "ce qui a changé exprès"}], "problemes": ["…"], "criteres_contestes": [{"critere": "…", "raison": "pourquoi il est impossible ou contradictoire"}], "resume": "une phrase"}`
+{"decision": "approuve" | "refuse", "criteres": [{"critere": "…", "ok": true, "preuve": "ce que tu as observé", "sans_test": "seulement si ce critère validé n'a pas de test : pourquoi"}], "regressions": ["test : ce qui est cassé"],${tache.nature === "refonte" ? ` "differences_refonte": [{"difference": "son identifiant dans refonte.txt", "explication": "pourquoi ce n'est pas un changement du produit"}],` : ""} "tests_remplaces": [{"test": "T3-2.cjs", "critere": "texte exact du critère de cette tâche", "raison": "ce qui a changé exprès"}], "problemes": ["…"], "criteres_contestes": [{"critere": "…", "raison": "pourquoi il est impossible ou contradictoire"}], "resume": "une phrase"}`
 }
 
 // Les critères que le vérificateur juge impossibles ou contradictoires. Ils ne valident rien : la tâche s'arrête
@@ -310,6 +342,39 @@ export function criteresDesTachesSautees(db, sautes) {
 // Arrête tout serveur d'application encore en vie dans le vérificateur, puis attend que le port se libère.
 const LIBERER_PORT = libererPort(4100)
 
+// L'ancienne version (la branche de base), démarrée à côté sur le port 4101 pour une refonte ou un incident :
+// un arbre de travail du même clone, ses dépendances, son build et ses propres données. Elle reçoit le même
+// environnement que la nouvelle (DEMO, horloge, Mailpit), sauf le port, le dossier de données et l'adresse.
+export const ANCIENNE = "http://localhost:4101"
+const LIBERER_ANCIENNE = libererPort(4101)
+export function demarrerAncienne(B, profil) {
+  return [
+    LIBERER_ANCIENNE,
+    "rm -rf /tmp/verif-data-base; git worktree remove --force /travail/verif/base > /dev/null 2>&1; rm -rf /travail/verif/base",
+    `git worktree add -q -f --detach /travail/verif/base ${B} > /tmp/sorties/verif/base.log 2>&1 && echo '@@ BASE_EXTRAITE'`,
+    `if [ -d /travail/verif/base ]; then (cd /travail/verif/base && bash -c ${q(profil.installer)} >> /tmp/sorties/verif/base.log 2>&1 && bash -c ${q(profil.construire)} >> /tmp/sorties/verif/base.log 2>&1 && echo '@@ BASE_CONSTRUITE'); fi`,
+    `if [ -d /travail/verif/base ]; then (cd /travail/verif/base && PORT=4101 DATA_DIR=/tmp/verif-data-base PUBLIC_URL=${ANCIENNE} setsid bash -c ${q(profil.demarrer)} > /tmp/sorties/verif/base-app.log 2>&1 &); fi`,
+    `for i in $(seq 1 40); do if curl -sf ${ANCIENNE}/api/health > /dev/null; then echo '@@ BASE_STARTED'; break; fi; sleep 2; done`,
+  ]
+}
+
+// Une refonte : l'ancienne version et la nouvelle, comparées avant le jugement (REFONTE_JS, mesures.mjs).
+export function comparerRefonte(tache) {
+  let criteres = []
+  try {
+    criteres = JSON.parse(tache.criteres ?? "[]")
+  } catch {}
+  const texte = `${tache.titre ?? ""} ${tache.description ?? ""} ${criteres.join(" ")}`.slice(0, 4000)
+  return [
+    ecrireFichier("/tmp/sorties/verif/refonte.cjs", REFONTE_JS),
+    `if curl -sf ${ANCIENNE}/api/health > /dev/null && curl -sf http://localhost:4100/api/health > /dev/null; then ANCIEN=${ANCIENNE} NOUVEAU=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} TEXTE=${q(texte)} timeout 600 node /tmp/sorties/verif/refonte.cjs; fi`,
+  ]
+}
+
+// Un incident : les tests écrits par le vérificateur (et qui passent sur la nouvelle version) sont relancés sur
+// l'ancienne. Un test qui y échoue deux fois reproduit l'incident.
+export const rejouerSurAncienne = (sorties = "/tmp/sorties/verif") => `if curl -sf ${ANCIENNE}/api/health > /dev/null; then INC_R=""; for n in $E2E_NEUFS; do f=${sorties}/e2e/$n; [ -f "$f" ] || continue; if ! BASE=${ANCIENNE} timeout 90 node "$f" > /tmp/e2e-ancienne.out 2>&1 && ! BASE=${ANCIENNE} timeout 90 node "$f" > /tmp/e2e-ancienne.out 2>&1; then INC_R="$INC_R $n"; fi; done; echo "@@ INCIDENT_TESTES $E2E_NEUFS"; echo "@@ INCIDENT_REPRODUIT $INC_R"; fi`
+
 export async function verifier(ctx, projet, tache, sha) {
   const { config } = ctx
   const serveur = config.verificateur.url
@@ -379,6 +444,13 @@ export async function verifier(ctx, projet, tache, sha) {
     "rm -f /tmp/sorties/verif/captures/*.png",
     ecrireFichier("/tmp/sorties/verif/captures.cjs", CAPTURES_JS),
     `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 180 node /tmp/sorties/verif/captures.cjs; fi`,
+    // Les budgets de l'interface (écart 6), mesurés par l'usine : console, accessibilité, chargement, WebKit.
+    "rm -f /tmp/sorties/verif/budgets.json /tmp/sorties/verif/refonte.txt; rm -rf /tmp/sorties/verif/refonte",
+    ecrireFichier("/tmp/sorties/verif/budgets.cjs", BUDGETS_JS),
+    `if curl -sf http://localhost:4100/api/health > /dev/null; then BASE=http://localhost:4100 PAGES=${q(JSON.stringify(pagesDeLaTache(tache)))} timeout 300 node /tmp/sorties/verif/budgets.cjs; fi`,
+    // Une refonte ou un incident : l'ancienne version, à côté (écarts 4 et 5) ; une refonte lui est comparée.
+    ...(tache.nature ? demarrerAncienne(B, profil) : []),
+    ...(tache.nature === "refonte" ? comparerRefonte(tache) : []),
     "if curl -sf http://localhost:4100/api/health > /dev/null; then",
     // Le relais du vérificateur : Codex, sinon le moteur suivant (réglable dans la console).
     "rm -f /tmp/sorties/verif/verdict.txt /tmp/sorties/verif/claude.json",
@@ -389,6 +461,7 @@ export async function verifier(ctx, projet, tache, sha) {
     "echo \"@@ CAPTURES $(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | wc -l)\"",
     "echo \"@@ CAPTURES_FICHIERS $(cd /tmp/sorties/verif/captures 2>/dev/null && ls *.png 2>/dev/null | tr '\\n' ' ')\"",
     trierTestsEcrits({ ref: B }),
+    ...(tache.nature === "incident" ? [rejouerSurAncienne()] : []),
     ecrireFichier("/tmp/sorties/verif/consigne-design.md", consigneDesign(projet, tache)),
     "cat docs/DESIGN.md >> /tmp/sorties/verif/consigne-design.md 2>/dev/null || echo '(pas de brief : juger avec la grille seule)' >> /tmp/sorties/verif/consigne-design.md",
     "IMAGES=$(ls /tmp/sorties/verif/captures/*.png 2>/dev/null | head -6 | sed 's/^/--image=/' | tr '\\n' ' ')",
@@ -400,6 +473,7 @@ export async function verifier(ctx, projet, tache, sha) {
     scriptJuge(ctx, "design", { texte: "/tmp/sorties/verif/design.txt", entree: "/tmp/sorties/verif/consigne-design.md", journal: "/tmp/sorties/verif/design.log", sortieClaude: "/tmp/sorties/verif/claude-design.json", images: "$IMAGES", marqueur: "DESIGN_CODE" }),
     "fi",
     LIBERER_PORT,
+    ...(tache.nature ? [LIBERER_ANCIENNE, "git worktree remove --force /travail/verif/base > /dev/null 2>&1 || true"] : []),
   ].join("\n"), { minutes: 40 })
 
   const m = r.marqueurs
@@ -430,8 +504,22 @@ export async function verifier(ctx, projet, tache, sha) {
     }
   }
   const criteres = JSON.parse(tache.criteres || "[]")
-  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal, criteres, autres })
-  const codexEnPanne = "APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0"
+  const raisons = porte({ marqueurs: m, verdict, design, plancher: projet.plancher_tests, journal: r.journal, criteres, autres, nature: tache.nature ?? null })
+  // Les budgets de l'interface (écart 6) : chaque page mesurée ne fait pas pire que son meilleur résultat fusionné.
+  let budgets = null
+  if ("BUDGETS_OK" in m) {
+    try {
+      budgets = JSON.parse(String((await lireFichier(serveur, jeton, "/tmp/sorties/verif/budgets.json")) ?? "null"))
+    } catch {
+      budgets = null
+    }
+  }
+  const planchers = lirePlanchers(ctx.db, projet.id)
+  if (budgets && "APP_STARTED" in m && verdict) raisons.push(...raisonsBudgets(budgets, planchers, { max: chargementMax(config) }))
+  // Sans l'ancienne version, une refonte ou un incident n'a pas de corrigé : ce n'est pas la faute de l'agent, une personne tranche.
+  const sansAncienne = Boolean(tache.nature) && "APP_STARTED" in m && !("BASE_STARTED" in m)
+  const codexEnPanne = ("APP_STARTED" in m && !verdict && m.CODEX_CODE !== "0") || sansAncienne
+  if (sansAncienne) raisons.push(`l'ancienne version (${brancheDeBase(projet)}) n'a pas démarré à côté de la nouvelle : ${tache.nature === "refonte" ? "la refonte n'a pas pu lui être comparée" : "les tests de l'incident n'ont pas pu y être rejoués"} (base.log et base-app.log du vérificateur)`)
   const nouveauxTests = nomsDeTests(m.E2E_NOUVEAUX)
   const { remplaces, ecartes: nePasVerser } = reecrituresAVerser({ verdict, marqueurs: m, criteres, autres })
   const ratés = nomsDeTests(m.E2E_ECRITS_KO)
@@ -445,13 +533,23 @@ export async function verifier(ctx, projet, tache, sha) {
   if (nePasVerser.length) dire(`réécriture(s) écartée(s) de test(s) du cliquet qui n'échouaient pas : ${nePasVerser.join(" ")}. Un test qui passe ne se réécrit pas.`)
   const illisibles = Number(m.E2E_NOMS_INVALIDES ?? 0) + Number(m.E2E_ECRITS_INVALIDES ?? 0)
   if (illisibles > 0) dire(`${illisibles} fichier(s) de .usine/e2e/ ou écrit(s) par le vérificateur ont un nom que l'usine ne lit pas (lettres sans accent, chiffres, point, tiret, souligné) : ils ne sont ni rejoués ni versés.`)
+  // Écart 3 : un critère validé sans test est « non prouvé ». Dit, sans bloquer.
+  const nonProuves = verdict ? criteresNonProuves({ verdict, criteres, cle: tache.cle, tests: [...nouveauxTests, ...remplaces.map((x) => x.test)] }) : []
+  if (nonProuves.length) dire(`${nonProuves.length} critère(s) validé(s) sans test, donc non prouvé(s) : ${nonProuves.map((x) => `« ${x.critere.slice(0, 100)} »${x.raison ? ` (${x.raison.slice(0, 120)})` : " (sans raison donnée)"}`).join(" ; ")}`)
+  if (budgets && !budgets.webkit) dire(`budgets de l'interface : WebKit indisponible dans le vérificateur (${String(budgets.webkit_erreur ?? "").slice(0, 120)}) : les pages n'ont pas été essayées dans le moteur de Safari.`)
+  if (budgets && !budgets.axe) dire("budgets de l'interface : axe-core absent du vérificateur : l'accessibilité n'a pas été mesurée.")
+  if (tache.nature === "refonte" && "REFONTE_COMPAREES" in m) dire(`refonte comparée à l'ancienne version : ${Number(m.REFONTE_COMPAREES)} page(s) et route(s), ${Number(m.REFONTE_DIFFERENCES ?? 0)} différence(s).`)
+  if (tache.nature === "incident" && "INCIDENT_TESTES" in m) dire(`incident : ${nomsDeTests(m.INCIDENT_REPRODUIT).length} test(s) sur ${nomsDeTests(m.INCIDENT_TESTES).length} échoue(nt) sur l'ancienne version (${nomsDeTests(m.INCIDENT_REPRODUIT).join(" ") || "aucun"}).`)
+  const ok = raisons.length === 0
+  // Une tâche validée fixe le meilleur résultat de chaque page mesurée.
+  if (ok && budgets) ecrirePlanchers(ctx.db, projet.id, nouveauxPlanchers(budgets, planchers))
   const contestes = [...criteresContestes(verdict), ...contestesCliquet({ verdict, marqueurs: m, criteres, autres })]
-  return { ok: raisons.length === 0, infra: codexEnPanne, contestes, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, remplaces, e2eSautes: sautes, captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
+  return { ok, infra: codexEnPanne, contestes, raisons, verdict, design, tests: Number(m.TESTS_PASSES ?? 0), nouveauxTests, remplaces, e2eSautes: sautes, nonProuves, budgets: budgets ? resumeBudgets(budgets) : "", captures: String(m.CAPTURES_FICHIERS ?? "").split(/\s+/).filter((f) => /^[\w.-]+\.png$/.test(f)) }
 }
 
 // La porte de fusion : des faits vérifiables, pas un avis. Chaque raison
 // renvoyée est un motif de refus. Aucune raison = la tâche peut être fusionnée.
-export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "", criteres = [], autres = {} }) {
+export function porte({ marqueurs: m, verdict, design = null, plancher = 0, journal = "", criteres = [], autres = {}, nature = null }) {
   const raisons = []
   if (!("INSTALL_OK" in m)) return ["l'installation des dépendances échoue"]
   // La sécurité d'abord : un secret dans le code, ou une faille grave ajoutée.
@@ -493,6 +591,9 @@ export function porte({ marqueurs: m, verdict, design = null, plancher = 0, jour
   }
   const nonNommes = Number(m.E2E_ECHECS ?? 0) - echecsCliquet.length
   if (nonNommes > 0) raisons.push(`${nonNommes} test(s) du cliquet échouent sans que l'usine sache lesquels : la vérification ne peut pas conclure.`)
+  // Une refonte : chaque différence avec l'ancienne version est expliquée (écart 5). Un incident : un test le reproduit (écart 4).
+  if (nature === "refonte") raisons.push(...raisonsRefonte({ marqueurs: m, verdict }))
+  if (nature === "incident") raisons.push(...raisonsIncident({ marqueurs: m }))
   for (const d of tableau(design?.graves)) raisons.push(`design : ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}${d.correction ? ` → ${d.correction}` : ""}`)
   if (verdict.decision !== "approuve" && raisons.length === 0) raisons.push(`le vérificateur refuse : ${verdict.resume ?? "sans motif"}`)
   if (!tableau(verdict.criteres).length) raisons.push("le vérificateur n'a jugé aucun critère")

@@ -303,7 +303,8 @@ test("seule une personne lance : aucun signal ne mène à la demande de correcti
   const p = source("propositions.mjs")
   const lancer = p.slice(p.indexOf("export function lancerProposition"), p.indexOf("function apresDemande"))
   assert.equal(p.split("corriger(").length - 1, 1, "un seul appel")
-  assert.ok(lancer.includes("corriger(ctx, projet.id, texte, par)"))
+  // Une proposition lancée est la correction d'un incident : sa première tâche devra le reproduire par un test.
+  assert.ok(lancer.includes("corriger(ctx, projet.id, texte, par, { incident: true })"))
   // lancerProposition n'est appelée que par la console et Slack (des personnes).
   for (const f of readdirSync(new URL("../src/", import.meta.url)).filter((x) => x.endsWith(".mjs") && !["propositions.mjs", "console.mjs", "slack.mjs"].includes(x))) assert.doesNotMatch(source(f), /lancerProposition\(/, f)
   // La lecture de Sentry ne reçoit que proposer() : même en mode « corriger », une erreur ne lance rien seule.

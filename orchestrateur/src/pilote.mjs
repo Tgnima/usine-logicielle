@@ -289,7 +289,7 @@ async function executer(ctx, d, maintenant, { corriger = null, proposer = null }
     if (typeof corriger !== "function") return noterPilote("Correction automatique impossible : aucune fonction de correction n'est branchée.")
     // Pas attendue : l'analyste prend des minutes. La correction est déjà comptée (deciderPilote).
     Promise.resolve()
-      .then(() => corriger(ctx, projetId, texteCorrection(d, maintenant), PAR_PILOTE))
+      .then(() => corriger(ctx, projetId, texteCorrection(d, maintenant), PAR_PILOTE, { incident: true }))
       .then((r) => {
         if (r?.ok !== false) return
         noterPilote(`Correction automatique refusée : ${court(r.message)}`)

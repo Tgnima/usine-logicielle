@@ -12,6 +12,24 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **Des critères qui peuvent échouer** :
+  - l'analyste écrit chaque critère comme ce que l'utilisateur fait, puis le résultat attendu
+    (un texte affiché, une valeur, un code HTTP) ;
+  - un critère flou lui est renvoyé une fois, comme un conseil ;
+  - un critère validé sans son test dans le cliquet est dit « non prouvé », dans la PR et au
+    journal, avec la raison du vérificateur.
+- **Les budgets de l'interface**, mesurés par l'usine sur chaque page de la tâche : erreurs de
+  la console du navigateur, défauts d'accessibilité graves (axe-core), temps de chargement (5 s
+  au plus), et les mêmes pages sur téléphone dans WebKit, le moteur de Safari. Une page ne peut
+  pas faire pire que son meilleur résultat déjà fusionné ; une première mesure fixe le
+  plancher.
+- **Une refonte comparée à l'ancienne version** : une tâche marquée « refonte » (rien ne doit
+  changer à l'écran ni à l'API) est comparée, page par page au pixel et route par route, à
+  l'ancienne version démarrée à côté. Une différence non expliquée la refuse.
+- **Un incident corrigé est prouvé par un test** : la première tâche d'une correction demandée
+  par la boucle d'amélioration ou par le pilote doit avoir un test qui échoue sur l'ancienne
+  version et passe sur la nouvelle.
+
 ## v1.3.1
 
 Ce qui a été fusionné le 20 novembre 2026.

@@ -145,6 +145,8 @@ function consigne(ctx, projet, tache) {
     `- Ne modifie pas les fichiers protégés : ${proteges(ctx.config, projet).join(", ")}. L'usine les restaurerait.`,
     "- Ne fais ni commit ni push : l'usine s'en charge.",
     "- Reste dans le périmètre de la tâche ; ne casse pas ce qui existe.",
+    ...(tache.nature === "refonte" ? ["- C'est une REFONTE : rien ne doit changer à l'écran ni dans les réponses de l'API. L'usine comparera chaque page et chaque route à l'ancienne version, au pixel près ; une différence non expliquée refuse la tâche."] : []),
+    ...(tache.nature === "incident" ? ["- Cette tâche corrige un INCIDENT de production. Commence par un test qui le reproduit (il échoue avant ta correction), puis corrige. Le vérificateur écrira aussi le sien : il doit échouer sur l'ancienne version et passer sur la tienne."] : []),
     repris
       ? `- Avant de terminer, \`${p.construire}\` puis \`${p.tester}\` doivent passer. Lance-les et corrige jusqu'à ce qu'ils passent (dépendances : \`${p.installer}\`).`
       : "- Avant de terminer, `npm run verify` doit passer. Lance-le et corrige jusqu'à ce qu'il passe.",
@@ -360,7 +362,9 @@ async function fabriquer(ctx, projet, tache) {
   // 7. La fusion : décidée ici, par le code. Le sha garantit qu'on fusionne ce qui a été vérifié.
   const bilan = (v.verdict.criteres ?? []).map((c) => `- :white_check_mark: ${c.critere}${c.preuve ? ` — ${c.preuve}` : ""}`).join("\n")
   const designPR = v.design ? `\n\n### :art: Design : ${v.design.note ?? "?"}/10\n${v.design.resume ?? ""}${(v.design.mineurs ?? []).length ? `\n\nÀ polir (lot de finition) :\n${v.design.mineurs.map((d) => `- ${d.ecran ? `${d.ecran} : ` : ""}${d.defaut}`).join("\n")}` : ""}` : ""
-  await commentairePR(config, nomDepot, pr.number, `### :white_check_mark: Validée par le vérificateur\n\n${v.verdict.resume ?? ""}\n\n${bilan}\n\n${v.tests} test(s) passé(s).${designPR}`).catch(() => {})
+  const nonProuves = (v.nonProuves ?? []).length ? `\n\n### :warning: Non prouvé(s) : validé(s) sans test\n${v.nonProuves.map((x) => `- ${x.critere}${x.raison ? ` (${x.raison})` : " (sans raison donnée)"}`).join("\n")}` : ""
+  const budgetsPR = v.budgets ? `\n\n:bar_chart: Budgets de l'interface : ${v.budgets}.` : ""
+  await commentairePR(config, nomDepot, pr.number, `### :white_check_mark: Validée par le vérificateur\n\n${v.verdict.resume ?? ""}\n\n${bilan}${nonProuves}\n\n${v.tests} test(s) passé(s).${budgetsPR}${designPR}`).catch(() => {})
   try {
     await fusionnerPR(config, nomDepot, pr.number, { titre: `${tache.cle} · ${tache.titre} (#${pr.number})`, sha })
   } catch (error) {
