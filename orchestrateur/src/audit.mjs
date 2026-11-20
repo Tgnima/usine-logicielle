@@ -218,16 +218,19 @@ async function supprimerBrancheAudit(ctx, projetId, reste, d) {
 }
 
 // La vraie vérification, sans trace dans la fabrication : la tâche est passée sans son id (ni coût ni
-// écriture sur la tâche livrée) et sans ses anciens refus, et la liste des tests sautés du cliquet est remise
-// comme avant (l'audit ne change pas l'ordre du prochain rejeu).
+// écriture sur la tâche livrée) et sans ses anciens refus. Les réglages que la vérification tient à jour sont
+// remis comme avant : la liste des tests sautés du cliquet (l'ordre du prochain rejeu) et les planchers des
+// budgets de l'interface (un bug raté ne doit pas changer le meilleur résultat d'une page).
+export const reglagesDeVerification = (projetId) => [`cliquet_sautes_${projetId}`, `budgets_${projetId}`]
 async function verifierSansTrace(ctx, projet, tache, sha, d) {
-  const cle = `cliquet_sautes_${projet.id}`
-  const avant = lireReglage(ctx.db, cle, null)
+  const avant = reglagesDeVerification(projet.id).map((cle) => [cle, lireReglage(ctx.db, cle, null)])
   try {
     return await d.verifier(ctx, obtenir(ctx.db, "projets", projet.id), { ...tache, id: null, retours: null }, sha)
   } finally {
-    if (avant === null) ctx.db.prepare("DELETE FROM reglages WHERE cle = ?").run(cle)
-    else ecrireReglage(ctx.db, cle, avant)
+    for (const [cle, valeur] of avant) {
+      if (valeur === null) ctx.db.prepare("DELETE FROM reglages WHERE cle = ?").run(cle)
+      else ecrireReglage(ctx.db, cle, valeur)
+    }
   }
 }
 
@@ -359,8 +362,9 @@ async function deroulerAudit(ctx, { projet, tache, criteres }, n, d) {
   return { ok: true, score, bugs, message: titre }
 }
 
-// Un audit à la fois : le nom de celui qui tourne.
+// Un audit à la fois : le nom de celui qui tourne. Une mise à jour de l'usine attend sa fin (cycle.mjs).
 let enCours = null
+export const auditEnCours = () => enCours
 
 // L'audit d'un projet livré. Refusé (ok: false, message) si le projet ou la tâche ne s'y prêtent pas, si un
 // audit tourne déjà, si l'usine fabrique, est arrêtée, ou si une tâche est en cours.

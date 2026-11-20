@@ -11,6 +11,7 @@ import { maj, noter, obtenir } from "./db.mjs"
 import { ecrireEtat, supprimerEtat } from "./github.mjs"
 import { arreter, reprendre } from "./pipeline.mjs"
 import { lireSanteServeur } from "./sante.mjs"
+import { auditEnCours } from "./audit.mjs"
 
 const ACTIFS = ["analyse", "questions", "plan_a_valider", "creation", "fabrication", "reorientation", "corrections", "bloque", "mise_en_production"]
 const jours = (config) => Number(config.apercus?.duree_vie_jours ?? 7)
@@ -134,7 +135,8 @@ export async function mettreAJourUsine(ctx, par) {
   // En tâche de fond : attendre qu'aucune tâche ne tourne, puis demander la mise à jour au déployeur.
   ;(async () => {
     const limite = Date.now() + 90 * 60_000
-    while (Date.now() < limite && ctx.db.prepare("SELECT 1 FROM taches WHERE statut IN ('en_cours', 'verification')").get()) await new Promise((r) => setTimeout(r, 15_000))
+    // Un audit du vérificateur en cours (audit.mjs) occupe l'atelier comme une tâche : on attend aussi sa fin.
+    while (Date.now() < limite && (ctx.db.prepare("SELECT 1 FROM taches WHERE statut IN ('en_cours', 'verification')").get() || auditEnCours())) await new Promise((r) => setTimeout(r, 15_000))
     await ecrireEtat(ctx.config, "usine/mise-a-jour.json", { demande_le: new Date().toISOString(), par }, { message: `Mise à jour de l'usine (${par})` })
   })().catch(async (e) => {
     rmSync(marqueur(ctx), { force: true })

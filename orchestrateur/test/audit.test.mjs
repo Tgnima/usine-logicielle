@@ -294,6 +294,27 @@ test("l'audit ne change pas la liste des tests sautés du cliquet", async () => 
   assert.equal(lireReglage(db, "cliquet_sautes_1"), JSON.stringify({ "T1-1.cjs": [1] }))
 })
 
+test("l'audit ne change pas les planchers des budgets de l'interface, même quand un bug est raté", async () => {
+  const { ctx, db } = contexte()
+  const avant = JSON.stringify({ pages: { "/": { console: 2, a11y: 1, webkit: 0 } } })
+  ecrireReglage(db, "budgets_1", avant)
+  // Un bug raté : la vérification valide, et elle abaisserait le plancher de la page avec la mesure du mutant.
+  const d = doubles([(c) => (ecrireReglage(c.db, "budgets_1", JSON.stringify({ pages: { "/": { console: 0, a11y: 0, webkit: 0 } } })), { ok: true, raisons: [] })])
+  await auditer(ctx, 1, { bugs: 1 }, d.deps)
+  assert.equal(lireReglage(db, "budgets_1"), avant)
+  // Un projet sans plancher n'en reçoit pas un du mutant.
+  db.prepare("DELETE FROM reglages WHERE cle = ?").run("budgets_1")
+  const d2 = doubles([(c) => (ecrireReglage(c.db, "budgets_1", JSON.stringify({ pages: { "/": { console: 5, a11y: 5, webkit: 5 } } })), { ok: true, raisons: [] })])
+  await auditer(ctx, 1, { bugs: 1 }, d2.deps)
+  assert.equal(lireReglage(db, "budgets_1"), null)
+})
+
+test("une mise à jour de l'usine attend la fin d'un audit en cours", () => {
+  const cycle = readFileSync(new URL("../src/cycle.mjs", import.meta.url), "utf8")
+  assert.match(cycle, /import \{ auditEnCours \} from "\.\/audit\.mjs"/)
+  assert.match(cycle, /statut IN \('en_cours', 'verification'\)"\)\.get\(\) \|\| auditEnCours\(\)\)\)/)
+})
+
 test("le jeton GitHub ne sert qu'au clone et au push ; ni la consigne ni le commit ne disent rien de trop", async () => {
   const { ctx } = contexte()
   const d = doubles([ATTRAPE])
