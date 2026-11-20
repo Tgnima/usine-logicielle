@@ -45,6 +45,28 @@ est épuisé.
   mode « corriger », le pilote corrige seul une panne du code, jusqu'à l'aperçu. Voir **La
   boucle d'amélioration**.
 
+## Auditer le vérificateur
+
+Un contrôle n'est sûr que s'il a déjà attrapé un vrai bug. L'audit le vérifie sur un produit livré
+ou en production : `node src/cli.mjs audit <n°> [bugs] [tâche]` (`orchestrateur/src/audit.mjs`).
+
+- Pour chaque bug (4 par défaut, 8 au plus), un agent « planteur » plante un seul bug réaliste
+  dans une copie du produit. Les sortes de bugs viennent à tour de rôle : un compteur décalé d'un,
+  une sauvegarde qui ne se fait pas, un email noté « envoyé » mais jamais parti, une erreur avalée.
+  Le bug casse un comportement couvert par les critères d'une tâche fusionnée : la dernière, ou
+  celle qu'on nomme.
+- Le code écarte un bug qui touche aux tests, à `.usine/` ou aux fichiers protégés : il est
+  compté « non planté ».
+- Puis la vraie vérification tourne, avec les critères de cette tâche, sans savoir ce qui est
+  cassé. Un refus compte comme attrapé, une validation comme raté. Si le vérificateur est en panne
+  ou à sa limite, le bug n'est pas jugé.
+- Il n'y a ni pull request ni fusion. La branche `usine/audit/…` est supprimée après chaque bug,
+  même après une erreur. Si GitHub refuse deux fois, l'audit suivant la supprime en premier.
+- L'atelier est réservé pendant l'audit : la fabrication attend, une dizaine de minutes par bug.
+  L'audit ne démarre pas pendant une tâche, ni quand l'usine est arrêtée.
+- Le score arrive dans Slack (« 3 bugs attrapés sur 4 », avec les ratés) et au journal du projet.
+  Le détail est gardé dans le réglage `audit_<n°>`.
+
 ## La sécurité
 
 Règle de l'usine : **toujours protéger les applications.**
