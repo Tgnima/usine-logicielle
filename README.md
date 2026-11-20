@@ -40,10 +40,64 @@ est épuisé.
   ajoutée dans les dépendances (`npm audit`, comparé à `main`), refuse la tâche ; un agent
   relecteur sécurité lit chaque changement avant le vérificateur, avec une grille
   (injections, XSS, redirections, données personnelles…).
+- **Des critères qui peuvent échouer.** L'analyste écrit chaque critère comme ce que
+  l'utilisateur fait, puis le résultat attendu : un texte affiché, une valeur, un code HTTP.
+  Un critère flou (« fonctionne correctement », « est intuitif ») lui est renvoyé une fois.
+  Chaque critère validé doit avoir son test dans le cliquet (`T3-2.cjs` pour le deuxième
+  critère de T3). Sinon il est **non prouvé**, et la PR comme le journal le disent, avec la
+  raison donnée par le vérificateur.
+- **Les budgets de l'interface** (`orchestrateur/src/mesures.mjs`), mesurés par l'usine
+  sur chaque page de la tâche :
+  - erreurs de la console du navigateur (celles de l'application, pas d'un autre site) ;
+  - défauts d'accessibilité graves (axe-core) ;
+  - temps de chargement, 5 s au plus (`autonomie.chargement_max_ms`) ;
+  - erreurs sur téléphone dans WebKit, le moteur de Safari.
+
+  C'est un cliquet par problème : une page ne peut pas avoir de problème qu'elle n'avait pas à
+  la dernière fusion. Ses problèmes déjà connus ne refusent rien (une erreur est reconnue à ses
+  chiffres et identifiants près). Une page mesurée pour la première fois, ou ce qui n'a pas pu
+  être mesuré (WebKit en panne, axe-core absent), est appris à la fusion suivante.
+- **Une refonte est comparée à l'ancienne version.** L'analyste marque `"nature": "refonte"`
+  une tâche qui ne doit rien changer à l'écran ni à l'API. L'usine démarre alors l'ancienne
+  version à côté (port 4101) et compare chaque page (au pixel) et chaque route GET de
+  `docs/API.md`. Le vérificateur reçoit les différences :
+  - une différence fautive, il la signale, et la tâche est refusée ;
+  - une différence attendue (une heure, une donnée de démo tirée au sort), il l'explique ;
+  - une différence ni expliquée ni signalée part à une personne, qui tranche.
+- **Un incident corrigé est prouvé par un test.** La première tâche d'une correction demandée
+  par la boucle d'amélioration ou par le pilote porte la nature « incident ». Le vérificateur
+  écrit un test qui reproduit l'incident. L'usine le relance sur l'ancienne version, où il doit
+  échouer. S'il n'y échoue pas (l'incident ne se produit pas en démonstration), une personne
+  tranche.
+- **Sans l'ancienne version, la vérification ne conclut pas.** Si elle ne se construit pas, ne
+  démarre pas, ou si sa comparaison n'a eu lieu qu'en partie, une personne tranche. Un vrai
+  refus (tests, critères, budgets) passe toujours avant : l'agent recommence.
 - **Un incident en production ne met jamais rien en ligne.** En mode « proposer », le pilote et
   la lecture de Sentry ne font que proposer une correction, et seule une personne la lance. En
   mode « corriger », le pilote corrige seul une panne du code, jusqu'à l'aperçu. Voir **La
   boucle d'amélioration**.
+
+## Auditer le vérificateur
+
+Un contrôle n'est sûr que s'il a déjà attrapé un vrai bug. L'audit le vérifie sur un produit livré
+ou en production : `node src/cli.mjs audit <n°> [bugs] [tâche]` (`orchestrateur/src/audit.mjs`).
+
+- Pour chaque bug (4 par défaut, 8 au plus), un agent « planteur » plante un seul bug réaliste
+  dans une copie du produit. Les sortes de bugs viennent à tour de rôle : un compteur décalé d'un,
+  une sauvegarde qui ne se fait pas, un email noté « envoyé » mais jamais parti, une erreur avalée.
+  Le bug casse un comportement couvert par les critères d'une tâche fusionnée : la dernière, ou
+  celle qu'on nomme.
+- Le code écarte un bug qui touche aux tests, à `.usine/` ou aux fichiers protégés : il est
+  compté « non planté ».
+- Puis la vraie vérification tourne, avec les critères de cette tâche, sans savoir ce qui est
+  cassé. Un refus compte comme attrapé, une validation comme raté. Si le vérificateur est en panne
+  ou à sa limite, le bug n'est pas jugé.
+- Il n'y a ni pull request ni fusion. La branche `usine/audit/…` est supprimée après chaque bug,
+  même après une erreur. Si GitHub refuse deux fois, l'audit suivant la supprime en premier.
+- L'atelier est réservé pendant l'audit : la fabrication attend, une dizaine de minutes par bug.
+  L'audit ne démarre pas pendant une tâche, ni quand l'usine est arrêtée.
+- Le score arrive dans Slack (« 3 bugs attrapés sur 4 », avec les ratés) et au journal du projet.
+  Le détail est gardé dans le réglage `audit_<n°>`.
 
 ## La sécurité
 

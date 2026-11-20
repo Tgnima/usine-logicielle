@@ -34,6 +34,7 @@ autonomie:
   lignes_max_par_pr: 800           # au-delà : signalé dans la PR (non bloquant en démo)
   minutes_max_par_agent: 30
   minutes_cliquet: 15              # temps max (20 au plus) pour rejouer les tests .usine/e2e à chaque vérification ; au-delà, les restants sont dits sautés et passent en premier la fois suivante
+  chargement_max_ms: 5000          # budget de l'interface : une page de la tâche se charge en 5 s au plus dans le vérificateur
   budget_par_projet:
     duree_max_heures: 8
   arret: dependances               # dependances : seules les tâches liées s'arrêtent | projet

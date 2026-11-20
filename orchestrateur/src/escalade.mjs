@@ -4,6 +4,7 @@
 // message Slack porte les mêmes options en boutons. Les deux débloquent :
 // un clic, ou un commentaire « A », « B », « C » (ou une consigne libre) sur l'issue.
 import { maj, noter, obtenir } from "./db.mjs"
+import { chargementMax, connusApres, ecrireConnus, lireConnus, reprendreMesure } from "./mesures.mjs"
 import { lireReglage, reglagesCouts } from "./couts.mjs"
 import { presenterDecision } from "./presentation.mjs"
 import { MARQUE, ajouterEtiquettes, commenter, commentaires, creerIssue, fermerIssue, fusionnerPR, lireIssue, lirePR, retirerEtiquette } from "./github.mjs"
@@ -129,6 +130,10 @@ export async function resoudre(ctx, escaladeId, { choix, texte = "", par = "?" }
       const pr = await lirePR(config, nomDepot, tache.pr)
       if (pr.state === "open") await fusionnerPR(config, nomDepot, tache.pr, { titre: `${tache.cle} · ${tache.titre} (#${tache.pr}, accepté par ${par})`, sha: pr.head.sha })
       maj(db, "taches", tache.id, { statut: "fusionnee" })
+      // Les budgets de l'interface : ce que la PR acceptée a mesuré devient connu, comme à une fusion de l'usine.
+      // Sinon la tâche suivante serait refusée pour ces mêmes problèmes, acceptés ici (mesures.mjs).
+      const mesure = reprendreMesure(db, tache.id)
+      if (mesure) ecrireConnus(db, projet.id, connusApres(mesure, lireConnus(db, projet.id), { max: chargementMax(config) }))
       await ajouterEtiquettes(config, nomDepot, tache.issue, ["usine:fusionnee"]).catch(() => {})
     } else {
       maj(db, "taches", tache.id, { statut: "abandonnee" })

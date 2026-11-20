@@ -71,6 +71,10 @@ export function ouvrirDb(chemin) {
   // Colonnes ajoutées après coup : présentes sur une base neuve comme sur une base existante.
   const colonnes = new Set(db.prepare("PRAGMA table_info(projets)").all().map((c) => c.name))
   if (!colonnes.has("production")) db.exec("ALTER TABLE projets ADD COLUMN production TEXT") // choix de production (JSON)
+  // La nature d'une tâche (vérification.mjs) : null, « refonte » (rien ne doit changer à l'écran ni à l'API : comparée
+  // à l'ancienne version) ou « incident » (elle corrige un incident de production : un test doit le reproduire).
+  const colonnesTaches = new Set(db.prepare("PRAGMA table_info(taches)").all().map((c) => c.name))
+  if (!colonnesTaches.has("nature")) db.exec("ALTER TABLE taches ADD COLUMN nature TEXT")
   // Un dépôt repris (/usine reprendre) et le persona visé :
   //   origine     { depot, branche_source, mode: copie | direct } (JSON), null pour un produit né dans l'usine ;
   //   branche     la branche où l'usine intègre (main, ou usine/<slug>/integration dans le dépôt d'origine) ;

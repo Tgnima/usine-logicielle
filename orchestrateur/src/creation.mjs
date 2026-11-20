@@ -3,7 +3,7 @@
 import { creerDepot, creerEtiquettes, creerIssue, ecrireFichierDepot } from "./github.mjs"
 import { RESEAU, executer, ecrireFichier, q } from "./travaux.mjs"
 import { maj, noter, obtenir, plan as lirePlan } from "./db.mjs"
-import { planEnMarkdown } from "./analyste.mjs"
+import { NATURES, planEnMarkdown } from "./analyste.mjs"
 import { designEnMarkdown, jetonsCss } from "./design.mjs"
 import { scriptPieces } from "./pieces.mjs"
 import { COMPTER_TESTS, brancheDeBase, lireProfil } from "./profil.mjs"
@@ -146,7 +146,7 @@ async function creerProduitRepris(ctx, projetId) {
 // Une issue par tâche, et la tâche en base. nomDepot : un dépôt de l'usine, ou « propriétaire/nom ».
 export async function ouvrirTaches(ctx, projetId, nomDepot, lot, numero) {
   const { config, db } = ctx
-  const inserer = db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, issue, statut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente')")
+  const inserer = db.prepare("INSERT INTO taches (projet_id, cle, lot, titre, description, criteres, depend_de, issue, statut, nature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente', ?)")
   for (const t of lot.taches) {
     // Une création relancée : les issues déjà ouvertes au premier essai ne sont pas rouvertes.
     if (db.prepare("SELECT 1 FROM taches WHERE projet_id = ? AND lot = ? AND cle = ?").get(projetId, numero, t.cle)) continue
@@ -158,11 +158,13 @@ export async function ouvrirTaches(ctx, projetId, nomDepot, lot, numero) {
       "### Critères d'acceptation",
       ...t.criteres.map((c) => `- [ ] ${c}`),
       ...(t.depend_de?.length ? ["", `Dépend de : ${t.depend_de.join(", ")}`] : []),
+      ...(t.nature === "refonte" ? ["", "_Refonte : rien ne doit changer à l'écran ni à l'API. L'usine compare chaque écran et chaque route à l'ancienne version._"] : []),
+      ...(t.nature === "incident" ? ["", "_Correction d'un incident de production : un test doit reproduire l'incident (il échoue sur l'ancienne version, passe sur la nouvelle)._"] : []),
       "",
       "_Tâche fabriquée par l'usine logicielle : un agent la code, le vérificateur indépendant la teste, la fusion est décidée par le code._",
     ].join("\n")
     const issue = await creerIssue(config, nomDepot, { titre: `${t.cle} · ${t.titre}`, corps, etiquettes: ["usine:attente", `lot:${numero}`], assigne: false })
-    inserer.run(projetId, t.cle, numero, t.titre, t.description, JSON.stringify(t.criteres), JSON.stringify(t.depend_de ?? []), issue.number)
+    inserer.run(projetId, t.cle, numero, t.titre, t.description, JSON.stringify(t.criteres), JSON.stringify(t.depend_de ?? []), issue.number, NATURES.includes(t.nature) ? t.nature : null)
   }
 }
 

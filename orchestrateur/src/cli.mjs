@@ -14,6 +14,8 @@ const AIDE = `Usage : node src/cli.mjs <commande>
   decider <escalade> <A|B|C> ["consigne"]
   production <n°> [--donnees demo|vide] [--emails captures|reels] [--horloge acceleree|reelle] [--autorises "a@b.fr,@domaine.fr"]
                                  met en production (après livraison)
+  audit <n°> [bugs] [tâche]      audite le vérificateur sur un produit livré : plante des bugs (4 par défaut, 8 au plus)
+                                 dans une copie, relance la vraie vérification et compte ceux qu'elle attrape
   journal <n°>                   les derniers événements
   abandonner <n°>                abandonne un plan pas encore validé
   admin <email>                  crée le premier administrateur (sans Slack) et donne son lien d'invitation
@@ -43,6 +45,8 @@ const table = {
     for (let i = 0; i < args.length; i += 2) if (args[i]?.startsWith("--")) choix[args[i].slice(2).replace("autorises", "destinataires_autorises")] = args[i + 1]
     return appel("POST", `/production/${a}`, Object.keys(choix).length ? { choix } : {})
   },
+  // audit 8, audit 8 2, audit 8 T5 ou audit 8 2 T5 : le nombre de bugs, puis la tâche dont on reprend les critères.
+  audit: () => (/^\d+$/.test(b ?? "") ? appel("POST", `/audit/${a}`, { bugs: Number(b), tache: c ?? null }) : appel("POST", `/audit/${a}`, { tache: b ?? null })),
   journal: async () => (await appel("GET", `/journal/${a}`)).map((l) => `${l.le}  ${l.type.padEnd(12)} ${l.message.split("\n")[0]}`).join("\n"),
   relancer: () => appel("POST", `/relancer/${a}`, {}),
   abandonner: () => appel("POST", `/abandonner/${a}`, {}),

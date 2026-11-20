@@ -12,6 +12,38 @@ Numérotation : `X` change quand une mise à jour demande un geste à la main ou
 
 Ce qui est sur `main` sans être encore dans une version.
 
+- **L'audit du vérificateur devient une commande** : `node src/cli.mjs audit <n°> [bugs] [tâche]`.
+  L'usine plante exprès des bugs réalistes dans une copie d'un produit livré, un à la fois : un
+  compteur décalé d'un, une sauvegarde qui ne se fait pas, un email noté « envoyé » mais jamais
+  parti, une erreur avalée. La vraie vérification juge chaque bug avec les critères d'une tâche
+  déjà fusionnée, sans savoir ce qui est cassé. L'usine compte les bugs attrapés et les bugs ratés.
+  Rien n'est fusionné, et la branche d'audit est supprimée. La fabrication attend la fin de
+  l'audit, et le score arrive dans Slack et au journal du projet. C'était fait une fois à la main,
+  le 16 novembre.
+- **Des critères qui peuvent échouer** :
+  - l'analyste écrit chaque critère comme ce que l'utilisateur fait, puis le résultat attendu
+    (un texte affiché, une valeur, un code HTTP) ;
+  - un critère flou lui est renvoyé une fois, comme un conseil ;
+  - un critère validé sans son test dans le cliquet est dit « non prouvé », dans la PR et au
+    journal, avec la raison du vérificateur.
+- **Les budgets de l'interface**, mesurés par l'usine sur chaque page de la tâche : erreurs de
+  la console du navigateur, défauts d'accessibilité graves (axe-core), temps de chargement (5 s
+  au plus), et les mêmes pages sur téléphone dans WebKit, le moteur de Safari. Une page ne peut
+  pas avoir de problème qu'elle n'avait pas à la dernière fusion ; ses problèmes déjà connus ne
+  refusent rien. Une première mesure, ou ce qui n'a pas pu être mesuré (WebKit en panne), est
+  appris à la fusion suivante.
+- **Une refonte comparée à l'ancienne version** : une tâche marquée « refonte » (rien ne doit
+  changer à l'écran ni à l'API) est comparée, page par page au pixel et route par route, à
+  l'ancienne version démarrée à côté. Une différence que le vérificateur juge fautive refuse la
+  tâche ; une différence qu'il n'explique pas part à une personne, qui tranche.
+- **Un incident corrigé est prouvé par un test** : la première tâche d'une correction demandée
+  par la boucle d'amélioration ou par le pilote doit avoir un test qui échoue sur l'ancienne
+  version et passe sur la nouvelle. Un incident que le test ne reproduit pas part à une
+  personne.
+- **Sans l'ancienne version, la vérification ne conclut pas** : si elle ne se construit pas, ne
+  démarre pas, ou si sa comparaison n'a eu lieu qu'en partie, une personne tranche. Un vrai refus
+  (tests, critères, budgets) passe toujours avant.
+
 ## v1.3.1
 
 Ce qui a été fusionné le 20 novembre 2026.

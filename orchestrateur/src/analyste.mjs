@@ -88,7 +88,7 @@ ${repris
     ? "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 répare ce que l'inventaire dit cassé et donne au persona une première valeur visible. On part du code existant : chaque tâche dit ce qu'elle garde, change ou ajoute."
     : "2. 3 à 5 lots, chacun livrable seul et utile : le lot 1 pose le socle et un premier écran visible. Si la brique a des écrans (toutes sauf « api »), la tâche T1 est le kit d'interface : adapter la page /kit et les composants de client/src/ui au brief (couleurs, arrondi, typographie, textes du métier à la place des exemples, chaque exemple indépendant des autres : pas de compteurs ni de phrases qui se recoupent d'un bloc à l'autre), sans écran métier ; ses critères s'observent sur /kit (« la page /kit montre les boutons, le formulaire, le tableau et les états vide, chargement et erreur aux couleurs du brief, lisibles à 390 px »). Les écrans des tâches suivantes réutilisent ce kit."}
 3. 2 à 4 tâches par lot ; une tâche = environ 300 lignes de code au plus, faisable en une séance d'agent.
-4. Chaque critère est observable sur l'application en marche (« la page /contacts liste 50 contacts fictifs », « POST /api/segments renvoie 201 ») : jamais « le code est propre ».
+4. ${REGLE_CRITERES} ${REGLE_NATURE}
 5. "depend_de" ne cite que des clés de tâches précédentes. Les clés sont T1, T2, … uniques et dans l'ordre.
 6. "slug" : 3 à 20 caractères, lettres minuscules, chiffres et tirets.
 ${repris
@@ -137,6 +137,35 @@ export function tachesSurProteges(lots, liste = PROTEGES_PAR_DEFAUT) {
   return p
 }
 
+// Des critères qui peuvent échouer (écart 3 de la boucle de vérification) : ce que l'utilisateur fait, puis le
+// résultat attendu, assez précis pour qu'une version fausse du produit le rate. Le vérificateur en fait un test.
+export const REGLE_CRITERES = `Chaque critère dit ce que l'utilisateur fait, puis le résultat attendu, observable sur l'application en marche et assez précis pour qu'une version fausse échoue : « sur /contacts, envoyer le formulaire avec l'email "abc" affiche "Email invalide" et ne crée aucun contact », « POST /api/segments avec un nom vide renvoie 400 ». Un texte affiché, une valeur, un nombre, un code HTTP : jamais « fonctionne correctement », « est intuitif » ni « le code est propre ».`
+
+// La nature d'une tâche. « refonte » : l'analyste la donne à une tâche qui ne doit rien changer à l'écran ni à
+// l'API ; l'usine la compare alors à l'ancienne version. « incident » : l'usine la donne elle-même aux tâches
+// qui corrigent un incident de production (la boucle d'amélioration, le pilote des pannes).
+export const NATURES = ["refonte", "incident"]
+export const REGLE_NATURE = `Une tâche qui ne doit rien changer à ce que voit l'utilisateur ni aux réponses de l'API (réorganiser le code, changer de bibliothèque, accélérer) porte "nature": "refonte" : l'usine la compare à l'ancienne version, écran par écran et route par route. Les autres tâches n'ont pas de "nature".`
+
+// Un critère trop vague pour échouer : un mot flou, sans rien de mesurable (chiffre, texte cité, adresse, verbe
+// HTTP). Un conseil, pas un refus : au dernier essai de l'analyste, il ne bloque pas le plan.
+export const CONSEIL = "(conseil) "
+const FLOU = /(?<!\p{L})(correctement|convenablement|fonctionnel(le)?|fonctionne(nt)?|intuiti(f|ve)|agréable|ergonomique|fluide(ment)?|proprement|clairement|joli(e)?|soigné(e)?|bien (affiché|présenté|organisé|rangé)e?s?)(?!\p{L})/iu
+const MESURABLE = /\d|«|»|"|\/[a-z]|(?<!\p{L})(GET|POST|PUT|PATCH|DELETE)(?!\p{L})/u
+// L'analyste ne donne que « refonte » : « incident » se pose par l'usine (livraison.mjs). Contrôlé sur les
+// nouveaux lots seulement : les lots déjà en base peuvent porter « incident ».
+export function naturesDonnees(lots) {
+  return (lots ?? []).flatMap((l) => l?.taches ?? []).filter((t) => t.nature !== undefined && t.nature !== null && t.nature !== "refonte").map((t) => `${t.cle} : nature « ${t.nature} » : seule « refonte » se donne (rien ne change à l'écran ni à l'API) ; enlève-la sinon`)
+}
+
+export function criteresVagues(lots) {
+  const p = []
+  for (const t of (lots ?? []).flatMap((l) => l?.taches ?? [])) {
+    for (const c of t.criteres ?? []) if (FLOU.test(String(c)) && !MESURABLE.test(String(c))) p.push(`${CONSEIL}${t.cle} : critère trop vague pour pouvoir échouer : « ${String(c).slice(0, 160)} ». Dis ce que l'utilisateur fait et le résultat attendu (un texte affiché, une valeur, un code HTTP).`)
+  }
+  return p
+}
+
 // Vérifie le plan. Renvoie la liste des problèmes (vide = plan acceptable).
 // lotsMax : la limite d'un plan neuf ; les lots de corrections s'ajoutent sans limite.
 // repris : un dépôt repris n'a pas de brique (il garde sa pile).
@@ -156,6 +185,7 @@ export function verifierPlan(plan, { lotsMax = 6, protege, repris = false } = {}
       if (cles.has(t.cle)) p.push(`clé en double : ${t.cle}`)
       if (!t.titre || !t.description) p.push(`${t.cle} : titre ou description manquant`)
       if (!t.criteres?.length) p.push(`${t.cle} : aucun critère d'acceptation`)
+      if (t.nature !== undefined && t.nature !== null && !NATURES.includes(t.nature)) p.push(`${t.cle} : nature inconnue « ${t.nature} » (seule « refonte » se donne : rien ne change à l'écran ni à l'API)`)
       for (const d of t.depend_de ?? []) if (!cles.has(d)) p.push(`${t.cle} dépend de ${d}, qui n'existe pas avant elle`)
       cles.add(t.cle)
     }
@@ -188,6 +218,7 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
   const autorises = [...(pieces.length ? ["Read"] : []), ...mcp]
   const outils = `--tools ${pieces.length ? "Read" : '""'}${autorises.length ? ` --allowedTools ${autorises.join(",")}` : ""} --max-turns ${(pieces.length ? pieces.length + 3 : 2) + (mcp.length ? 10 : 0)}`
   let problemes = []
+  let repli = null // un essai qui n'avait que des conseils : gardé si le suivant échoue
   let attentes = 0 // au plus 3 attentes de fin de limite
   for (let essai = 1; essai <= 2; essai++) {
     const texte = texteBase + lirePieces + (problemes.length ? `\n\nTon essai précédent avait ces défauts, corrige-les :\n- ${problemes.join("\n- ")}` : "")
@@ -224,16 +255,19 @@ async function interroger(config, texteBase, valider, mesurer = () => {}, { proj
     try {
       const objet = extraireJson(String(sortie.result ?? ""))
       problemes = valider(objet)
-      if (problemes.length === 0) return { objet, tokens: (sortie.usage?.input_tokens ?? 0) + (sortie.usage?.output_tokens ?? 0) }
+      const tokens = (sortie.usage?.input_tokens ?? 0) + (sortie.usage?.output_tokens ?? 0)
+      if (problemes.length === 0 || (essai === 2 && problemes.every((x) => String(x).startsWith(CONSEIL)))) return { objet, tokens }
+      if (problemes.every((x) => String(x).startsWith(CONSEIL))) repli = { objet, tokens }
     } catch (error) {
       problemes = [`JSON invalide : ${error.message}`]
     }
   }
+  if (repli) return repli
   throw new Error(`Réponse de l'analyste invalide après deux essais : ${problemes.join(" ; ")}`)
 }
 
 export async function analyser(config, projet, options = {}) {
-  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => [...verifierPlan(r, { protege: proteges(config, projet), repris: Boolean(projet.origine) }), ...(r?.lots?.length ? verifierSens(r.sens, { exige: true }) : [])], options.mesurer, { projetId: projet.id, ctx: options.ctx ?? null })
+  const { objet, tokens } = await interroger(config, consigne(config, projet, options), (r) => [...verifierPlan(r, { protege: proteges(config, projet), repris: Boolean(projet.origine) }), ...(r?.lots?.length ? verifierSens(r.sens, { exige: true }) : []), ...criteresVagues(r?.lots), ...naturesDonnees(r?.lots)], options.mesurer, { projetId: projet.id, ctx: options.ctx ?? null })
   return { plan: objet, tokens }
 }
 
@@ -283,15 +317,15 @@ Enquête d'abord : cherche dans les journaux et les réglages la cause réelle d
 }
 
 Règles : "lot" vaut null si aucun code n'est à changer (un simple réglage suffit). Sinon 1 à 4 tâches ; clés à partir de T${derniere + 1},
-dans l'ordre ; "depend_de" ne cite que des tâches de ce lot ; chaque critère est observable sur l'application en marche ;
+dans l'ordre ; "depend_de" ne cite que des tâches de ce lot. ${REGLE_CRITERES} ${REGLE_NATURE}
 ne casse rien de ce qui marche ; reste dans la brique ; ne refais pas un autre produit : on corrige celui-ci.
 Chaque correction est aussi l'occasion de faire monter le produit dans la pyramide de l'expérience : sur les écrans que le lot touche,
-ajoute au moins un critère de l'étage suivant non tenu${contexte.pyramide ? " (voir <pyramide>)" : " (Pratique ou Agréable)"}, sans sortir du sujet signalé. ${REGLE_PYRAMIDE}
+ajoute au moins un critère de l'étage suivant non tenu${contexte.pyramide ? " (voir <pyramide>)" : " (Pratique ou Agréable)"}, sans sortir du sujet signalé. ${REGLE_PYRAMIDE}${contexte.incident ? "\nCette demande vient d'un INCIDENT de production : la PREMIÈRE tâche du lot corrige l'incident lui-même, et rien d'autre (son critère dit comment l'incident se produit, et ce qu'on observe une fois corrigé). Le critère de la pyramide va dans une tâche suivante. L'usine exigera un test qui échoue sur l'ancienne version et passe sur la nouvelle." : ""}
 ${regleProteges(config, projet)}`
   const valider = (r) => {
     if (!r || typeof r.diagnostic !== "string" || !r.diagnostic.trim()) return ["« diagnostic » manquant"]
     if (r.lot === null || r.lot === undefined) return r.reglage?.trim() ? [] : ["ni réglage ni lot : propose l'un ou l'autre"]
-    return [...verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity }), ...tachesSurProteges([r.lot], proteges(config, projet))]
+    return [...verifierPlan({ ...plan, lots: [...plan.lots, r.lot] }, { lotsMax: Infinity }), ...tachesSurProteges([r.lot], proteges(config, projet)), ...criteresVagues([r.lot]), ...naturesDonnees([r.lot])]
   }
   // Avec ctx, l'analyste reçoit les connecteurs du rôle « plan » (Sentry, PostHog…), comme pour un plan.
   const { objet } = await interroger(config, texte, valider, contexte.mesurer, { ctx: contexte.ctx ?? null })
@@ -355,7 +389,7 @@ Règles :
 2. Le code des lots gardés existe : une tâche qui le change dit ce qu'elle garde, change ou retire. Ne refais pas ce qui marche et sert encore.
 3. 2 à 4 tâches par lot ; une tâche = environ 300 lignes de code au plus, faisable en une séance d'agent.
 4. Clés à partir de T${derniere + 1}, uniques et dans l'ordre ; "depend_de" ne cite que des clés gardées ou des nouvelles tâches placées avant.
-5. Chaque critère est observable sur l'application en marche : jamais « le code est propre ».
+5. ${REGLE_CRITERES} ${REGLE_NATURE}
 6. ${repris ? `Reste dans la pile du dépôt (${plan.pile}).` : `Reste dans la brique « ${plan.brique ?? "webapp"} » : pas d'autre langage, pas de service externe hors Vercel AI Gateway et Mailpit.`}
 7. ${REGLE_PYRAMIDE}
    Le dernier lot contient au moins un critère de l'étage « Qui a du sens » : la "preuve" du sens, observable à l'écran.
@@ -369,7 +403,7 @@ ${regleProteges(config, projet)}`
     if (!r || !Array.isArray(r.lots) || r.lots.length < 1 || r.lots.length > 5) return ["il faut de 1 à 5 nouveaux lots"]
     const p = verifierPlan({ ...plan, ...r, nom: plan.nom, slug: plan.slug, lots: [...gardes, ...r.lots], design: r.design ?? plan.design }, { lotsMax: Infinity, repris: Boolean(projet.origine) })
     for (const t of r.lots.flatMap((l) => l.taches ?? [])) if (cles.has(t.cle) || Number(String(t.cle).slice(1)) <= derniere) p.push(`${t.cle} est déjà employée : les nouvelles clés commencent à T${derniere + 1}`)
-    return [...p, ...verifierSens(r.sens, { exige: true }), ...tachesSurProteges(r.lots, proteges(config, projet))]
+    return [...p, ...verifierSens(r.sens, { exige: true }), ...tachesSurProteges(r.lots, proteges(config, projet)), ...criteresVagues(r.lots), ...naturesDonnees(r.lots)]
   }
   const { objet } = await interroger(config, texte, valider, mesurer, { projetId: projet.id, ctx })
   return objet
